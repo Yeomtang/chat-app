@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>익명 채팅</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+      background: #f2f2f7;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── 입장 화면 ── */
+    #entrance {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100dvh;
+      padding: 32px 24px;
+      background: #ffffff;
+    }
+
+    #entrance h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1c1c1e;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    #entrance p {
+      font-size: 14px;
+      color: #8e8e93;
+      margin-bottom: 40px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .nickname-card {
+      width: 100%;
+      background: #f2f2f7;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .nickname-label {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-bottom: 8px;
+      letter-spacing: 0.3px;
+      width: 100%;
+      text-align: center;
+    }
+
+    #nickname-display {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1c1c1e;
+      line-height: 1.3;
+      width: 100%;
+      text-align: center;
+    }
+
+    .btn-reroll {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: none;
+      border: 1.5px solid #d1d1d6;
+      border-radius: 100px;
+      padding: 10px 20px;
+      font-size: 14px;
+      color: #3a3a3c;
+      cursor: pointer;
+      margin: 0 auto 32px;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+
+    .btn-reroll:active { background: #e5e5ea; }
+
+    .btn-enter {
+      width: 100%;
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+
+    .btn-enter:active { opacity: 0.8; }
+
+    /* ── 채팅 화면 ── */
+    #chatroom {
+      display: none;
+      flex-direction: column;
+      height: 100dvh;
+    }
+
+    #chat-header {
+      background: #ffffff;
+      border-bottom: 1px solid #e5e5ea;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    #chat-header .avatar {
+      width: 32px;
+      height: 32px;
+      background: #1c1c1e;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: #fff;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    #chat-header .header-info {
+      flex: 1;
+    }
+
+    #chat-header .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+
+    #chat-header .header-sub {
+      font-size: 12px;
+      color: #8e8e93;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .msg-group {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 8px;
+    }
+
+    .msg-bubble {
+      display: inline-flex;
+      flex-direction: column;
+      background: #e9e9eb;
+      color: #1c1c1e;
+      padding: 8px 14px 10px;
+      border-radius: 18px;
+      border-bottom-left-radius: 4px;
+      font-size: 15px;
+      line-height: 1.4;
+      max-width: 80%;
+      word-break: break-word;
+    }
+
+    .msg-nickname {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8e8e93;
+      margin-bottom: 2px;
+    }
+
+    .msg-text {
+      color: #1c1c1e;
+    }
+
+    /* ── 입력창 ── */
+    #input-area {
+      background: #ffffff;
+      border-top: 1px solid #e5e5ea;
+      padding: 8px 12px;
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #msg-input {
+      flex: 1;
+      background: #f2f2f7;
+      border: none;
+      border-radius: 20px;
+      padding: 9px 14px;
+      font-size: 15px;
+      font-family: inherit;
+      color: #1c1c1e;
+      outline: none;
+      resize: none;
+      max-height: 100px;
+      line-height: 1.4;
+    }
+
+    #msg-input::placeholder { color: #aeaeb2; }
+
+    #send-btn {
+      width: 34px;
+      height: 34px;
+      background: #1c1c1e;
+      border: none;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: opacity 0.15s;
+    }
+
+    #send-btn:disabled { opacity: 0.3; cursor: default; }
+
+    #send-btn svg { width: 16px; height: 16px; }
+  </style>
+</head>
+<body>
+
+<!-- 입장 화면 -->
+<div id="entrance">
+  <h1>오늘의 토론에 참여하세요</h1>
+  <p>아래 닉네임으로 익명 채팅에 참여합니다.<br>마음에 들지 않으면 다시 뽑아보세요.</p>
+
+  <div class="nickname-card">
+    <div class="nickname-label">나의 닉네임</div>
+    <div id="nickname-display">로딩 중...</div>
+  </div>
+
+  <button class="btn-reroll" onclick="rerollNickname()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>
+    다른 닉네임 뽑기
+  </button>
+
+  <button class="btn-enter" onclick="enterChat()">이 닉네임으로 참여하기</button>
+</div>
+
+<!-- 채팅 화면 -->
+<div id="chatroom">
+  <div id="chat-header">
+    <div class="avatar" id="header-avatar">?</div>
+    <div class="header-info">
+      <div class="header-title" id="header-nickname"></div>
+      <div class="header-sub">익명 토론 채팅</div>
+    </div>
+  </div>
+
+  <div id="messages"></div>
+
+  <div id="input-area">
+    <textarea id="msg-input" placeholder="메시지 입력..." rows="1"></textarea>
+    <button id="send-btn" onclick="sendMessage()" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  let currentNickname = '';
+  let socket;
+  let nickSocket;
+
+  function requestNickname() {
+    document.getElementById('nickname-display').textContent = '뽑는 중...';
+    if (!nickSocket) {
+      nickSocket = io();
+      nickSocket.on('assignedNickname', (name) => {
+        currentNickname = name;
+        document.getElementById('nickname-display').textContent = name;
+      });
+      // 연결 완료 후 요청 (타이밍 문제 방지)
+      nickSocket.on('connect', () => {
+        nickSocket.emit('requestNickname');
+      });
+    } else {
+      // 이미 연결된 경우 바로 요청
+      nickSocket.emit('requestNickname');
+    }
+  }
+
+  function rerollNickname() {
+    requestNickname();
+  }
+
+  function enterChat() {
+    if (!currentNickname) return;
+
+    // 닉네임 요청에 쓰던 소켓을 채팅에 재사용
+    socket = nickSocket;
+
+    // 이전 메시지 수신
+    socket.on('history', (messages) => {
+      messages.forEach(addMessage);
+      scrollToBottom();
+    });
+
+    // 새 메시지 수신
+    socket.on('chat', (msg) => {
+      addMessage(msg);
+      scrollToBottom();
+    });
+
+    // UI 전환
+    document.getElementById('entrance').style.display = 'none';
+    const chatroom = document.getElementById('chatroom');
+    chatroom.style.display = 'flex';
+
+    const initial = currentNickname.charAt(0);
+    document.getElementById('header-avatar').textContent = initial;
+    document.getElementById('header-nickname').textContent = currentNickname;
+  }
+
+  function addMessage(msg) {
+    const messages = document.getElementById('messages');
+    const group = document.createElement('div');
+    group.className = 'msg-group';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+
+    const nick = document.createElement('div');
+    nick.className = 'msg-nickname';
+    nick.textContent = msg.nickname;
+
+    const text = document.createElement('div');
+    text.className = 'msg-text';
+    text.textContent = msg.text;
+
+    bubble.appendChild(nick);
+    bubble.appendChild(text);
+    group.appendChild(bubble);
+    messages.appendChild(group);
+  }
+
+  function scrollToBottom() {
+    const messages = document.getElementById('messages');
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function sendMessage() {
+    const input = document.getElementById('msg-input');
+    const text = input.value.trim();
+    if (!text || !socket) return;
+
+    socket.emit('chat', { nickname: currentNickname, text });
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('send-btn').disabled = true;
+  }
+
+  // 입력창 auto-resize + 전송 버튼 활성화
+  document.addEventListener('DOMContentLoaded', () => {
+    requestNickname(); // 페이지 로드 시 서버에서 첫 닉네임 배정
+
+    const input = document.getElementById('msg-input');
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+      document.getElementById('send-btn').disabled = input.value.trim() === '';
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  });
+</script>
+</body>
+</html>
