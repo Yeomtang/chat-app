@@ -113,6 +113,109 @@
       display: none;
       flex-direction: column;
       height: 100dvh;
+      position: relative;
+    }
+
+    #chat-content {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      transition: filter 0.5s ease, opacity 0.5s ease;
+    }
+
+    #chat-content.blurred {
+      filter: blur(16px);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    /* ── 투표 오버레이 (관객 폰) ── */
+    #voting-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      gap: 18px;
+      z-index: 30;
+    }
+
+    #voting-timer-phone {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #1c1c1e;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    #voting-question-phone {
+      font-size: 19px;
+      font-weight: 700;
+      color: #1c1c1e;
+      text-align: center;
+      line-height: 1.4;
+      max-width: 320px;
+    }
+
+    #voting-buttons {
+      display: flex;
+      gap: 14px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .vote-btn {
+      flex: 1;
+      padding: 22px 0;
+      border-radius: 18px;
+      border: 3px solid transparent;
+      font-size: 18px;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: inherit;
+      transition: transform 0.15s, opacity 0.15s, background 0.15s, color 0.15s;
+    }
+
+    .vote-btn:active { transform: scale(0.96); }
+    .vote-btn:disabled { opacity: 0.45; cursor: default; }
+
+    #vote-yes-btn { background: #e9f9ed; color: #1e8a3c; }
+    #vote-yes-btn.selected { background: #34c759; color: #fff; border-color: #1e8a3c; }
+
+    #vote-no-btn { background: #ffebe9; color: #c62b20; }
+    #vote-no-btn.selected { background: #ff3b30; color: #fff; border-color: #c62b20; }
+
+    #voting-ratio {
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .ratio-bar {
+      width: 100%;
+      height: 10px;
+      border-radius: 6px;
+      background: #ffebe9;
+      display: flex;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    #ratio-fill-yes { height: 100%; background: #34c759; transition: width 0.3s ease; }
+    #ratio-fill-no { height: 100%; background: #ff3b30; transition: width 0.3s ease; }
+
+    .ratio-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+      color: #3a3a3c;
     }
 
     #chat-header {
@@ -267,23 +370,45 @@
 
 <!-- 채팅 화면 -->
 <div id="chatroom">
-  <div id="chat-header">
-    <div class="avatar" id="header-avatar">?</div>
-    <div class="header-info">
-      <div class="header-title" id="header-nickname"></div>
-      <div class="header-sub">익명 토론 채팅</div>
+  <div id="chat-content">
+    <div id="chat-header">
+      <div class="avatar" id="header-avatar">?</div>
+      <div class="header-info">
+        <div class="header-title" id="header-nickname"></div>
+        <div class="header-sub">익명 토론 채팅</div>
+      </div>
+    </div>
+
+    <div id="messages"></div>
+
+    <div id="input-area">
+      <textarea id="msg-input" placeholder="메시지 입력..." rows="1"></textarea>
+      <button id="send-btn" onclick="sendMessage()" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+        </svg>
+      </button>
     </div>
   </div>
 
-  <div id="messages"></div>
-
-  <div id="input-area">
-    <textarea id="msg-input" placeholder="메시지 입력..." rows="1"></textarea>
-    <button id="send-btn" onclick="sendMessage()" disabled>
-      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
-      </svg>
-    </button>
+  <!-- 투표 오버레이 -->
+  <div id="voting-overlay">
+    <div id="voting-timer-phone">30</div>
+    <div id="voting-question-phone"></div>
+    <div id="voting-buttons">
+      <button class="vote-btn" id="vote-yes-btn" onclick="castVote('yes')">YES</button>
+      <button class="vote-btn" id="vote-no-btn" onclick="castVote('no')">NO</button>
+    </div>
+    <div id="voting-ratio">
+      <div class="ratio-bar">
+        <div id="ratio-fill-yes" style="width:0%"></div>
+        <div id="ratio-fill-no" style="width:0%"></div>
+      </div>
+      <div class="ratio-text">
+        <span id="ratio-yes-pct">YES 0%</span>
+        <span id="ratio-no-pct">NO 0%</span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -292,6 +417,17 @@
   let currentNickname = '';
   let socket;
   let nickSocket;
+
+  // ── 영구 클라이언트 ID (localStorage) — 투표 중복 방지 키 ──
+  function getClientId() {
+    let id = localStorage.getItem('ledClientId');
+    if (!id) {
+      id = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+      localStorage.setItem('ledClientId', id);
+    }
+    return id;
+  }
+  const clientId = getClientId();
 
   function requestNickname() {
     document.getElementById('nickname-display').textContent = '뽑는 중...';
@@ -303,12 +439,107 @@
       });
       // 연결 완료 후 요청 (타이밍 문제 방지)
       nickSocket.on('connect', () => {
+        nickSocket.emit('identify', clientId);
         nickSocket.emit('requestNickname');
       });
+      // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
+      nickSocket.on('state', applyVoteState);
+      nickSocket.on('modeChange', applyVoteState);
+      nickSocket.on('voteUpdate', (data) => updateRatio(data.counts));
     } else {
       // 이미 연결된 경우 바로 요청
       nickSocket.emit('requestNickname');
     }
+  }
+
+  // ══════════════════════════════════
+  //  투표 모드 (관객 폰)
+  // ══════════════════════════════════
+  let currentMode = 'chat';
+  let myVote = null;
+  let phoneTimerInterval = null;
+  let phoneVotingEndTime = null;
+
+  function applyVoteState(state) {
+    currentMode = state.mode;
+    const overlay = document.getElementById('voting-overlay');
+    const chatContent = document.getElementById('chat-content');
+
+    if (state.mode === 'chat') {
+      overlay.style.display = 'none';
+      chatContent.classList.remove('blurred');
+      myVote = null;
+      stopPhoneTimer();
+      updateVoteUI();
+      return;
+    }
+
+    chatContent.classList.add('blurred');
+    overlay.style.display = 'flex';
+    myVote = state.myVote || myVote;
+
+    const questionEl = document.getElementById('voting-question-phone');
+    const timerEl = document.getElementById('voting-timer-phone');
+    const buttonsEl = document.getElementById('voting-buttons');
+
+    if (state.mode === 'voting') {
+      questionEl.style.display = 'block';
+      timerEl.style.display = 'inline-flex';
+      buttonsEl.style.display = 'flex';
+      questionEl.textContent = state.question || '';
+      startPhoneTimer(state.votingEndTime);
+    } else if (state.mode === 'result') {
+      questionEl.style.display = 'none';
+      timerEl.style.display = 'none';
+      stopPhoneTimer();
+    }
+
+    updateVoteUI();
+    updateRatio(state.counts);
+  }
+
+  function updateVoteUI() {
+    const yesBtn = document.getElementById('vote-yes-btn');
+    const noBtn = document.getElementById('vote-no-btn');
+    yesBtn.classList.toggle('selected', myVote === 'yes');
+    noBtn.classList.toggle('selected', myVote === 'no');
+    yesBtn.disabled = currentMode !== 'voting';
+    noBtn.disabled = currentMode !== 'voting';
+  }
+
+  function updateRatio(counts) {
+    const c = counts || { yes: 0, no: 0, total: 0 };
+    const yesPct = c.total ? Math.round((c.yes / c.total) * 100) : 0;
+    const noPct = 100 - yesPct;
+    document.getElementById('ratio-fill-yes').style.width = (c.total ? yesPct : 0) + '%';
+    document.getElementById('ratio-fill-no').style.width = (c.total ? noPct : 0) + '%';
+    document.getElementById('ratio-yes-pct').textContent = `YES ${yesPct}%`;
+    document.getElementById('ratio-no-pct').textContent = `NO ${noPct}%`;
+  }
+
+  function startPhoneTimer(endTime) {
+    phoneVotingEndTime = endTime;
+    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
+    phoneTimerInterval = setInterval(updatePhoneTimerDisplay, 200);
+    updatePhoneTimerDisplay();
+  }
+
+  function stopPhoneTimer() {
+    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
+    phoneTimerInterval = null;
+  }
+
+  function updatePhoneTimerDisplay() {
+    if (!phoneVotingEndTime) return;
+    const remain = Math.max(0, Math.ceil((phoneVotingEndTime - Date.now()) / 1000));
+    document.getElementById('voting-timer-phone').textContent = remain;
+  }
+
+  function castVote(choice) {
+    if (currentMode !== 'voting' || !nickSocket) return;
+    myVote = choice;
+    updateVoteUI();
+    nickSocket.emit('vote', { choice });
   }
 
   function rerollNickname() {

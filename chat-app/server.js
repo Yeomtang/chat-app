@@ -58,13 +58,92 @@ app.get('/', (req, res) => {
 app.get('/led', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'led.html'));
 });
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
 const MAX_MESSAGES = 50;
 
+// ── 투표(질문) 상태 관리 ──
+// mode: 'chat' | 'voting' | 'result'
+const appState = {
+  mode: 'chat',
+  question: null,
+  votingDuration: null,   // 초
+  votingEndTime: null,    // epoch ms
+  votes: {},              // clientId -> 'yes' | 'no'
+  timerHandle: null,
+};
+
+function computeCounts() {
+  let yes = 0, no = 0;
+  for (const v of Object.values(appState.votes)) {
+    if (v === 'yes') yes++;
+    else if (v === 'no') no++;
+  }
+  return { yes, no, total: yes + no };
+}
+
+function publicState(forClientId) {
+  return {
+    mode: appState.mode,
+    question: appState.question,
+    votingDuration: appState.votingDuration,
+    votingEndTime: appState.votingEndTime,
+    votes: appState.votes, // clientId -> choice (LED/관리자가 전체 분포를 그리는 데 필요)
+    counts: computeCounts(),
+    myVote: forClientId ? (appState.votes[forClientId] || null) : null,
+  };
+}
+
+function startVoting(question, duration) {
+  if (appState.timerHandle) clearTimeout(appState.timerHandle);
+  appState.mode = 'voting';
+  appState.question = question;
+  appState.votingDuration = duration;
+  appState.votingEndTime = Date.now() + duration * 1000;
+  appState.votes = {};
+  io.emit('modeChange', publicState());
+
+  appState.timerHandle = setTimeout(() => {
+    endVoting();
+  }, duration * 1000);
+}
+
+function endVoting() {
+  if (appState.timerHandle) {
+    clearTimeout(appState.timerHandle);
+    appState.timerHandle = null;
+  }
+  if (appState.mode !== 'voting') return;
+  appState.mode = 'result';
+  io.emit('modeChange', publicState());
+}
+
+function returnToChat() {
+  if (appState.timerHandle) {
+    clearTimeout(appState.timerHandle);
+    appState.timerHandle = null;
+  }
+  appState.mode = 'chat';
+  appState.question = null;
+  appState.votingDuration = null;
+  appState.votingEndTime = null;
+  appState.votes = {};
+  io.emit('modeChange', publicState());
+}
+
 io.on('connection', (socket) => {
   console.log('연결됨:', socket.id);
+  socket.clientId = null;
+
+  // 클라이언트 식별 (localStorage 기반 영구 ID) — 투표 중복/재접속 처리용
+  socket.on('identify', (clientId) => {
+    socket.clientId = clientId;
+    socket.emit('state', publicState(clientId));
+  });
 
   // 닉네임 요청 시 서버에서 고유 닉네임 배정
   socket.on('requestNickname', () => {
@@ -74,8 +153,9 @@ io.on('connection', (socket) => {
   // 새 연결에 최근 메시지 전송
   socket.emit('history', recentMessages);
 
-  // 채팅 메시지
+  // 채팅 메시지 (채팅 모드일 때만 허용)
   socket.on('chat', (data) => {
+    if (appState.mode !== 'chat') return;
     const message = {
       id: Date.now(),
       nickname: data.nickname,
@@ -85,6 +165,41 @@ io.on('connection', (socket) => {
     recentMessages.push(message);
     if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
     io.emit('chat', message);
+  });
+
+  // 투표
+  socket.on('vote', (data) => {
+    const { choice } = data || {};
+    if (appState.mode !== 'voting') return;
+    if (choice !== 'yes' && choice !== 'no') return;
+    if (!socket.clientId) return;
+
+    appState.votes[socket.clientId] = choice;
+    io.emit('voteUpdate', {
+      clientId: socket.clientId,
+      choice,
+      counts: computeCounts(),
+    });
+  });
+
+  // ── 관리자(제작진) 전용 이벤트 ──
+  socket.on('admin:startVoting', (data) => {
+    const question = (data && data.question || '').trim();
+    const duration = Math.max(5, parseInt(data && data.duration, 10) || 30);
+    if (!question) return;
+    startVoting(question, duration);
+  });
+
+  socket.on('admin:endVoting', () => {
+    endVoting();
+  });
+
+  socket.on('admin:returnToChat', () => {
+    returnToChat();
+  });
+
+  socket.on('admin:getState', () => {
+    socket.emit('state', publicState(null));
   });
 
   socket.on('disconnect', () => {

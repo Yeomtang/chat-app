@@ -22,10 +22,22 @@
       width: min(100vw, calc(100vh * 2 / 3));
       height: min(100vh, calc(100vw * 3 / 2));
       background: #ffffff;
-      display: flex;
-      flex-direction: column;
       position: relative;
       overflow: hidden;
+    }
+
+    /* 채팅 레이어 (블러 대상) */
+    #chat-layer {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      transition: filter 0.5s ease, opacity 0.5s ease;
+    }
+
+    #chat-layer.blurred {
+      filter: blur(16px);
+      opacity: 0.5;
     }
 
     /* 상단 헤더 */
@@ -163,28 +175,117 @@
       align-items: center;
       justify-content: center;
     }
+
+    /* ── 투표 오버레이 레이어 ── */
+    #voting-layer {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      z-index: 20;
+    }
+
+    #voting-layer.active { display: flex; }
+
+    #voting-question-wrap {
+      padding: 40px 28px 0;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    #voting-timer {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #1c1c1e;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+
+    #voting-question {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1c1c1e;
+      line-height: 1.4;
+    }
+
+    #voting-canvas-wrap {
+      flex: 1;
+      width: 100%;
+      position: relative;
+    }
+
+    #voting-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #result-banner {
+      display: none;
+      padding: 0 28px 48px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    #result-banner.active { display: block; }
+
+    #result-banner .result-line {
+      font-size: 17px;
+      color: #8e8e93;
+      font-weight: 600;
+    }
+
+    #result-banner .result-pct {
+      font-size: 15px;
+      color: #1c1c1e;
+      font-weight: 700;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
 
 <div id="screen">
-  <div id="led-header">
-    <div class="title">Live Chat</div>
+  <div id="chat-layer">
+    <div id="led-header">
+      <div class="title">Live Chat</div>
+    </div>
+
+    <div id="led-messages"></div>
+
+    <div id="led-footer">
+      <div class="footer-bar">
+        <div class="footer-dot"></div>
+        <div class="footer-dot"></div>
+        <div class="footer-dot"></div>
+        <div class="footer-text">실시간 익명 채팅</div>
+      </div>
+      <div class="footer-send">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aeaeb2" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+        </svg>
+      </div>
+    </div>
   </div>
 
-  <div id="led-messages"></div>
-
-  <div id="led-footer">
-    <div class="footer-bar">
-      <div class="footer-dot"></div>
-      <div class="footer-dot"></div>
-      <div class="footer-dot"></div>
-      <div class="footer-text">실시간 익명 채팅</div>
+  <!-- 투표 오버레이 -->
+  <div id="voting-layer">
+    <div id="voting-question-wrap">
+      <div id="voting-timer">30</div>
+      <div id="voting-question"></div>
     </div>
-    <div class="footer-send">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aeaeb2" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
-      </svg>
+    <div id="voting-canvas-wrap">
+      <canvas id="voting-canvas"></canvas>
+    </div>
+    <div id="result-banner">
+      <div class="result-line" id="result-line">YES 00% · NO 00%</div>
     </div>
   </div>
 </div>
@@ -234,6 +335,192 @@
       groups[0].remove();
     }
   }
+
+  // ══════════════════════════════════
+  //  투표 모드
+  // ══════════════════════════════════
+  const chatLayer = document.getElementById('chat-layer');
+  const votingLayer = document.getElementById('voting-layer');
+  const votingQuestion = document.getElementById('voting-question');
+  const votingTimer = document.getElementById('voting-timer');
+  const resultBanner = document.getElementById('result-banner');
+  const resultLine = document.getElementById('result-line');
+
+  const canvas = document.getElementById('voting-canvas');
+  const ctx = canvas.getContext('2d');
+
+  const COLOR_YES = '#34c759';
+  const COLOR_NO = '#ff3b30';
+
+  let particles = new Map(); // clientId -> { side, x, y, tx, ty, r, phase }
+  let votingEndTime = null;
+  let timerInterval = null;
+  let rafHandle = null;
+  let currentMode = 'chat';
+
+  function resizeCanvas() {
+    const wrap = document.getElementById('voting-canvas-wrap');
+    const rect = wrap.getBoundingClientRect();
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  function clusterCenter(side) {
+    const w = canvas.width / devicePixelRatio;
+    const h = canvas.height / devicePixelRatio;
+    return side === 'yes'
+      ? { x: w * 0.27, y: h * 0.5 }
+      : { x: w * 0.73, y: h * 0.5 };
+  }
+
+  // 클러스터 내 위치 재배치 (sunflower 패킹)
+  function repack(side) {
+    const ids = [...particles.entries()].filter(([, p]) => p.side === side).map(([id]) => id);
+    const center = clusterCenter(side);
+    const n = ids.length;
+    if (n === 0) return;
+    const packRadius = Math.min(14 * Math.sqrt(n) + 10, Math.min(canvas.width, canvas.height) / devicePixelRatio * 0.32);
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    ids.forEach((id, i) => {
+      const r = packRadius * Math.sqrt((i + 0.5) / n);
+      const theta = i * golden;
+      const p = particles.get(id);
+      p.tx = center.x + r * Math.cos(theta);
+      p.ty = center.y + r * Math.sin(theta);
+    });
+  }
+
+  function setVote(clientId, side) {
+    if (!particles.has(clientId)) {
+      const center = clusterCenter(side);
+      particles.set(clientId, {
+        side, x: center.x, y: center.y, tx: center.x, ty: center.y,
+        r: 7, phase: Math.random() * Math.PI * 2,
+      });
+    } else {
+      particles.get(clientId).side = side;
+    }
+    repack('yes');
+    repack('no');
+  }
+
+  function syncVotesFromState(votesObj) {
+    particles.clear();
+    Object.entries(votesObj || {}).forEach(([clientId, side]) => {
+      const center = clusterCenter(side);
+      particles.set(clientId, {
+        side, x: center.x, y: center.y, tx: center.x, ty: center.y,
+        r: 7, phase: Math.random() * Math.PI * 2,
+      });
+    });
+    repack('yes');
+    repack('no');
+  }
+
+  function drawFrame(time) {
+    ctx.save();
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+    const w = canvas.width / devicePixelRatio;
+    const h = canvas.height / devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+
+    // 클러스터 레이블
+    const yc = clusterCenter('yes');
+    const nc = clusterCenter('no');
+    ctx.font = '700 15px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLOR_YES;
+    ctx.fillText('YES', yc.x, h * 0.5 - 110);
+    ctx.fillStyle = COLOR_NO;
+    ctx.fillText('NO', nc.x, h * 0.5 - 110);
+
+    particles.forEach((p) => {
+      p.x += (p.tx - p.x) * 0.12;
+      p.y += (p.ty - p.y) * 0.12;
+      const jitterX = Math.sin(time / 600 + p.phase) * 2;
+      const jitterY = Math.cos(time / 700 + p.phase) * 2;
+
+      ctx.beginPath();
+      ctx.arc(p.x + jitterX, p.y + jitterY, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.side === 'yes' ? COLOR_YES : COLOR_NO;
+      ctx.globalAlpha = 0.85;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+
+    ctx.restore();
+    rafHandle = requestAnimationFrame(drawFrame);
+  }
+
+  function startRenderLoop() {
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    resizeCanvas();
+    rafHandle = requestAnimationFrame(drawFrame);
+  }
+
+  function stopRenderLoop() {
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    rafHandle = null;
+  }
+
+  function updateTimerDisplay() {
+    if (!votingEndTime) return;
+    const remain = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000));
+    votingTimer.textContent = remain;
+  }
+
+  function applyState(state) {
+    currentMode = state.mode;
+
+    if (state.mode === 'chat') {
+      chatLayer.classList.remove('blurred');
+      votingLayer.classList.remove('active');
+      resultBanner.classList.remove('active');
+      stopRenderLoop();
+      if (timerInterval) clearInterval(timerInterval);
+      return;
+    }
+
+    // voting 또는 result
+    chatLayer.classList.add('blurred');
+    votingLayer.classList.add('active');
+    votingQuestion.textContent = state.question || '';
+    syncVotesFromState(state.votes);
+    startRenderLoop();
+
+    if (state.mode === 'voting') {
+      resultBanner.classList.remove('active');
+      votingTimer.style.display = 'inline-flex';
+      votingQuestion.style.display = 'block';
+      votingEndTime = state.votingEndTime;
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimerDisplay, 200);
+      updateTimerDisplay();
+    } else if (state.mode === 'result') {
+      // 질문/타이머 텍스트 숨기고 결과만 floating
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      votingQuestion.style.display = 'none';
+      const c = state.counts || { yes: 0, no: 0, total: 0 };
+      const yesPct = c.total ? Math.round((c.yes / c.total) * 100) : 0;
+      const noPct = 100 - yesPct;
+      resultLine.textContent = `YES ${yesPct}%  ·  NO ${noPct}%`;
+      resultBanner.classList.add('active');
+    }
+  }
+
+  socket.on('state', applyState);
+  socket.on('modeChange', applyState);
+
+  socket.on('voteUpdate', (data) => {
+    if (currentMode !== 'voting') return;
+    setVote(data.clientId, data.choice);
+  });
+
+  socket.emit('identify', 'led-screen-' + Math.random().toString(36).slice(2));
 </script>
 </body>
 </html>

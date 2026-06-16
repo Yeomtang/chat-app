@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>제작진 관리 (임시)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      padding: 24px 16px 60px;
+    }
+
+    .wrap { max-width: 480px; margin: 0 auto; }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1c1c1e;
+      margin-bottom: 4px;
+    }
+
+    .note {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+
+    .card h2 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #8e8e93;
+      margin-bottom: 12px;
+      letter-spacing: 0.3px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #f2f2f7;
+      font-size: 14px;
+    }
+
+    .status-row:last-child { border-bottom: none; }
+    .status-label { color: #8e8e93; }
+    .status-value { color: #1c1c1e; font-weight: 600; }
+
+    .mode-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .mode-chat { background: #e9e9eb; color: #1c1c1e; }
+    .mode-voting { background: #fff3cd; color: #946c00; }
+    .mode-result { background: #d4edda; color: #19692c; }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: #3a3a3c;
+      margin-bottom: 6px;
+      margin-top: 14px;
+      font-weight: 600;
+    }
+    label:first-of-type { margin-top: 0; }
+
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      background: #f2f2f7;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 15px;
+      font-family: inherit;
+      color: #1c1c1e;
+    }
+
+    .btn {
+      width: 100%;
+      border: none;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      margin-top: 10px;
+      transition: opacity 0.15s;
+    }
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-primary { background: #1c1c1e; color: #fff; }
+    .btn-danger { background: #ff3b30; color: #fff; }
+    .btn-secondary { background: #e9e9eb; color: #1c1c1e; }
+
+    .preset-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .preset-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #f2f2f7;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .preset-item span {
+      flex: 1;
+      font-size: 14px;
+      color: #1c1c1e;
+    }
+
+    .preset-item button {
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .preset-item .remove-btn {
+      background: none;
+      color: #ff3b30;
+      font-size: 16px;
+      padding: 4px 6px;
+    }
+
+    .empty-hint {
+      font-size: 13px;
+      color: #aeaeb2;
+      text-align: center;
+      padding: 10px 0;
+    }
+
+    .add-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .add-row input { flex: 1; }
+    .add-row button {
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 0 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>제작진 관리 화면 (임시)</h1>
+  <p class="note">정식 관리자 화면이 만들어지기 전까지 사용하는 테스트용 컨트롤 패널입니다.</p>
+
+  <!-- 현재 상태 -->
+  <div class="card">
+    <h2>현재 상태</h2>
+    <div class="status-row">
+      <span class="status-label">모드</span>
+      <span class="status-value"><span class="mode-badge mode-chat" id="mode-badge">CHAT</span></span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">질문</span>
+      <span class="status-value" id="status-question">-</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">YES / NO</span>
+      <span class="status-value" id="status-counts">0 / 0</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">남은 시간</span>
+      <span class="status-value" id="status-timer">-</span>
+    </div>
+  </div>
+
+  <!-- 질문 미리 등록 -->
+  <div class="card">
+    <h2>질문 준비 (순서대로 실행)</h2>
+    <div class="preset-list" id="preset-list">
+      <div class="empty-hint">등록된 질문이 없습니다</div>
+    </div>
+    <div class="add-row">
+      <input type="text" id="preset-input" placeholder="질문 입력 후 추가">
+      <button onclick="addPreset()">추가</button>
+    </div>
+  </div>
+
+  <!-- 즉석 질문 / 컨트롤 -->
+  <div class="card">
+    <h2>즉석 질문 시작</h2>
+    <label>질문 내용</label>
+    <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?">
+    <label>투표 시간 (초)</label>
+    <input type="number" id="duration-input" value="30" min="5">
+    <button class="btn btn-primary" onclick="startVotingNow()">투표 시작</button>
+  </div>
+
+  <div class="card">
+    <h2>진행 제어</h2>
+    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>지금 투표 종료</button>
+    <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  let presets = JSON.parse(localStorage.getItem('presets') || '[]');
+  let currentState = null;
+  let timerInterval = null;
+
+  socket.on('connect', () => {
+    socket.emit('admin:getState');
+  });
+
+  socket.on('state', (state) => {
+    currentState = state;
+    renderState();
+  });
+
+  socket.on('modeChange', (state) => {
+    currentState = state;
+    renderState();
+  });
+
+  socket.on('voteUpdate', (data) => {
+    if (currentState) {
+      currentState.counts = data.counts;
+      renderCounts();
+    }
+  });
+
+  function renderState() {
+    if (!currentState) return;
+    const badge = document.getElementById('mode-badge');
+    badge.textContent = currentState.mode.toUpperCase();
+    badge.className = 'mode-badge mode-' + currentState.mode;
+
+    document.getElementById('status-question').textContent = currentState.question || '-';
+    renderCounts();
+
+    const endBtn = document.getElementById('end-btn');
+    const returnBtn = document.getElementById('return-btn');
+    endBtn.disabled = currentState.mode !== 'voting';
+    returnBtn.disabled = currentState.mode === 'chat';
+
+    if (timerInterval) clearInterval(timerInterval);
+    if (currentState.mode === 'voting' && currentState.votingEndTime) {
+      timerInterval = setInterval(updateTimerDisplay, 200);
+      updateTimerDisplay();
+    } else {
+      document.getElementById('status-timer').textContent = '-';
+    }
+  }
+
+  function renderCounts() {
+    const c = currentState.counts || { yes: 0, no: 0 };
+    document.getElementById('status-counts').textContent = `${c.yes} / ${c.no}`;
+  }
+
+  function updateTimerDisplay() {
+    const remain = Math.max(0, Math.ceil((currentState.votingEndTime - Date.now()) / 1000));
+    document.getElementById('status-timer').textContent = remain + '초';
+    if (remain <= 0) clearInterval(timerInterval);
+  }
+
+  function startVotingNow() {
+    const question = document.getElementById('question-input').value.trim();
+    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    if (!question) { alert('질문을 입력해주세요'); return; }
+    socket.emit('admin:startVoting', { question, duration });
+  }
+
+  function endVotingNow() {
+    socket.emit('admin:endVoting');
+  }
+
+  function returnToChatNow() {
+    socket.emit('admin:returnToChat');
+  }
+
+  // ── 질문 사전 등록 (로컬 저장, 순서대로 실행) ──
+  function renderPresets() {
+    const list = document.getElementById('preset-list');
+    if (presets.length === 0) {
+      list.innerHTML = '<div class="empty-hint">등록된 질문이 없습니다</div>';
+      return;
+    }
+    list.innerHTML = '';
+    presets.forEach((q, i) => {
+      const item = document.createElement('div');
+      item.className = 'preset-item';
+      item.innerHTML = `
+        <span>${i + 1}. ${q}</span>
+        <button onclick="runPreset(${i})">실행</button>
+        <button class="remove-btn" onclick="removePreset(${i})">✕</button>
+      `;
+      list.appendChild(item);
+    });
+  }
+
+  function addPreset() {
+    const input = document.getElementById('preset-input');
+    const text = input.value.trim();
+    if (!text) return;
+    presets.push(text);
+    localStorage.setItem('presets', JSON.stringify(presets));
+    input.value = '';
+    renderPresets();
+  }
+
+  function runPreset(i) {
+    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    socket.emit('admin:startVoting', { question: presets[i], duration });
+  }
+
+  function removePreset(i) {
+    presets.splice(i, 1);
+    localStorage.setItem('presets', JSON.stringify(presets));
+    renderPresets();
+  }
+
+  renderPresets();
+</script>
+</body>
+</html>
