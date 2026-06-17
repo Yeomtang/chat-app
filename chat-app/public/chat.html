@@ -414,6 +414,52 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
+  // ── 닉네임 풀 생성 (25 × 25 = 625개) ──
+  const PREFIXES = [
+    '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
+    '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
+    '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
+    '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
+    '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
+  ];
+  const SUFFIXES = [
+    '사원', '대리', '과장', '차장', '부장',
+    '팀장', '인턴', '계약직', '신입', '3년차',
+    '5년차', '10년차', '직장인', '사무직', '영업사원',
+    '기획자', '디자이너', '개발자', '마케터', '경리',
+    '총무', '프리랜서', '워커', '비서', '실장',
+  ];
+
+  let nicknamePool = [];
+  let poolIndex = 0;
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function initNicknamePool() {
+    const pool = [];
+    for (const p of PREFIXES) {
+      for (const s of SUFFIXES) {
+        pool.push(`${p} ${s}`);
+      }
+    }
+    nicknamePool = shuffle(pool);
+    poolIndex = 0;
+  }
+
+  function getNewNickname() {
+    if (nicknamePool.length === 0 || poolIndex >= nicknamePool.length) {
+      initNicknamePool();
+    }
+    return nicknamePool[poolIndex++];
+  }
+
   let currentNickname = '';
   let socket;
   let nickSocket;
@@ -430,17 +476,14 @@
   const clientId = getClientId();
 
   function requestNickname() {
-    document.getElementById('nickname-display').textContent = '뽑는 중...';
+    currentNickname = getNewNickname();
+    document.getElementById('nickname-display').textContent = currentNickname;
+
     if (!nickSocket) {
       nickSocket = io();
-      nickSocket.on('assignedNickname', (name) => {
-        currentNickname = name;
-        document.getElementById('nickname-display').textContent = name;
-      });
-      // 연결 완료 후 요청 (타이밍 문제 방지)
+      // 연결 완료 후 identify 전송
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
-        nickSocket.emit('requestNickname');
       });
       // 이전 메시지 수신
       nickSocket.on('history', (messages) => {
@@ -457,9 +500,6 @@
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts));
-    } else {
-      // 이미 연결된 경우 바로 요청
-      nickSocket.emit('requestNickname');
     }
   }
 
