@@ -442,6 +442,17 @@
         nickSocket.emit('identify', clientId);
         nickSocket.emit('requestNickname');
       });
+      // 이전 메시지 수신
+      nickSocket.on('history', (messages) => {
+        document.getElementById('messages').innerHTML = ''; // 재연결 시 중복 방지
+        messages.forEach(addMessage);
+        scrollToBottom();
+      });
+      // 새 메시지 수신
+      nickSocket.on('chat', (msg) => {
+        addMessage(msg);
+        scrollToBottom();
+      });
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
@@ -551,18 +562,6 @@
 
     // 닉네임 요청에 쓰던 소켓을 채팅에 재사용
     socket = nickSocket;
-
-    // 이전 메시지 수신
-    socket.on('history', (messages) => {
-      messages.forEach(addMessage);
-      scrollToBottom();
-    });
-
-    // 새 메시지 수신
-    socket.on('chat', (msg) => {
-      addMessage(msg);
-      scrollToBottom();
-    });
 
     // UI 전환
     document.getElementById('entrance').style.display = 'none';
