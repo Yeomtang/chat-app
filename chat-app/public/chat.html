@@ -134,12 +134,38 @@
       display: none;
       position: absolute;
       inset: 0;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 28px;
-      gap: 18px;
       z-index: 30;
+    }
+
+    #voting-overlay.active { display: flex; }
+
+    /* 등장 모션: 작은 박스가 중앙에서 살짝 튕기듯 커지며 등장 */
+    #voting-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      width: 100%;
+      max-width: 320px;
+      background: #ffffff;
+      border-radius: 24px;
+      padding: 32px 24px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+      opacity: 0;
+      transform: scale(0.4);
+    }
+
+    #voting-overlay.active #voting-card {
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes voteCardIn {
+      0%   { opacity: 0; transform: scale(0.4); }
+      60%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 1; transform: scale(1); }
     }
 
     #voting-timer-phone {
@@ -393,20 +419,22 @@
 
   <!-- 투표 오버레이 -->
   <div id="voting-overlay">
-    <div id="voting-timer-phone">30</div>
-    <div id="voting-question-phone"></div>
-    <div id="voting-buttons">
-      <button class="vote-btn" id="vote-yes-btn" onclick="castVote('yes')">YES</button>
-      <button class="vote-btn" id="vote-no-btn" onclick="castVote('no')">NO</button>
-    </div>
-    <div id="voting-ratio">
-      <div class="ratio-bar">
-        <div id="ratio-fill-yes" style="width:0%"></div>
-        <div id="ratio-fill-no" style="width:0%"></div>
+    <div id="voting-card">
+      <div id="voting-timer-phone">30</div>
+      <div id="voting-question-phone"></div>
+      <div id="voting-buttons">
+        <button class="vote-btn" id="vote-yes-btn" onclick="castVote('yes')">YES</button>
+        <button class="vote-btn" id="vote-no-btn" onclick="castVote('no')">NO</button>
       </div>
-      <div class="ratio-text">
-        <span id="ratio-yes-pct">YES 0%</span>
-        <span id="ratio-no-pct">NO 0%</span>
+      <div id="voting-ratio">
+        <div class="ratio-bar">
+          <div id="ratio-fill-yes" style="width:0%"></div>
+          <div id="ratio-fill-no" style="width:0%"></div>
+        </div>
+        <div class="ratio-text">
+          <span id="ratio-yes-pct">YES 0%</span>
+          <span id="ratio-no-pct">NO 0%</span>
+        </div>
       </div>
     </div>
   </div>
@@ -481,10 +509,13 @@
 
     if (!nickSocket) {
       nickSocket = io();
-      // 연결 완료 후 identify 전송
+      // 연결 완료 후 identify + 닉네임 중복 확인 요청
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
+        nickSocket.emit('claimNickname', currentNickname);
       });
+      // 서버가 동시 접속자와의 닉네임 중복을 감지하면 새 닉네임으로 교체
+      nickSocket.on('nicknameReassigned', applyReassignedNickname);
       // 이전 메시지 수신
       nickSocket.on('history', (messages) => {
         document.getElementById('messages').innerHTML = ''; // 재연결 시 중복 방지
@@ -500,7 +531,21 @@
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts));
+    } else {
+      // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
+      nickSocket.emit('claimNickname', currentNickname);
     }
+  }
+
+  // 서버가 동시 중복을 감지해 새 닉네임을 내려주면 화면에 반영
+  function applyReassignedNickname(name) {
+    currentNickname = name;
+    const display = document.getElementById('nickname-display');
+    if (display) display.textContent = name;
+    const headerNick = document.getElementById('header-nickname');
+    if (headerNick) headerNick.textContent = name;
+    const headerAvatar = document.getElementById('header-avatar');
+    if (headerAvatar) headerAvatar.textContent = name.charAt(0);
   }
 
   // ══════════════════════════════════
@@ -517,7 +562,7 @@
     const chatContent = document.getElementById('chat-content');
 
     if (state.mode === 'chat') {
-      overlay.style.display = 'none';
+      overlay.classList.remove('active');
       chatContent.classList.remove('blurred');
       myVote = null;
       stopPhoneTimer();
@@ -526,7 +571,7 @@
     }
 
     chatContent.classList.add('blurred');
-    overlay.style.display = 'flex';
+    overlay.classList.add('active');
     myVote = state.myVote || myVote;
 
     const questionEl = document.getElementById('voting-question-phone');

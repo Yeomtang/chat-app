@@ -49,6 +49,18 @@ function assignNickname() {
   return nicknamePool[poolIndex++];
 }
 
+// ── 닉네임 중복 방지 ──
+// 닉네임 자체는 클라이언트가 즉시 로컬에서 고르지만(빠른 UX),
+// 서버는 현재 접속 중인 소켓들의 닉네임을 추적해 동시 중복만 감지/교체한다.
+const activeNicknames = new Map(); // socket.id -> nickname
+
+function isNicknameTaken(name, excludeSocketId) {
+  for (const [sid, n] of activeNicknames) {
+    if (sid !== excludeSocketId && n === name) return true;
+  }
+  return false;
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 라우트
@@ -145,9 +157,26 @@ io.on('connection', (socket) => {
     socket.emit('state', publicState(clientId));
   });
 
-  // 닉네임 요청 시 서버에서 고유 닉네임 배정
+  // 닉네임 요청 시 서버에서 고유 닉네임 배정 (레거시, 현재는 클라이언트가 즉시 로컬 배정)
   socket.on('requestNickname', () => {
     socket.emit('assignedNickname', assignNickname());
+  });
+
+  // 클라이언트가 로컬에서 즉시 고른 닉네임 등록 + 동시 중복 확인
+  socket.on('claimNickname', (name) => {
+    if (!name || typeof name !== 'string') return;
+    if (isNicknameTaken(name, socket.id)) {
+      let fresh;
+      let guard = 0;
+      do {
+        fresh = assignNickname();
+        guard++;
+      } while (isNicknameTaken(fresh, socket.id) && guard < nicknamePool.length);
+      activeNicknames.set(socket.id, fresh);
+      socket.emit('nicknameReassigned', fresh);
+    } else {
+      activeNicknames.set(socket.id, name);
+    }
   });
 
   // 새 연결에 최근 메시지 전송
@@ -203,6 +232,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    activeNicknames.delete(socket.id);
     console.log('연결 끊김:', socket.id);
   });
 });
