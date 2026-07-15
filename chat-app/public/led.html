@@ -321,12 +321,17 @@
       line-height: 1.2;
       word-break: keep-all;
       opacity: 0;
+      /* 답변마다 랜덤 오프셋/기울기(JS에서 --dx/--dy/--rot 지정) —
+         한 줄로 이어져 한 사람 답변처럼 보이는 것 방지 */
+      --dx: 0px;
+      --dy: 0px;
+      --rot: 0deg;
       animation: wordIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
     @keyframes wordIn {
-      0%   { opacity: 0; transform: scale(0); }
-      100% { opacity: 1; transform: scale(1); }
+      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
+      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
     }
 
     /* 1등 단어: 마지막에 크게 튕기며 등장 */
@@ -335,9 +340,9 @@
     }
 
     @keyframes wordInTop {
-      0%   { opacity: 0; transform: scale(0); }
-      60%  { opacity: 1; transform: scale(1.3); }
-      100% { opacity: 1; transform: scale(1); }
+      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
+      60%  { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1.3); }
+      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
     }
 
     .cloud-empty {
@@ -902,7 +907,11 @@
   }
 
   // ── 주관식: 워드클라우드 렌더 ──
-  const CLOUD_COLORS = ['#1c1c1e', '#0a84ff', '#34c759', '#ff9f0a', '#ff375f', '#5e5ce6'];
+  // 인접한 답변이 같은 색이 되지 않도록 팔레트를 순환 배정 (랜덤 X)
+  const CLOUD_COLORS = [
+    '#1c1c1e', '#0a84ff', '#34c759', '#ff9f0a', '#ff375f',
+    '#5e5ce6', '#00a8a8', '#bf5af2', '#ac8e68', '#d4380d',
+  ];
 
   function renderCloud(cloud) {
     cloudWrap.innerHTML = '';
@@ -931,7 +940,7 @@
       revealOrder.forEach((entry, i) => delayByWord.set(entry, i * step));
       delayByWord.set(topEntry, (cloud.length - 1) * step + 600); // 1등만 추가 딜레이
 
-      shuffled.forEach((entry) => {
+      shuffled.forEach((entry, i) => {
         const { word, count } = entry;
         const span = document.createElement('span');
         const isTop = entry === topEntry;
@@ -939,7 +948,12 @@
         // 빈도 비례 18~92px — 지수(^1.6)를 줘서 상위 단어가 확실히 크게
         const scale = maxCount > 1 ? (count - 1) / (maxCount - 1) : 0.5;
         span.style.fontSize = Math.round(18 + 74 * Math.pow(scale, 1.6)) + 'px';
-        span.style.color = CLOUD_COLORS[Math.floor(Math.random() * CLOUD_COLORS.length)];
+        // 표시 순서대로 팔레트 순환 — 이웃 답변끼리 항상 다른 색
+        span.style.color = CLOUD_COLORS[i % CLOUD_COLORS.length];
+        // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼
+        span.style.setProperty('--dx', Math.round(Math.random() * 30 - 15) + 'px');
+        span.style.setProperty('--dy', Math.round(Math.random() * 90 - 45) + 'px');
+        span.style.setProperty('--rot', (isTop ? 0 : (Math.random() * 10 - 5).toFixed(1)) + 'deg');
         span.style.animationDelay = delayByWord.get(entry) + 'ms';
         span.textContent = word;
         inner.appendChild(span);

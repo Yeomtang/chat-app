@@ -162,7 +162,7 @@
       gap: 8px;
       margin-top: 10px;
     }
-    .add-row input { flex: 1; }
+    .add-row input { flex: 1; min-width: 0; }
     .add-row select {
       background: #f2f2f7;
       border: none;
@@ -247,6 +247,7 @@
 
     .answer-toolbar input {
       flex: 1;
+      min-width: 0;
       font-size: 14px;
       padding: 9px 12px;
     }
@@ -264,6 +265,51 @@
     }
 
     .answer-toolbar button.on { background: #ff9f0a; color: #fff; }
+
+    /* ── 답변 목록 전체화면 모드 ── */
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    #answers-expand-btn {
+      background: #e9e9eb;
+      color: #1c1c1e;
+      border: none;
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    body.answers-fullscreen #answers-card {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      margin: 0;
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    }
+
+    body.answers-fullscreen #answers-card .answer-list {
+      flex: 1;
+      max-height: none;
+    }
+
+    body.answers-fullscreen #answers-expand-btn {
+      background: #1c1c1e;
+      color: #fff;
+    }
+
+    /* 전체화면 중 뒤 배경 스크롤 잠금 */
+    body.answers-fullscreen { overflow: hidden; }
     .add-row button {
       background: #1c1c1e;
       color: #fff;
@@ -319,8 +365,11 @@
   </div>
 
   <!-- 주관식 답변 목록 / 픽 -->
-  <div class="card">
-    <h2>주관식 답변 목록 — 픽하면 LED에 크게 표시</h2>
+  <div class="card" id="answers-card">
+    <h2 class="card-title-row">
+      <span>주관식 답변 목록 — 픽하면 LED에 크게 표시</span>
+      <button id="answers-expand-btn" onclick="toggleAnswersFullscreen()">전체화면</button>
+    </h2>
     <p class="note" style="margin-bottom: 10px;">훑으면서 괜찮은 답변에 ☆(후보)를 눌러두고, [픽]을 누르면 LED 중앙에 스포트라이트로 8초간 표시됩니다. 별표는 관리자 화면끼리 공유되므로 여러 명이 나눠서 볼 수 있습니다.</p>
     <div class="answer-toolbar">
       <input type="text" id="answer-search" placeholder="키워드 검색">
@@ -478,6 +527,12 @@
     else starredIds.delete(data.id);
     renderAnswers();
   });
+
+  // 답변 목록 전체화면 토글 — 작가가 답변 선별에만 집중할 수 있는 모드
+  function toggleAnswersFullscreen() {
+    const on = document.body.classList.toggle('answers-fullscreen');
+    document.getElementById('answers-expand-btn').textContent = on ? '닫기' : '전체화면';
+  }
 
   function toggleStarredOnly() {
     starredOnly = !starredOnly;
