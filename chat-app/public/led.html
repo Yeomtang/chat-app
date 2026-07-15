@@ -264,6 +264,121 @@
       display: block;
     }
 
+    /* ── 주관식: 답변 흘려보내기 ── */
+    #answer-stream {
+      display: none;
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #answer-stream.active { display: block; }
+
+    .answer-float {
+      position: absolute;
+      white-space: nowrap;
+      background: #f2f2f7;
+      color: #1c1c1e;
+      font-weight: 600;
+      padding: 12px 22px;
+      border-radius: 100px;
+      will-change: transform;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+    }
+
+    /* ── 주관식: 워드클라우드 ── */
+    #cloud-wrap {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 24%;
+      bottom: 12%;
+      align-items: center;
+      justify-content: center;
+      padding: 0 36px;
+      z-index: 1;
+    }
+
+    #cloud-wrap.active {
+      display: flex;
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    #cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 20px;
+      justify-content: center;
+      align-items: center;
+      max-width: 100%;
+    }
+
+    .cloud-word {
+      font-weight: 700; /* 800은 한글 시스템 폰트에 없어 가짜 굵기(획 뭉개짐)가 생김 */
+      line-height: 1.2;
+      word-break: keep-all;
+      opacity: 0;
+      animation: wordIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes wordIn {
+      0%   { opacity: 0; transform: scale(0); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* 1등 단어: 마지막에 크게 튕기며 등장 */
+    .cloud-word.top {
+      animation: wordInTop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes wordInTop {
+      0%   { opacity: 0; transform: scale(0); }
+      60%  { opacity: 1; transform: scale(1.3); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    .cloud-empty {
+      font-size: 17px;
+      color: #8e8e93;
+      font-weight: 600;
+    }
+
+    /* ── 제작진 픽 스포트라이트 ── */
+    #spotlight {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      padding: 0 36px;
+      z-index: 3; /* 흘려보내기/워드클라우드 위, 리액션(25) 아래 */
+      pointer-events: none;
+    }
+
+    #spotlight.active { display: flex; }
+
+    #spotlight-card {
+      max-width: 86%;
+      background: #1c1c1e;
+      color: #fff;
+      font-size: 30px;
+      font-weight: 700; /* 800은 한글 폰트 가짜 굵기 문제 */
+      line-height: 1.35;
+      text-align: center;
+      padding: 28px 36px;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
+    #spotlight.active #spotlight-card {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
     /* 결과 퍼센트: 공 클러스터 아래쪽 가까이 배치 (화면 최하단 X) */
     #result-banner {
       display: none;
@@ -331,6 +446,14 @@
     </div>
     <div id="voting-canvas-wrap">
       <canvas id="voting-canvas"></canvas>
+    </div>
+    <!-- 주관식: 답변 흘려보내기 -->
+    <div id="answer-stream"></div>
+    <!-- 주관식: 마감 후 워드클라우드 -->
+    <div id="cloud-wrap"></div>
+    <!-- 제작진 픽 → 스포트라이트 카드 -->
+    <div id="spotlight">
+      <div id="spotlight-card"></div>
     </div>
     <div id="result-banner">
       <div class="result-line" id="result-line">YES 00% · NO 00%</div>
@@ -596,6 +719,9 @@
     resultLine.textContent = `YES ${yesPct}%  ·  NO ${noPct}%`;
   }
 
+  const answerStream = document.getElementById('answer-stream');
+  const cloudWrap = document.getElementById('cloud-wrap');
+
   function applyState(state) {
     currentMode = state.mode;
 
@@ -606,24 +732,43 @@
       chatLayer.classList.remove('blurred');
       votingLayer.classList.remove('active');
       resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      clearSpotlight();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
       return;
     }
 
-    // voting 또는 result
+    // 질문 모드 공통 (voting/result/subjective/subjectiveResult)
     chatLayer.classList.add('blurred');
     votingLayer.classList.add('active');
     votingQuestion.textContent = state.question || '';
-    applyCounts('yes', state.counts ? state.counts.yes : 0);
-    applyCounts('no', state.counts ? state.counts.no : 0);
-    startRenderLoop();
+    votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
+
+    const isYesNo = state.mode === 'voting' || state.mode === 'result';
+    if (isYesNo) {
+      // 객관식: 공 클러스터 렌더
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      clearSpotlight();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+      applyCounts('yes', state.counts ? state.counts.yes : 0);
+      applyCounts('no', state.counts ? state.counts.no : 0);
+      startRenderLoop();
+    } else {
+      // 주관식: 공 캔버스 정지 + 잔상 제거
+      stopRenderLoop();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
 
     if (state.mode === 'voting') {
       // 투표 중엔 숫자 배너 없이 공 클러스터 이동만으로 실시간 현황을 보여줌
       resultBanner.classList.remove('active');
       votingTimer.style.display = 'inline-flex';
-      votingQuestion.style.display = 'block';
       votingEndTime = state.votingEndTime;
       if (timerInterval) clearInterval(timerInterval);
       timerInterval = setInterval(updateTimerDisplay, 200);
@@ -632,10 +777,175 @@
       // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
       if (timerInterval) clearInterval(timerInterval);
       votingTimer.style.display = 'none';
-      votingQuestion.style.display = 'block';
       updateResultLine(state.counts);
       resultBanner.classList.add('active');
+    } else if (state.mode === 'subjective') {
+      // 답변 접수 중: 타이머 없음, 답변 흘려보내기
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+      answerStream.classList.add('active');
+    } else if (state.mode === 'subjectiveResult') {
+      // 마감: 흘려보내기 정리 후 워드클라우드
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      renderCloud(state.cloud || []);
+      cloudWrap.classList.add('active');
     }
+  }
+
+  // ── 주관식: 답변 흘려보내기 (대기열 + 레인 방식) ──
+  // 폭주 시에도 답변을 버리지 않고 줄 세워 고른 밀도로 배출하고,
+  // 가로 레인에 배정해 겹침을 방지한다.
+  const answerQueue = [];
+  const MAX_QUEUE = 200;        // 대기열 상한 (초과 시 오래된 것부터 포기)
+  const LANE_COUNT = 8;         // 가로 레인 수
+  const LANE_COOLDOWN = 3500;   // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
+  const laneBusyUntil = new Array(LANE_COUNT).fill(0);
+  let spawnTimer = null;
+
+  socket.on('subjectiveAnswer', (data) => {
+    if (currentMode !== 'subjective') return;
+    if (!data || typeof data.text !== 'string') return;
+    answerQueue.push(data.text);
+    if (answerQueue.length > MAX_QUEUE) answerQueue.shift();
+    scheduleSpawn();
+  });
+
+  function scheduleSpawn() {
+    if (spawnTimer) return;
+    const tick = () => {
+      if (currentMode !== 'subjective' || answerQueue.length === 0) {
+        spawnTimer = null;
+        return;
+      }
+      spawnAnswerFloat(answerQueue.shift());
+      // 밀린 답변이 많을수록 배출 간격을 자동으로 줄임
+      const delay = answerQueue.length > 60 ? 150
+                  : answerQueue.length > 25 ? 250
+                  : 420;
+      spawnTimer = setTimeout(tick, delay);
+    };
+    spawnTimer = setTimeout(tick, 50);
+  }
+
+  function clearAnswerStream() {
+    answerQueue.length = 0;
+    if (spawnTimer) { clearTimeout(spawnTimer); spawnTimer = null; }
+    answerStream.innerHTML = '';
+  }
+
+  function pickLane() {
+    const now = performance.now();
+    const free = [];
+    for (let i = 0; i < LANE_COUNT; i++) {
+      if (laneBusyUntil[i] <= now) free.push(i);
+    }
+    let lane;
+    if (free.length > 0) {
+      lane = free[Math.floor(Math.random() * free.length)];
+    } else {
+      // 모두 사용 중이면 가장 먼저 비는 레인
+      lane = laneBusyUntil.indexOf(Math.min(...laneBusyUntil));
+    }
+    laneBusyUntil[lane] = now + LANE_COOLDOWN;
+    return lane;
+  }
+
+  function spawnAnswerFloat(text) {
+    const el = document.createElement('div');
+    el.className = 'answer-float';
+    el.textContent = text;
+    el.style.fontSize = Math.round(18 + Math.random() * 12) + 'px';
+    // 레인 배치: 14%~82% 사이를 균등 분할
+    const lane = pickLane();
+    el.style.top = (14 + lane * (68 / (LANE_COUNT - 1))) + '%';
+    answerStream.appendChild(el);
+
+    const w = el.offsetWidth;
+    const sw = answerStream.clientWidth;
+    el.style.left = sw + 'px'; // 오른쪽 밖에서 시작
+    el.animate([
+      { transform: 'translateX(0)' },
+      { transform: `translateX(${-(sw + w + 60)}px)` },
+    ], {
+      duration: 9000 + Math.random() * 5000, // 9~14초에 걸쳐 통과
+      easing: 'linear',
+    }).onfinish = () => el.remove();
+  }
+
+  // ── 제작진 픽 → 스포트라이트 카드 ──
+  const spotlight = document.getElementById('spotlight');
+  const spotlightCard = document.getElementById('spotlight-card');
+  let spotlightTimer = null;
+  const SPOTLIGHT_DURATION = 8000; // 표시 유지 시간(ms)
+
+  socket.on('answerPicked', (data) => {
+    if (currentMode !== 'subjective' && currentMode !== 'subjectiveResult') return;
+    if (!data || typeof data.text !== 'string') return;
+    spotlightCard.textContent = data.text;
+    spotlight.classList.remove('active');
+    void spotlight.offsetWidth; // 연속 픽 시 애니메이션 재시작
+    spotlight.classList.add('active');
+    if (spotlightTimer) clearTimeout(spotlightTimer);
+    spotlightTimer = setTimeout(() => spotlight.classList.remove('active'), SPOTLIGHT_DURATION);
+  });
+
+  function clearSpotlight() {
+    if (spotlightTimer) { clearTimeout(spotlightTimer); spotlightTimer = null; }
+    spotlight.classList.remove('active');
+  }
+
+  // ── 주관식: 워드클라우드 렌더 ──
+  const CLOUD_COLORS = ['#1c1c1e', '#0a84ff', '#34c759', '#ff9f0a', '#ff375f', '#5e5ce6'];
+
+  function renderCloud(cloud) {
+    cloudWrap.innerHTML = '';
+    const inner = document.createElement('div');
+    inner.id = 'cloud';
+
+    if (!cloud.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cloud-empty';
+      empty.textContent = '접수된 답변이 없습니다';
+      inner.appendChild(empty);
+    } else {
+      const maxCount = cloud[0].count; // 서버가 빈도순 정렬해서 보냄
+      const topEntry = cloud[0];       // 1등 단어 (마지막에 크게 등장)
+      // 큰 단어가 한쪽에 몰리지 않게 표시 순서는 섞음
+      const shuffled = [...cloud];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      // 등장 순서: 빈도 낮은 것부터 하나씩 → 1등은 잠깐 뜸 들인 뒤 마지막에 등장
+      const revealOrder = [...cloud].reverse(); // 빈도 오름차순
+      const step = Math.max(80, Math.min(250, Math.round(4000 / cloud.length)));
+      const delayByWord = new Map();
+      revealOrder.forEach((entry, i) => delayByWord.set(entry, i * step));
+      delayByWord.set(topEntry, (cloud.length - 1) * step + 600); // 1등만 추가 딜레이
+
+      shuffled.forEach((entry) => {
+        const { word, count } = entry;
+        const span = document.createElement('span');
+        const isTop = entry === topEntry;
+        span.className = 'cloud-word' + (isTop ? ' top' : '');
+        // 빈도 비례 18~92px — 지수(^1.6)를 줘서 상위 단어가 확실히 크게
+        const scale = maxCount > 1 ? (count - 1) / (maxCount - 1) : 0.5;
+        span.style.fontSize = Math.round(18 + 74 * Math.pow(scale, 1.6)) + 'px';
+        span.style.color = CLOUD_COLORS[Math.floor(Math.random() * CLOUD_COLORS.length)];
+        span.style.animationDelay = delayByWord.get(entry) + 'ms';
+        span.textContent = word;
+        inner.appendChild(span);
+      });
+    }
+    cloudWrap.appendChild(inner);
   }
 
   socket.on('state', applyState);

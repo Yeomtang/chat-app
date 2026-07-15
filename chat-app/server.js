@@ -80,16 +80,41 @@ const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
 // ── 투표(질문) 상태 관리 ──
-// mode: 'chat' | 'voting' | 'result'
+// mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult'
+//  - voting/result: 객관식(Yes/No)
+//  - subjective/subjectiveResult: 주관식(자유 텍스트, 제작진 수동 마감 → 워드클라우드)
 const appState = {
   mode: 'chat',
   question: null,
-  votingDuration: null,   // 초
-  votingEndTime: null,    // epoch ms
+  votingDuration: null,   // 초 (객관식 전용)
+  votingEndTime: null,    // epoch ms (객관식 전용)
   votes: {},              // clientId -> 'yes' | 'no'
+  answers: {},            // clientId -> text (주관식, 1인 1회)
+  answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
+  pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
+  starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
 };
+
+const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 제한
+
+// 주관식 답변 → 워드클라우드용 빈도 집계 (상위 40개)
+// 단어로 쪼개지 않고 답변 전체를 한 덩어리로 집계 — "나 빼고 다" 같은 문구형 답변의
+// 어순/의미가 보존되고, 같은 답변을 쓴 사람이 많을수록 그 문구가 커진다.
+function computeCloud() {
+  const freq = new Map(); // 정규화 문구 -> { word, count }
+  for (const text of Object.values(appState.answers)) {
+    const norm = text.replace(/\s+/g, ' ').trim(); // 공백만 정리
+    if (!norm) continue;
+    const entry = freq.get(norm);
+    if (entry) entry.count += 1;
+    else freq.set(norm, { word: norm, count: 1 });
+  }
+  return [...freq.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 40);
+}
 
 function computeCounts() {
   let yes = 0, no = 0;
@@ -109,6 +134,9 @@ function publicState(forClientId) {
     votes: appState.votes, // clientId -> choice (LED/관리자가 전체 분포를 그리는 데 필요)
     counts: computeCounts(),
     myVote: forClientId ? (appState.votes[forClientId] || null) : null,
+    answerCount: Object.keys(appState.answers).length,
+    myAnswered: forClientId ? !!appState.answers[forClientId] : null,
+    cloud: appState.mode === 'subjectiveResult' ? computeCloud() : null,
     chatPaused: appState.chatPaused,
   };
 }
@@ -120,11 +148,39 @@ function startVoting(question, duration) {
   appState.votingDuration = duration;
   appState.votingEndTime = Date.now() + duration * 1000;
   appState.votes = {};
+  appState.answers = {};
+  appState.answerList = [];
+  appState.pickedAnswers = [];
+  appState.starredAnswers = [];
   io.emit('modeChange', publicState());
 
   appState.timerHandle = setTimeout(() => {
     endVoting();
   }, duration * 1000);
+}
+
+// ── 주관식 질문 (타이머 없음, 제작진 수동 마감) ──
+function startSubjective(question) {
+  if (appState.timerHandle) {
+    clearTimeout(appState.timerHandle);
+    appState.timerHandle = null;
+  }
+  appState.mode = 'subjective';
+  appState.question = question;
+  appState.votingDuration = null;
+  appState.votingEndTime = null;
+  appState.votes = {};
+  appState.answers = {};
+  appState.answerList = [];
+  appState.pickedAnswers = [];
+  appState.starredAnswers = [];
+  io.emit('modeChange', publicState());
+}
+
+function endSubjective() {
+  if (appState.mode !== 'subjective') return;
+  appState.mode = 'subjectiveResult';
+  io.emit('modeChange', publicState()); // cloud 포함됨
 }
 
 function endVoting() {
@@ -147,6 +203,10 @@ function returnToChat() {
   appState.votingDuration = null;
   appState.votingEndTime = null;
   appState.votes = {};
+  appState.answers = {};
+  appState.answerList = [];
+  appState.pickedAnswers = [];
+  appState.starredAnswers = [];
   io.emit('modeChange', publicState());
 }
 
@@ -206,7 +266,7 @@ io.on('connection', (socket) => {
   // 투표 중엔 차단(답변에만 집중), 소켓당 3초에 10회로 스팸 제한
   socket.on('reaction', (data) => {
     const { type } = data || {};
-    if (appState.mode === 'voting') return;
+    if (appState.mode === 'voting' || appState.mode === 'subjective') return; // 답변 집중 구간엔 차단
     if (type !== 'heart' && type !== 'thumbs' && type !== 'down') return;
     const now = Date.now();
     if (!socket._reactionTimes) socket._reactionTimes = [];
@@ -231,6 +291,27 @@ io.on('connection', (socket) => {
     });
   });
 
+  // 주관식 답변 (1인 1회, 20자 제한)
+  socket.on('answer', (data) => {
+    if (appState.mode !== 'subjective') return;
+    if (!socket.clientId) return;
+    if (appState.answers[socket.clientId]) return; // 이미 답변함
+    const text = (typeof (data && data.text) === 'string' ? data.text : '')
+      .trim().slice(0, MAX_ANSWER_LENGTH);
+    if (!text) return;
+
+    appState.answers[socket.clientId] = text;
+    const entry = { id: appState.answerList.length + 1, text };
+    appState.answerList.push(entry);
+    // LED 흘려보내기 + 관리자 목록/카운트용 (익명: 텍스트만 공개)
+    io.emit('subjectiveAnswer', {
+      id: entry.id,
+      text,
+      answerCount: Object.keys(appState.answers).length,
+    });
+    socket.emit('answerAccepted'); // 본인 확인용
+  });
+
   // ── 관리자(제작진) 전용 이벤트 ──
   socket.on('admin:startVoting', (data) => {
     const question = (data && data.question || '').trim();
@@ -241,6 +322,47 @@ io.on('connection', (socket) => {
 
   socket.on('admin:endVoting', () => {
     endVoting();
+  });
+
+  socket.on('admin:startSubjective', (data) => {
+    const question = (data && data.question || '').trim();
+    if (!question) return;
+    startSubjective(question);
+  });
+
+  socket.on('admin:endSubjective', () => {
+    endSubjective();
+  });
+
+  // 관리자: 답변 전체 목록 요청 (제작진이 훑어보고 픽하기 위함)
+  socket.on('admin:getAnswers', () => {
+    socket.emit('answerList', {
+      answers: appState.answerList,
+      picked: appState.pickedAnswers,
+      starred: appState.starredAnswers,
+    });
+  });
+
+  // 관리자: 별표(후보) 토글 — 작가 1차 선별용, 모든 관리자 화면에 공유
+  socket.on('admin:toggleStar', (data) => {
+    const id = data && data.id;
+    const entry = appState.answerList.find(a => a.id === id);
+    if (!entry) return;
+    const idx = appState.starredAnswers.indexOf(id);
+    const starred = idx === -1;
+    if (starred) appState.starredAnswers.push(id);
+    else appState.starredAnswers.splice(idx, 1);
+    io.emit('answerStarred', { id, starred });
+  });
+
+  // 관리자: 답변 픽 → LED 스포트라이트로 크게 표시 (접수 중/마감 후 모두 가능)
+  socket.on('admin:pickAnswer', (data) => {
+    const id = data && data.id;
+    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return;
+    const entry = appState.answerList.find(a => a.id === id);
+    if (!entry) return;
+    if (!appState.pickedAnswers.includes(id)) appState.pickedAnswers.push(id);
+    io.emit('answerPicked', { id: entry.id, text: entry.text });
   });
 
   socket.on('admin:returnToChat', () => {

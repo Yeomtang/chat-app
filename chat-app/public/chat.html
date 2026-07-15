@@ -246,6 +246,64 @@
       color: #3a3a3c;
     }
 
+    /* ── 주관식 답변 입력 ── */
+    #subjective-wrap {
+      display: none;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    #subjective-wrap.active { display: block; }
+
+    #subjective-form {
+      display: flex;
+      gap: 8px;
+    }
+
+    #answer-input {
+      flex: 1;
+      background: #f2f2f7;
+      border: none;
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 16px;
+      font-family: inherit;
+      color: #1c1c1e;
+      outline: none;
+    }
+
+    #answer-input::placeholder { color: #aeaeb2; }
+
+    #answer-submit {
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      padding: 0 18px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      flex-shrink: 0;
+    }
+
+    #answer-submit:disabled { opacity: 0.4; cursor: default; }
+
+    #answer-done {
+      display: none;
+      background: #e9f9ed;
+      color: #1e8a3c;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    #subjective-wrap.answered #subjective-form { display: none; }
+    #subjective-wrap.answered #answer-done { display: block; }
+
     /* ── 결과 모드 붐업/붐따 ── */
     #result-react {
       display: none;
@@ -519,6 +577,15 @@
         </div>
       </div>
 
+      <!-- 주관식 모드 전용: 자유 텍스트 답변 (1인 1회, 20자) -->
+      <div id="subjective-wrap">
+        <div id="subjective-form">
+          <input type="text" id="answer-input" maxlength="20" placeholder="20자 이내로 답해주세요">
+          <button id="answer-submit" onclick="submitAnswer()">보내기</button>
+        </div>
+        <div id="answer-done">답변이 접수됐어요! LED 화면을 봐주세요 👀</div>
+      </div>
+
       <!-- 결과 모드 전용: 결과에 붐업/붐따로 반응 -->
       <div id="result-react">
         <div id="result-react-hint">이 결과, 어떻게 생각하세요?</div>
@@ -647,17 +714,23 @@
   let phoneTimerInterval = null;
   let phoneVotingEndTime = null;
 
+  let myAnswerDone = false; // 주관식 답변 완료 여부 (1인 1회)
+
   function applyVoteState(state) {
+    const prevMode = currentMode;
     currentMode = state.mode;
     const overlay = document.getElementById('voting-overlay');
     const chatContent = document.getElementById('chat-content');
     const resultReact = document.getElementById('result-react');
+    const subjectiveWrap = document.getElementById('subjective-wrap');
 
     if (state.mode === 'chat') {
       overlay.classList.remove('active');
       chatContent.classList.remove('blurred');
       resultReact.classList.remove('active');
+      subjectiveWrap.classList.remove('active', 'answered');
       myVote = null;
+      myAnswerDone = false;
       stopPhoneTimer();
       updateVoteUI();
       return;
@@ -667,28 +740,59 @@
     overlay.classList.add('active');
     myVote = state.myVote || myVote;
 
+    // 새 주관식 질문 시작 시 답변 상태 초기화
+    if (state.mode === 'subjective' && prevMode !== 'subjective') {
+      myAnswerDone = false;
+      document.getElementById('answer-input').value = '';
+    }
+    if (state.myAnswered === true) myAnswerDone = true; // 재접속 시 서버 기준 복원
+
     const questionEl = document.getElementById('voting-question-phone');
     const timerEl = document.getElementById('voting-timer-phone');
     const buttonsEl = document.getElementById('voting-buttons');
+    const ratioEl = document.getElementById('voting-ratio');
+
+    // 공통: 질문은 항상 표시 (결과에서도 유지)
+    questionEl.style.display = 'block';
+    questionEl.textContent = state.question || '';
+
+    // 모드별 요소 표시
+    const isYesNo = state.mode === 'voting' || state.mode === 'result';
+    buttonsEl.style.display = isYesNo ? 'flex' : 'none';
+    ratioEl.style.display = isYesNo ? 'block' : 'none';
+    subjectiveWrap.classList.toggle('active', state.mode === 'subjective');
 
     if (state.mode === 'voting') {
-      questionEl.style.display = 'block';
       timerEl.style.display = 'inline-flex';
-      buttonsEl.style.display = 'flex';
       resultReact.classList.remove('active');
-      questionEl.textContent = state.question || '';
       startPhoneTimer(state.votingEndTime);
     } else if (state.mode === 'result') {
-      // 타이머만 숨기고, 질문은 유지해 무엇에 대한 결과인지 상기시킴
-      questionEl.style.display = 'block';
-      questionEl.textContent = state.question || '';
       timerEl.style.display = 'none';
       resultReact.classList.add('active'); // 결과에 붐업/붐따로 반응
+      stopPhoneTimer();
+    } else if (state.mode === 'subjective') {
+      timerEl.style.display = 'none';
+      resultReact.classList.remove('active');
+      subjectiveWrap.classList.toggle('answered', myAnswerDone);
+      stopPhoneTimer();
+    } else if (state.mode === 'subjectiveResult') {
+      timerEl.style.display = 'none';
+      resultReact.classList.add('active'); // 워드클라우드 결과에도 붐업/붐따
       stopPhoneTimer();
     }
 
     updateVoteUI();
-    updateRatio(state.counts);
+    if (isYesNo) updateRatio(state.counts);
+  }
+
+  // ── 주관식 답변 제출 ──
+  function submitAnswer() {
+    const input = document.getElementById('answer-input');
+    const text = input.value.trim().slice(0, 20);
+    if (!text || myAnswerDone || currentMode !== 'subjective' || !nickSocket) return;
+    nickSocket.emit('answer', { text });
+    myAnswerDone = true; // 낙관적 반영 (서버도 1인 1회 보장)
+    document.getElementById('subjective-wrap').classList.add('answered');
   }
 
   function updateVoteUI() {
@@ -734,7 +838,7 @@
     const now = Date.now();
     if (now - lastReactionAt < 250) return; // 연타 제한
     lastReactionAt = now;
-    if (!nickSocket || currentMode === 'voting') return;
+    if (!nickSocket || currentMode === 'voting' || currentMode === 'subjective') return;
     nickSocket.emit('reaction', { type });
 
     const btn = btnEl || document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');
@@ -839,6 +943,15 @@
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
+      }
+    });
+
+    // 주관식 답변: 엔터로 제출
+    document.getElementById('answer-input').addEventListener('keydown', (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitAnswer();
       }
     });
   });

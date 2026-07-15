@@ -68,6 +68,8 @@
     .mode-chat { background: #e9e9eb; color: #1c1c1e; }
     .mode-voting { background: #fff3cd; color: #946c00; }
     .mode-result { background: #d4edda; color: #19692c; }
+    .mode-subjective { background: #cce5ff; color: #004085; }
+    .mode-subjectiveResult { background: #e2d9f3; color: #4b2e83; }
 
     label {
       display: block;
@@ -161,6 +163,107 @@
       margin-top: 10px;
     }
     .add-row input { flex: 1; }
+    .add-row select {
+      background: #f2f2f7;
+      border: none;
+      border-radius: 10px;
+      padding: 0 10px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #1c1c1e;
+    }
+    .preset-tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 100px;
+      margin-right: 6px;
+      flex-shrink: 0;
+    }
+    .preset-tag.yesno { background: #fff3cd; color: #946c00; }
+    .preset-tag.subjective { background: #cce5ff; color: #004085; }
+
+    /* 주관식 답변 목록 / 픽 */
+    .answer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    .answer-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #f2f2f7;
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+
+    .answer-item span {
+      flex: 1;
+      font-size: 14px;
+      color: #1c1c1e;
+      word-break: keep-all;
+    }
+
+    .answer-item .pick-btn {
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .answer-item.picked { background: #e9f9ed; }
+    .answer-item.picked .pick-btn { background: #34c759; }
+
+    .answer-item .star-btn {
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 4px;
+      color: #c7c7cc;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+
+    .answer-item.starred .star-btn { color: #ff9f0a; }
+    .answer-item.starred { background: #fff8e6; }
+    .answer-item.starred.picked { background: #e9f9ed; }
+
+    .answer-toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .answer-toolbar input {
+      flex: 1;
+      font-size: 14px;
+      padding: 9px 12px;
+    }
+
+    .answer-toolbar button {
+      background: #e9e9eb;
+      color: #1c1c1e;
+      border: none;
+      border-radius: 10px;
+      padding: 0 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .answer-toolbar button.on { background: #ff9f0a; color: #fff; }
     .add-row button {
       background: #1c1c1e;
       color: #fff;
@@ -195,6 +298,10 @@
       <span class="status-value" id="status-counts">0 / 0</span>
     </div>
     <div class="status-row">
+      <span class="status-label">주관식 답변 수</span>
+      <span class="status-value" id="status-answers">0</span>
+    </div>
+    <div class="status-row">
       <span class="status-label">남은 시간</span>
       <span class="status-value" id="status-timer">-</span>
     </div>
@@ -211,6 +318,19 @@
     <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
   </div>
 
+  <!-- 주관식 답변 목록 / 픽 -->
+  <div class="card">
+    <h2>주관식 답변 목록 — 픽하면 LED에 크게 표시</h2>
+    <p class="note" style="margin-bottom: 10px;">훑으면서 괜찮은 답변에 ☆(후보)를 눌러두고, [픽]을 누르면 LED 중앙에 스포트라이트로 8초간 표시됩니다. 별표는 관리자 화면끼리 공유되므로 여러 명이 나눠서 볼 수 있습니다.</p>
+    <div class="answer-toolbar">
+      <input type="text" id="answer-search" placeholder="키워드 검색">
+      <button id="starred-only-btn" onclick="toggleStarredOnly()">☆ 후보만</button>
+    </div>
+    <div class="answer-list" id="answer-list">
+      <div class="empty-hint">아직 답변이 없습니다</div>
+    </div>
+  </div>
+
   <!-- 질문 미리 등록 -->
   <div class="card">
     <h2>질문 준비 (순서대로 실행)</h2>
@@ -219,6 +339,10 @@
     </div>
     <div class="add-row">
       <input type="text" id="preset-input" placeholder="질문 입력 후 추가">
+      <select id="preset-type">
+        <option value="yesno">객관식</option>
+        <option value="subjective">주관식</option>
+      </select>
       <button onclick="addPreset()">추가</button>
     </div>
   </div>
@@ -228,14 +352,16 @@
     <h2>즉석 질문 시작</h2>
     <label>질문 내용</label>
     <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?">
-    <label>투표 시간 (초)</label>
+    <label>투표 시간 (초) — 객관식 전용</label>
     <input type="number" id="duration-input" value="30" min="5">
-    <button class="btn btn-primary" onclick="startVotingNow()">투표 시작</button>
+    <button class="btn btn-primary" onclick="startVotingNow()">객관식(YES/NO) 투표 시작</button>
+    <button class="btn btn-primary" onclick="startSubjectiveNow()">주관식 질문 시작 (수동 마감)</button>
   </div>
 
   <div class="card">
     <h2>진행 제어</h2>
     <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>지금 투표 종료</button>
+    <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
     <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
   </div>
 </div>
@@ -243,12 +369,15 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
   const socket = io();
-  let presets = JSON.parse(localStorage.getItem('presets') || '[]');
+  // 기존 문자열 프리셋(구버전)을 {text, type} 형태로 마이그레이션
+  let presets = JSON.parse(localStorage.getItem('presets') || '[]')
+    .map(p => (typeof p === 'string' ? { text: p, type: 'yesno' } : p));
   let currentState = null;
   let timerInterval = null;
 
   socket.on('connect', () => {
     socket.emit('admin:getState');
+    socket.emit('admin:getAnswers');
   });
 
   socket.on('state', (state) => {
@@ -259,6 +388,7 @@
   socket.on('modeChange', (state) => {
     currentState = state;
     renderState();
+    socket.emit('admin:getAnswers'); // 새 질문 시작/복귀 시 목록 동기화
   });
 
   socket.on('voteUpdate', (data) => {
@@ -286,8 +416,10 @@
     renderChatPaused();
 
     const endBtn = document.getElementById('end-btn');
+    const subjEndBtn = document.getElementById('subj-end-btn');
     const returnBtn = document.getElementById('return-btn');
     endBtn.disabled = currentState.mode !== 'voting';
+    subjEndBtn.disabled = currentState.mode !== 'subjective';
     returnBtn.disabled = currentState.mode === 'chat';
 
     if (timerInterval) clearInterval(timerInterval);
@@ -302,6 +434,100 @@
   function renderCounts() {
     const c = currentState.counts || { yes: 0, no: 0 };
     document.getElementById('status-counts').textContent = `${c.yes} / ${c.no}`;
+    document.getElementById('status-answers').textContent = currentState.answerCount || 0;
+  }
+
+  // ── 주관식 답변 목록 / 픽 ──
+  let answerItems = [];      // [{id, text}]
+  let pickedIds = new Set(); // 픽된 id
+
+  // 주관식 답변이 들어올 때마다 카운트 + 목록 갱신
+  socket.on('subjectiveAnswer', (data) => {
+    if (!data) return;
+    if (currentState) {
+      currentState.answerCount = data.answerCount;
+      document.getElementById('status-answers').textContent = data.answerCount;
+    }
+    if (typeof data.id === 'number') {
+      answerItems.push({ id: data.id, text: data.text });
+      renderAnswers();
+    }
+  });
+
+  let starredIds = new Set(); // 별표(후보) — 관리자끼리 서버로 공유
+  let starredOnly = false;    // "후보만 보기" 토글
+  let searchKeyword = '';
+
+  socket.on('answerList', (data) => {
+    answerItems = (data && data.answers) || [];
+    pickedIds = new Set((data && data.picked) || []);
+    starredIds = new Set((data && data.starred) || []);
+    renderAnswers();
+  });
+
+  socket.on('answerPicked', (data) => {
+    if (data && typeof data.id === 'number') {
+      pickedIds.add(data.id);
+      renderAnswers();
+    }
+  });
+
+  socket.on('answerStarred', (data) => {
+    if (!data || typeof data.id !== 'number') return;
+    if (data.starred) starredIds.add(data.id);
+    else starredIds.delete(data.id);
+    renderAnswers();
+  });
+
+  function toggleStarredOnly() {
+    starredOnly = !starredOnly;
+    document.getElementById('starred-only-btn').classList.toggle('on', starredOnly);
+    renderAnswers();
+  }
+
+  document.getElementById('answer-search').addEventListener('input', (e) => {
+    searchKeyword = e.target.value.trim();
+    renderAnswers();
+  });
+
+  function renderAnswers() {
+    const list = document.getElementById('answer-list');
+    let filtered = answerItems;
+    if (starredOnly) filtered = filtered.filter(a => starredIds.has(a.id));
+    if (searchKeyword) filtered = filtered.filter(a => a.text.includes(searchKeyword));
+
+    if (filtered.length === 0) {
+      list.innerHTML = `<div class="empty-hint">${answerItems.length === 0 ? '아직 답변이 없습니다' : '조건에 맞는 답변이 없습니다'}</div>`;
+      return;
+    }
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 10;
+    list.innerHTML = '';
+    filtered.forEach((a) => {
+      const item = document.createElement('div');
+      item.className = 'answer-item'
+        + (pickedIds.has(a.id) ? ' picked' : '')
+        + (starredIds.has(a.id) ? ' starred' : '');
+
+      const starBtn = document.createElement('button');
+      starBtn.className = 'star-btn';
+      starBtn.textContent = starredIds.has(a.id) ? '★' : '☆';
+      starBtn.title = '후보 표시 (LED에 나가지 않음)';
+      starBtn.onclick = () => socket.emit('admin:toggleStar', { id: a.id });
+
+      const span = document.createElement('span');
+      span.textContent = `${a.id}. ${a.text}`;
+
+      const btn = document.createElement('button');
+      btn.className = 'pick-btn';
+      btn.textContent = pickedIds.has(a.id) ? '픽됨 · 다시' : '픽';
+      btn.onclick = () => socket.emit('admin:pickAnswer', { id: a.id });
+
+      item.appendChild(starBtn);
+      item.appendChild(span);
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+    if (atBottom && !starredOnly && !searchKeyword) list.scrollTop = list.scrollHeight; // 새 답변 따라가기
   }
 
   function renderChatPaused() {
@@ -337,6 +563,16 @@
     socket.emit('admin:endVoting');
   }
 
+  function startSubjectiveNow() {
+    const question = document.getElementById('question-input').value.trim();
+    if (!question) { alert('질문을 입력해주세요'); return; }
+    socket.emit('admin:startSubjective', { question });
+  }
+
+  function endSubjectiveNow() {
+    socket.emit('admin:endSubjective');
+  }
+
   function returnToChatNow() {
     socket.emit('admin:returnToChat');
   }
@@ -349,11 +585,14 @@
       return;
     }
     list.innerHTML = '';
-    presets.forEach((q, i) => {
+    presets.forEach((p, i) => {
       const item = document.createElement('div');
       item.className = 'preset-item';
+      const tag = p.type === 'subjective'
+        ? '<span class="preset-tag subjective">주관식</span>'
+        : '<span class="preset-tag yesno">객관식</span>';
       item.innerHTML = `
-        <span>${i + 1}. ${q}</span>
+        ${tag}<span>${i + 1}. ${p.text}</span>
         <button onclick="runPreset(${i})">실행</button>
         <button class="remove-btn" onclick="removePreset(${i})">✕</button>
       `;
@@ -363,17 +602,23 @@
 
   function addPreset() {
     const input = document.getElementById('preset-input');
+    const type = document.getElementById('preset-type').value;
     const text = input.value.trim();
     if (!text) return;
-    presets.push(text);
+    presets.push({ text, type });
     localStorage.setItem('presets', JSON.stringify(presets));
     input.value = '';
     renderPresets();
   }
 
   function runPreset(i) {
-    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
-    socket.emit('admin:startVoting', { question: presets[i], duration });
+    const p = presets[i];
+    if (p.type === 'subjective') {
+      socket.emit('admin:startSubjective', { question: p.text });
+    } else {
+      const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+      socket.emit('admin:startVoting', { question: p.text, duration });
+    }
   }
 
   function removePreset(i) {
