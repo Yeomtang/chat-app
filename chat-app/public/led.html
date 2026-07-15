@@ -179,6 +179,50 @@
       justify-content: center;
     }
 
+    /* ── 채팅 핀 팝업 ── */
+    #chat-pin {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      padding: 0 32px;
+      z-index: 15; /* 채팅 위, 투표(20)/리액션(25) 아래 */
+      background: rgba(255, 255, 255, 0.55); /* 반투명 — 뒤에서 채팅이 계속 흐르는 게 보임 */
+      pointer-events: none;
+    }
+
+    #chat-pin.active { display: flex; }
+
+    #chat-pin-card {
+      max-width: 86%;
+      background: #ffffff;
+      border-radius: 26px;
+      padding: 26px 34px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+      text-align: center;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
+    #chat-pin.active #chat-pin-card {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    #chat-pin-nick {
+      font-size: 14px;
+      font-weight: 700;
+      color: #8e8e93;
+      margin-bottom: 8px;
+    }
+
+    #chat-pin-text {
+      font-size: 26px;
+      font-weight: 700;
+      color: #1c1c1e;
+      line-height: 1.4;
+    }
+
     /* ── 리액션 레이어 ── */
     #reaction-layer {
       position: absolute;
@@ -437,6 +481,14 @@
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
         </svg>
       </div>
+    </div>
+  </div>
+
+  <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
+  <div id="chat-pin">
+    <div id="chat-pin-card">
+      <div id="chat-pin-nick"></div>
+      <div id="chat-pin-text"></div>
     </div>
   </div>
 
@@ -744,10 +796,12 @@
       cloudWrap.innerHTML = '';
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
+      showChatPin(state.pinnedChat || null); // 재접속 시 핀 상태 복원
       return;
     }
 
     // 질문 모드 공통 (voting/result/subjective/subjectiveResult)
+    document.getElementById('chat-pin').classList.remove('active'); // 질문 모드에선 핀 숨김
     chatLayer.classList.add('blurred');
     votingLayer.classList.add('active');
     votingQuestion.textContent = state.question || '';
@@ -1005,6 +1059,27 @@
   // 관리자 화면에서 채팅 정지/재생을 누르면 서버가 모든 화면에 broadcast
   socket.on('chatPauseChange', (data) => {
     if (data && data.chatPaused) pauseChat(); else resumeChat();
+  });
+
+  // ── 채팅 핀 팝업 (관리자가 특정 채팅을 클릭해 고정) ──
+  const chatPin = document.getElementById('chat-pin');
+  const chatPinNick = document.getElementById('chat-pin-nick');
+  const chatPinText = document.getElementById('chat-pin-text');
+
+  function showChatPin(message) {
+    if (!message) {
+      chatPin.classList.remove('active');
+      return;
+    }
+    chatPinNick.textContent = message.nickname || '';
+    chatPinText.textContent = message.text || '';
+    chatPin.classList.remove('active');
+    void chatPin.offsetWidth; // 교체 시 팝인 애니메이션 재시작
+    chatPin.classList.add('active');
+  }
+
+  socket.on('chatPinned', (data) => {
+    showChatPin(data && data.message);
   });
 
   socket.emit('identify', 'led-screen-' + Math.random().toString(36).slice(2));

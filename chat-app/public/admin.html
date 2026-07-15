@@ -16,6 +16,24 @@
 
     .wrap { max-width: 480px; margin: 0 auto; }
 
+    /* ── 2열 배치 (넓은 화면): 왼쪽 운영/제어, 오른쪽 모니터링(스크롤 영역) ── */
+    .admin-col { min-width: 0; }
+
+    @media (min-width: 900px) {
+      .wrap { max-width: 1024px; }
+
+      .admin-grid {
+        display: grid;
+        grid-template-columns: 1fr 1.1fr;
+        gap: 0 20px;
+        align-items: start;
+      }
+
+      /* 넓은 화면에선 모니터링 영역을 더 길게 사용 */
+      .chat-feed { max-height: 46vh !important; }
+      .answer-list { max-height: 46vh !important; }
+    }
+
     h1 {
       font-size: 18px;
       font-weight: 700;
@@ -274,7 +292,8 @@
       gap: 8px;
     }
 
-    #answers-expand-btn {
+    /* 카드 헤더의 전체화면/닫기 버튼 — 모든 카드 공용 (디자인 일관성) */
+    .expand-btn {
       background: #e9e9eb;
       color: #1c1c1e;
       border: none;
@@ -284,6 +303,7 @@
       font-weight: 700;
       cursor: pointer;
       flex-shrink: 0;
+      font-family: inherit;
     }
 
     body.answers-fullscreen #answers-card {
@@ -310,6 +330,97 @@
 
     /* 전체화면 중 뒤 배경 스크롤 잠금 */
     body.answers-fullscreen { overflow: hidden; }
+
+    /* ── 실시간 채팅 뷰 / 핀 ── */
+    #pin-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: #f2f2f7;
+      border-radius: 10px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+    }
+
+    #pin-status-text {
+      font-size: 13px;
+      color: #8e8e93;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #pin-status-row.pinned { background: #fff3cd; }
+    #pin-status-row.pinned #pin-status-text { color: #946c00; font-weight: 600; }
+
+    #unpin-btn {
+      background: #1c1c1e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    #unpin-btn:disabled { opacity: 0.35; cursor: default; }
+
+    .chat-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .chat-item {
+      background: #f2f2f7;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .chat-item:hover { background: #e5e5ea; }
+    .chat-item.pinned { background: #fff3cd; }
+
+    .chat-item .chat-nick {
+      font-size: 11px;
+      font-weight: 700;
+      color: #8e8e93;
+      margin-bottom: 2px;
+    }
+
+    .chat-item .chat-text {
+      font-size: 14px;
+      color: #1c1c1e;
+      word-break: keep-all;
+    }
+
+    body.chat-fullscreen #chat-card {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      margin: 0;
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    }
+
+    body.chat-fullscreen #chat-card .chat-feed {
+      flex: 1;
+      max-height: none;
+    }
+
+    body.chat-fullscreen #chat-expand-btn { background: #1c1c1e; color: #fff; }
+    body.chat-fullscreen { overflow: hidden; }
     .add-row button {
       background: #1c1c1e;
       color: #fff;
@@ -327,6 +438,10 @@
 <div class="wrap">
   <h1>제작진 관리 화면 (임시)</h1>
   <p class="note">정식 관리자 화면이 만들어지기 전까지 사용하는 테스트용 컨트롤 패널입니다.</p>
+
+  <div class="admin-grid">
+  <!-- ── 왼쪽 열: 운영/제어 ── -->
+  <div class="admin-col">
 
   <!-- 현재 상태 -->
   <div class="card">
@@ -357,32 +472,9 @@
     </div>
   </div>
 
-  <!-- LED 채팅창 제어 -->
-  <div class="card">
-    <h2>LED 채팅창 제어</h2>
-    <p class="note" style="margin-bottom: 10px;">채팅이 너무 빨리 올라가 진행자/패널이 읽기 어려울 때 LED 화면만 멈춥니다. 관객 채팅은 계속 정상 동작합니다.</p>
-    <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
-  </div>
-
-  <!-- 주관식 답변 목록 / 픽 -->
-  <div class="card" id="answers-card">
-    <h2 class="card-title-row">
-      <span>주관식 답변 목록 — 픽하면 LED에 크게 표시</span>
-      <button id="answers-expand-btn" onclick="toggleAnswersFullscreen()">전체화면</button>
-    </h2>
-    <p class="note" style="margin-bottom: 10px;">훑으면서 괜찮은 답변에 ☆(후보)를 눌러두고, [픽]을 누르면 LED 중앙에 스포트라이트로 8초간 표시됩니다. 별표는 관리자 화면끼리 공유되므로 여러 명이 나눠서 볼 수 있습니다.</p>
-    <div class="answer-toolbar">
-      <input type="text" id="answer-search" placeholder="키워드 검색">
-      <button id="starred-only-btn" onclick="toggleStarredOnly()">☆ 후보만</button>
-    </div>
-    <div class="answer-list" id="answer-list">
-      <div class="empty-hint">아직 답변이 없습니다</div>
-    </div>
-  </div>
-
   <!-- 질문 미리 등록 -->
   <div class="card">
-    <h2>질문 준비 (순서대로 실행)</h2>
+    <h2>질문 준비 — [실행]을 누르면 시작됩니다</h2>
     <div class="preset-list" id="preset-list">
       <div class="empty-hint">등록된 질문이 없습니다</div>
     </div>
@@ -409,10 +501,51 @@
 
   <div class="card">
     <h2>진행 제어</h2>
-    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>지금 투표 종료</button>
+    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>객관식(YES/NO) 투표 종료</button>
     <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
     <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
   </div>
+
+  </div><!-- /admin-col 왼쪽 -->
+
+  <!-- ── 오른쪽 열: 모니터링 (스크롤 영역) ── -->
+  <div class="admin-col">
+
+  <!-- 실시간 채팅 / 핀 고정 -->
+  <div class="card" id="chat-card">
+    <h2 class="card-title-row">
+      <span>실시간 채팅 — 클릭하면 LED에 핀 고정</span>
+      <button class="expand-btn" id="chat-expand-btn" onclick="toggleChatFullscreen()">전체화면</button>
+    </h2>
+    <p class="note" style="margin-bottom: 10px;">진행자/패널이 언급할 채팅을 클릭하면 LED 중앙에 팝업으로 고정됩니다. 다른 채팅을 클릭하면 교체되고, [핀 내리기]로 해제합니다.</p>
+    <div id="pin-status-row">
+      <span id="pin-status-text">핀 고정된 채팅 없음</span>
+      <button id="unpin-btn" onclick="unpinChat()" disabled>핀 내리기</button>
+    </div>
+    <div class="chat-feed" id="chat-feed">
+      <div class="empty-hint">아직 채팅이 없습니다</div>
+    </div>
+    <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()" style="margin-top: 12px;">LED 채팅창 멈추기</button>
+  </div>
+
+  <!-- 주관식 답변 목록 / 픽 -->
+  <div class="card" id="answers-card">
+    <h2 class="card-title-row">
+      <span>주관식 답변 목록 — 픽하면 LED에 크게 표시</span>
+      <button class="expand-btn" id="answers-expand-btn" onclick="toggleAnswersFullscreen()">전체화면</button>
+    </h2>
+    <p class="note" style="margin-bottom: 10px;">훑으면서 괜찮은 답변에 ☆(후보)를 눌러두고, [픽]을 누르면 LED 중앙에 스포트라이트로 8초간 표시됩니다. 별표는 관리자 화면끼리 공유되므로 여러 명이 나눠서 볼 수 있습니다.</p>
+    <div class="answer-toolbar">
+      <input type="text" id="answer-search" placeholder="키워드 검색">
+      <button id="starred-only-btn" onclick="toggleStarredOnly()">☆ 후보만</button>
+    </div>
+    <div class="answer-list" id="answer-list">
+      <div class="empty-hint">아직 답변이 없습니다</div>
+    </div>
+  </div>
+
+  </div><!-- /admin-col 오른쪽 -->
+  </div><!-- /admin-grid -->
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -463,6 +596,9 @@
     document.getElementById('status-question').textContent = currentState.question || '-';
     renderCounts();
     renderChatPaused();
+    pinnedChatMsg = currentState.pinnedChat || null;
+    renderPinStatus();
+    renderChatFeed();
 
     const endBtn = document.getElementById('end-btn');
     const subjEndBtn = document.getElementById('subj-end-btn');
@@ -591,6 +727,82 @@
     const btn = document.getElementById('chatpause-btn');
     btn.textContent = paused ? 'LED 채팅창 재생하기' : 'LED 채팅창 멈추기';
     btn.className = 'btn ' + (paused ? 'btn-primary' : 'btn-secondary');
+  }
+
+  // ── 실시간 채팅 피드 / 핀 고정 ──
+  let chatFeedItems = [];   // {id, nickname, text}
+  let pinnedChatMsg = null;
+  const MAX_FEED = 300;
+
+  socket.on('history', (messages) => {
+    chatFeedItems = (messages || []).slice();
+    renderChatFeed();
+  });
+
+  socket.on('chat', (msg) => {
+    chatFeedItems.push(msg);
+    if (chatFeedItems.length > MAX_FEED) chatFeedItems.shift();
+    renderChatFeed();
+  });
+
+  socket.on('chatPinned', (data) => {
+    pinnedChatMsg = (data && data.message) || null;
+    renderPinStatus();
+    renderChatFeed();
+  });
+
+  function pinChat(msg) {
+    socket.emit('admin:pinChat', { id: msg.id, nickname: msg.nickname, text: msg.text });
+  }
+
+  function unpinChat() {
+    socket.emit('admin:unpinChat');
+  }
+
+  function renderPinStatus() {
+    const row = document.getElementById('pin-status-row');
+    const txt = document.getElementById('pin-status-text');
+    const btn = document.getElementById('unpin-btn');
+    if (pinnedChatMsg) {
+      row.classList.add('pinned');
+      txt.textContent = `📌 ${pinnedChatMsg.nickname}: ${pinnedChatMsg.text}`;
+      btn.disabled = false;
+    } else {
+      row.classList.remove('pinned');
+      txt.textContent = '핀 고정된 채팅 없음';
+      btn.disabled = true;
+    }
+  }
+
+  function renderChatFeed() {
+    const feed = document.getElementById('chat-feed');
+    if (chatFeedItems.length === 0) {
+      feed.innerHTML = '<div class="empty-hint">아직 채팅이 없습니다</div>';
+      return;
+    }
+    const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10;
+    feed.innerHTML = '';
+    chatFeedItems.forEach((m) => {
+      const item = document.createElement('div');
+      item.className = 'chat-item' + (pinnedChatMsg && pinnedChatMsg.id === m.id ? ' pinned' : '');
+      item.title = 'LED에 핀 고정';
+      const nick = document.createElement('div');
+      nick.className = 'chat-nick';
+      nick.textContent = m.nickname;
+      const text = document.createElement('div');
+      text.className = 'chat-text';
+      text.textContent = m.text;
+      item.appendChild(nick);
+      item.appendChild(text);
+      item.onclick = () => pinChat(m);
+      feed.appendChild(item);
+    });
+    if (atBottom) feed.scrollTop = feed.scrollHeight; // 새 채팅 따라가기
+  }
+
+  function toggleChatFullscreen() {
+    const on = document.body.classList.toggle('chat-fullscreen');
+    document.getElementById('chat-expand-btn').textContent = on ? '닫기' : '전체화면';
   }
 
   function toggleChatPause() {

@@ -93,6 +93,7 @@ const appState = {
   answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
+  pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
 };
@@ -137,11 +138,20 @@ function publicState(forClientId) {
     answerCount: Object.keys(appState.answers).length,
     myAnswered: forClientId ? !!appState.answers[forClientId] : null,
     cloud: appState.mode === 'subjectiveResult' ? computeCloud() : null,
+    pinnedChat: appState.pinnedChat,
     chatPaused: appState.chatPaused,
   };
 }
 
+// 질문 모드 진입/복귀 시 채팅 핀 해제 (오래된 핀이 남는 것 방지)
+function clearPinnedChat() {
+  if (!appState.pinnedChat) return;
+  appState.pinnedChat = null;
+  io.emit('chatPinned', { message: null });
+}
+
 function startVoting(question, duration) {
+  clearPinnedChat();
   if (appState.timerHandle) clearTimeout(appState.timerHandle);
   appState.mode = 'voting';
   appState.question = question;
@@ -161,6 +171,7 @@ function startVoting(question, duration) {
 
 // ── 주관식 질문 (타이머 없음, 제작진 수동 마감) ──
 function startSubjective(question) {
+  clearPinnedChat();
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
     appState.timerHandle = null;
@@ -194,6 +205,7 @@ function endVoting() {
 }
 
 function returnToChat() {
+  clearPinnedChat();
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
     appState.timerHandle = null;
@@ -332,6 +344,20 @@ io.on('connection', (socket) => {
 
   socket.on('admin:endSubjective', () => {
     endSubjective();
+  });
+
+  // 관리자: 채팅 핀 고정 — LED 중앙에 해당 채팅을 팝업으로 표시 (채팅 모드 전용)
+  socket.on('admin:pinChat', (data) => {
+    if (appState.mode !== 'chat') return;
+    const nickname = (typeof (data && data.nickname) === 'string' ? data.nickname : '').slice(0, 30);
+    const text = (typeof (data && data.text) === 'string' ? data.text : '').trim().slice(0, MAX_CHAT_LENGTH);
+    if (!text) return;
+    appState.pinnedChat = { id: data.id || Date.now(), nickname, text };
+    io.emit('chatPinned', { message: appState.pinnedChat });
+  });
+
+  socket.on('admin:unpinChat', () => {
+    clearPinnedChat();
   });
 
   // 관리자: 답변 전체 목록 요청 (제작진이 훑어보고 픽하기 위함)
