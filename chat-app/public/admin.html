@@ -198,6 +198,17 @@
       <span class="status-label">남은 시간</span>
       <span class="status-value" id="status-timer">-</span>
     </div>
+    <div class="status-row">
+      <span class="status-label">LED 채팅창</span>
+      <span class="status-value" id="status-chatpaused">실시간 표시 중</span>
+    </div>
+  </div>
+
+  <!-- LED 채팅창 제어 -->
+  <div class="card">
+    <h2>LED 채팅창 제어</h2>
+    <p class="note" style="margin-bottom: 10px;">채팅이 너무 빨리 올라가 진행자/패널이 읽기 어려울 때 LED 화면만 멈춥니다. 관객 채팅은 계속 정상 동작합니다.</p>
+    <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
   </div>
 
   <!-- 질문 미리 등록 -->
@@ -257,6 +268,13 @@
     }
   });
 
+  socket.on('chatPauseChange', (data) => {
+    if (currentState) {
+      currentState.chatPaused = !!(data && data.chatPaused);
+      renderChatPaused();
+    }
+  });
+
   function renderState() {
     if (!currentState) return;
     const badge = document.getElementById('mode-badge');
@@ -265,6 +283,7 @@
 
     document.getElementById('status-question').textContent = currentState.question || '-';
     renderCounts();
+    renderChatPaused();
 
     const endBtn = document.getElementById('end-btn');
     const returnBtn = document.getElementById('return-btn');
@@ -283,6 +302,22 @@
   function renderCounts() {
     const c = currentState.counts || { yes: 0, no: 0 };
     document.getElementById('status-counts').textContent = `${c.yes} / ${c.no}`;
+  }
+
+  function renderChatPaused() {
+    const paused = !!(currentState && currentState.chatPaused);
+    document.getElementById('status-chatpaused').textContent = paused ? '정지됨' : '실시간 표시 중';
+    const btn = document.getElementById('chatpause-btn');
+    btn.textContent = paused ? 'LED 채팅창 재생하기' : 'LED 채팅창 멈추기';
+    btn.className = 'btn ' + (paused ? 'btn-primary' : 'btn-secondary');
+  }
+
+  function toggleChatPause() {
+    if (currentState && currentState.chatPaused) {
+      socket.emit('admin:resumeChat');
+    } else {
+      socket.emit('admin:pauseChat');
+    }
   }
 
   function updateTimerDisplay() {

@@ -585,7 +585,9 @@
       questionEl.textContent = state.question || '';
       startPhoneTimer(state.votingEndTime);
     } else if (state.mode === 'result') {
-      questionEl.style.display = 'none';
+      // 타이머만 숨기고, 질문은 유지해 무엇에 대한 결과인지 상기시킴
+      questionEl.style.display = 'block';
+      questionEl.textContent = state.question || '';
       timerEl.style.display = 'none';
       stopPhoneTimer();
     }
@@ -606,9 +608,9 @@
   function updateRatio(counts) {
     const c = counts || { yes: 0, no: 0, total: 0 };
     const yesPct = c.total ? Math.round((c.yes / c.total) * 100) : 0;
-    const noPct = 100 - yesPct;
-    document.getElementById('ratio-fill-yes').style.width = (c.total ? yesPct : 0) + '%';
-    document.getElementById('ratio-fill-no').style.width = (c.total ? noPct : 0) + '%';
+    const noPct = c.total ? 100 - yesPct : 0;
+    document.getElementById('ratio-fill-yes').style.width = yesPct + '%';
+    document.getElementById('ratio-fill-no').style.width = noPct + '%';
     document.getElementById('ratio-yes-pct').textContent = `YES ${yesPct}%`;
     document.getElementById('ratio-no-pct').textContent = `NO ${noPct}%`;
   }

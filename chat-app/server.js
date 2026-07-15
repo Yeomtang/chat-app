@@ -87,6 +87,7 @@ const appState = {
   votingEndTime: null,    // epoch ms
   votes: {},              // clientId -> 'yes' | 'no'
   timerHandle: null,
+  chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
 };
 
 function computeCounts() {
@@ -107,6 +108,7 @@ function publicState(forClientId) {
     votes: appState.votes, // clientId -> choice (LED/관리자가 전체 분포를 그리는 데 필요)
     counts: computeCounts(),
     myVote: forClientId ? (appState.votes[forClientId] || null) : null,
+    chatPaused: appState.chatPaused,
   };
 }
 
@@ -229,6 +231,17 @@ io.on('connection', (socket) => {
 
   socket.on('admin:getState', () => {
     socket.emit('state', publicState(null));
+  });
+
+  // LED 화면의 채팅 표시만 멈춤/재생. 관객 쪽 채팅 송수신은 계속 정상 동작.
+  socket.on('admin:pauseChat', () => {
+    appState.chatPaused = true;
+    io.emit('chatPauseChange', { chatPaused: true });
+  });
+
+  socket.on('admin:resumeChat', () => {
+    appState.chatPaused = false;
+    io.emit('chatPauseChange', { chatPaused: false });
   });
 
   socket.on('disconnect', () => {
