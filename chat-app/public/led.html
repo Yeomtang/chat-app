@@ -176,6 +176,21 @@
       justify-content: center;
     }
 
+    /* ── 리액션 레이어 ── */
+    #reaction-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 25; /* 채팅/투표 레이어 위에 항상 표시 */
+      overflow: hidden;
+    }
+
+    .reaction-float {
+      position: absolute;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.15));
+    }
+
     /* ── 투표 오버레이 레이어 ── */
     #voting-layer {
       position: absolute;
@@ -275,6 +290,9 @@
     </div>
   </div>
 
+  <!-- 리액션 레이어 (하트/붐업 이모지 떠오르는 효과) -->
+  <div id="reaction-layer"></div>
+
   <!-- 투표 오버레이 -->
   <div id="voting-layer">
     <div id="voting-question-wrap">
@@ -292,7 +310,7 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const MAX_VISIBLE = 8; // LED에 보여줄 최대 메시지 수
+  const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
   const MAX_BUFFER = 300; // 일시정지 중에도 누적되는 메시지 버퍼 상한(메모리 보호용)
   const messages = [];
   let chatPaused = false; // 채팅 빈 영역 클릭으로 일시정지된 상태인지
@@ -598,6 +616,34 @@
     const c = data.counts || { yes: 0, no: 0 };
     applyCounts('yes', c.yes);
     applyCounts('no', c.no);
+  });
+
+  // ── 리액션 (하트/붐업) — 랜덤 위치에서 떠오르며 사라지는 이모지 ──
+  const reactionLayer = document.getElementById('reaction-layer');
+  const MAX_REACTIONS = 80; // 동시 표시 상한 (LED 성능 보호)
+
+  socket.on('reaction', (data) => {
+    const type = data && data.type;
+    if (type !== 'heart' && type !== 'thumbs') return;
+    if (reactionLayer.childElementCount >= MAX_REACTIONS) return;
+
+    const el = document.createElement('div');
+    el.className = 'reaction-float';
+    el.textContent = type === 'heart' ? '❤️' : '👍';
+    el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
+    el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
+    el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기
+    reactionLayer.appendChild(el);
+
+    const driftX = Math.random() * 60 - 30; // 좌우로 살짝 흔들리며 상승
+    el.animate([
+      { transform: 'translate(0, 0) scale(0)', opacity: 0 },
+      { transform: `translate(${driftX * 0.3}px, -25px) scale(1.2)`, opacity: 1, offset: 0.15 },
+      { transform: `translate(${driftX}px, -140px) scale(1)`, opacity: 0 },
+    ], {
+      duration: 1800 + Math.random() * 700,
+      easing: 'ease-out',
+    }).onfinish = () => el.remove();
   });
 
   // 관리자 화면에서 채팅 정지/재생을 누르면 서버가 모든 화면에 broadcast

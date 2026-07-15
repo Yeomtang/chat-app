@@ -352,6 +352,43 @@
 
     #msg-input::placeholder { color: #aeaeb2; }
 
+    /* 리액션 버튼 (하트/붐업) */
+    .react-btn {
+      width: 34px;
+      height: 34px;
+      background: #f2f2f7;
+      border: none;
+      border-radius: 50%;
+      font-size: 17px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      padding: 0;
+    }
+
+    .react-btn.pop { animation: reactPop 0.3s ease; }
+
+    @keyframes reactPop {
+      0% { transform: scale(1); }
+      40% { transform: scale(1.35); }
+      100% { transform: scale(1); }
+    }
+
+    /* 글자 수 카운터: 80자 이상일 때만 표시 */
+    #char-counter {
+      display: none;
+      font-size: 11px;
+      color: #8e8e93;
+      flex-shrink: 0;
+      align-self: center;
+    }
+
+    #char-counter.visible { display: block; }
+    #char-counter.limit { color: #ff3b30; font-weight: 700; }
+
     #send-btn {
       width: 34px;
       height: 34px;
@@ -408,7 +445,10 @@
     <div id="messages"></div>
 
     <div id="input-area">
-      <textarea id="msg-input" placeholder="메시지 입력..." rows="1"></textarea>
+      <button class="react-btn" id="react-heart" onclick="sendReaction('heart')">❤️</button>
+      <button class="react-btn" id="react-thumbs" onclick="sendReaction('thumbs')">👍</button>
+      <textarea id="msg-input" placeholder="메시지 입력..." rows="1" maxlength="100"></textarea>
+      <span id="char-counter">0/100</span>
       <button id="send-btn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
@@ -633,6 +673,21 @@
     document.getElementById('voting-timer-phone').textContent = remain;
   }
 
+  // ── 리액션 (하트/붐업) ──
+  let lastReactionAt = 0;
+  function sendReaction(type) {
+    const now = Date.now();
+    if (now - lastReactionAt < 250) return; // 연타 제한
+    lastReactionAt = now;
+    if (!nickSocket || currentMode === 'voting') return;
+    nickSocket.emit('reaction', { type });
+
+    const btn = document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');
+    btn.classList.remove('pop');
+    void btn.offsetWidth; // 애니메이션 재시작 트릭
+    btn.classList.add('pop');
+  }
+
   function castVote(choice) {
     if (currentMode !== 'voting' || !nickSocket) return;
     myVote = choice;
@@ -692,21 +747,35 @@
     const text = input.value.trim();
     if (!text || !socket) return;
 
-    socket.emit('chat', { nickname: currentNickname, text });
+    socket.emit('chat', { nickname: currentNickname, text: text.slice(0, 100) });
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('send-btn').disabled = true;
+
+    const counter = document.getElementById('char-counter');
+    counter.classList.remove('visible', 'limit');
   }
 
   // 입력창 auto-resize + 전송 버튼 활성화
   document.addEventListener('DOMContentLoaded', () => {
     requestNickname(); // 페이지 로드 시 서버에서 첫 닉네임 배정
 
+    const MAX_CHAT_LENGTH = 100;
     const input = document.getElementById('msg-input');
+    const counter = document.getElementById('char-counter');
     input.addEventListener('input', () => {
+      // maxlength 우회(붙여넣기 등) 대비 이중 방어
+      if (input.value.length > MAX_CHAT_LENGTH) {
+        input.value = input.value.slice(0, MAX_CHAT_LENGTH);
+      }
       input.style.height = 'auto';
       input.style.height = input.scrollHeight + 'px';
       document.getElementById('send-btn').disabled = input.value.trim() === '';
+
+      const len = input.value.length;
+      counter.textContent = `${len}/${MAX_CHAT_LENGTH}`;
+      counter.classList.toggle('visible', len >= 80);
+      counter.classList.toggle('limit', len >= MAX_CHAT_LENGTH);
     });
 
     input.addEventListener('keydown', (e) => {

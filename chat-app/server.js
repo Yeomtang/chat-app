@@ -77,6 +77,7 @@ app.get('/admin', (req, res) => {
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
 const MAX_MESSAGES = 50;
+const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
 // ── 투표(질문) 상태 관리 ──
 // mode: 'chat' | 'voting' | 'result'
@@ -187,15 +188,31 @@ io.on('connection', (socket) => {
   // 채팅 메시지 (채팅 모드일 때만 허용)
   socket.on('chat', (data) => {
     if (appState.mode !== 'chat') return;
+    const text = (typeof data.text === 'string' ? data.text : '').trim().slice(0, MAX_CHAT_LENGTH);
+    if (!text) return;
     const message = {
       id: Date.now(),
       nickname: data.nickname,
-      text: data.text,
+      text,
       time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     };
     recentMessages.push(message);
     if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
     io.emit('chat', message);
+  });
+
+  // 리액션 (하트/붐업) — LED 화면에 떠오르는 이모지 효과
+  // 투표 중엔 차단(답변에만 집중), 소켓당 3초에 10회로 스팸 제한
+  socket.on('reaction', (data) => {
+    const { type } = data || {};
+    if (appState.mode === 'voting') return;
+    if (type !== 'heart' && type !== 'thumbs') return;
+    const now = Date.now();
+    if (!socket._reactionTimes) socket._reactionTimes = [];
+    socket._reactionTimes = socket._reactionTimes.filter(t => now - t < 3000);
+    if (socket._reactionTimes.length >= 10) return;
+    socket._reactionTimes.push(now);
+    io.emit('reaction', { type });
   });
 
   // 투표
