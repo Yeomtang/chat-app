@@ -201,12 +201,13 @@ io.on('connection', (socket) => {
     io.emit('chat', message);
   });
 
-  // 리액션 (하트/붐업) — LED 화면에 떠오르는 이모지 효과
+  // 리액션 (하트/붐업/붐따) — LED 화면에 떠오르는 이모지 효과
+  // 채팅 모드: 하트/붐업, 결과 모드: 붐업/붐따로 결과에 반응
   // 투표 중엔 차단(답변에만 집중), 소켓당 3초에 10회로 스팸 제한
   socket.on('reaction', (data) => {
     const { type } = data || {};
     if (appState.mode === 'voting') return;
-    if (type !== 'heart' && type !== 'thumbs') return;
+    if (type !== 'heart' && type !== 'thumbs' && type !== 'down') return;
     const now = Date.now();
     if (!socket._reactionTimes) socket._reactionTimes = [];
     socket._reactionTimes = socket._reactionTimes.filter(t => now - t < 3000);

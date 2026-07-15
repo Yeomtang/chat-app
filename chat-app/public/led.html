@@ -32,12 +32,14 @@
       inset: 0;
       display: flex;
       flex-direction: column;
-      transition: filter 0.5s ease, opacity 0.5s ease;
+      transition: filter 0.5s ease, opacity 0.5s ease, transform 0.5s ease;
     }
 
+    /* 질문 모드 진입 시: 블러 + 살짝 뒤로 물러나는 깊이감 (복귀 시 역재생) */
     #chat-layer.blurred {
       filter: blur(16px);
       opacity: 0.5;
+      transform: scale(0.94);
     }
 
     /* 상단 헤더 */
@@ -106,7 +108,8 @@
       border-radius: 20px;
       border-bottom-left-radius: 5px;
       max-width: 88%;
-      word-break: break-word;
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
 
     .led-nickname {
@@ -196,17 +199,34 @@
       position: absolute;
       inset: 0;
       display: none;
-      flex-direction: column;
-      align-items: center;
       z-index: 20;
     }
 
-    #voting-layer.active { display: flex; }
+    #voting-layer.active { display: block; }
 
+    /* 질문: 공 클러스터 위쪽 가까이 배치 (화면 최상단 X) */
     #voting-question-wrap {
-      padding: 40px 28px 0;
+      position: absolute;
+      top: 15%;
+      left: 0;
+      right: 0;
+      padding: 0 28px;
       text-align: center;
-      flex-shrink: 0;
+      z-index: 2;
+      opacity: 0;
+      transform: scale(0.4);
+    }
+
+    /* 질문+타이머 등장: 관객 폰 투표 카드와 동일한 팝인 바운스
+       (voting→result 동안 레이어가 유지되면 재생 안 되고, 다음 질문에서만 다시 재생) */
+    #voting-layer.active #voting-question-wrap {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes popIn {
+      0%   { opacity: 0; transform: scale(0.4); }
+      60%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 1; transform: scale(1); }
     }
 
     #voting-timer {
@@ -228,12 +248,14 @@
       font-weight: 700;
       color: #1c1c1e;
       line-height: 1.4;
+      word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
+      overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
     }
 
     #voting-canvas-wrap {
-      flex: 1;
+      position: absolute;
+      inset: 0;
       width: 100%;
-      position: relative;
     }
 
     #voting-canvas {
@@ -242,14 +264,22 @@
       display: block;
     }
 
+    /* 결과 퍼센트: 공 클러스터 아래쪽 가까이 배치 (화면 최하단 X) */
     #result-banner {
       display: none;
-      padding: 0 28px 48px;
+      position: absolute;
+      bottom: 18%;
+      left: 0;
+      right: 0;
+      padding: 0 28px;
       text-align: center;
-      flex-shrink: 0;
+      z-index: 2;
     }
 
-    #result-banner.active { display: block; }
+    #result-banner.active {
+      display: block;
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
 
     #result-banner .result-line {
       font-size: 17px;
@@ -622,14 +652,16 @@
   const reactionLayer = document.getElementById('reaction-layer');
   const MAX_REACTIONS = 80; // 동시 표시 상한 (LED 성능 보호)
 
+  const REACTION_EMOJI = { heart: '❤️', thumbs: '👍', down: '👎' };
+
   socket.on('reaction', (data) => {
     const type = data && data.type;
-    if (type !== 'heart' && type !== 'thumbs') return;
+    if (!REACTION_EMOJI[type]) return;
     if (reactionLayer.childElementCount >= MAX_REACTIONS) return;
 
     const el = document.createElement('div');
     el.className = 'reaction-float';
-    el.textContent = type === 'heart' ? '❤️' : '👍';
+    el.textContent = REACTION_EMOJI[type];
     el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
     el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
     el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기

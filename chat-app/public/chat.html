@@ -188,6 +188,8 @@
       text-align: center;
       line-height: 1.4;
       max-width: 320px;
+      word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
+      overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
     }
 
     #voting-buttons {
@@ -243,6 +245,45 @@
       font-weight: 700;
       color: #3a3a3c;
     }
+
+    /* ── 결과 모드 붐업/붐따 ── */
+    #result-react {
+      display: none;
+      width: 100%;
+      max-width: 320px;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    #result-react.active { display: flex; }
+
+    #result-react-hint {
+      font-size: 13px;
+      color: #8e8e93;
+      text-align: center;
+    }
+
+    #result-react-buttons {
+      display: flex;
+      gap: 12px;
+    }
+
+    .result-react-btn {
+      flex: 1;
+      padding: 14px 0;
+      border-radius: 16px;
+      border: none;
+      background: #f2f2f7;
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      font-family: inherit;
+      transition: transform 0.15s;
+    }
+
+    .result-react-btn:active { transform: scale(0.95); }
+    .result-react-btn.pop { animation: reactPop 0.3s ease; }
 
     #chat-header {
       background: #ffffff;
@@ -309,7 +350,8 @@
       font-size: 15px;
       line-height: 1.4;
       max-width: 80%;
-      word-break: break-word;
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
 
     .msg-nickname {
@@ -476,6 +518,15 @@
           <span id="ratio-no-pct">NO 0%</span>
         </div>
       </div>
+
+      <!-- 결과 모드 전용: 결과에 붐업/붐따로 반응 -->
+      <div id="result-react">
+        <div id="result-react-hint">이 결과, 어떻게 생각하세요?</div>
+        <div id="result-react-buttons">
+          <button class="result-react-btn" onclick="sendReaction('thumbs', this)">👍</button>
+          <button class="result-react-btn" onclick="sendReaction('down', this)">👎</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -600,10 +651,12 @@
     currentMode = state.mode;
     const overlay = document.getElementById('voting-overlay');
     const chatContent = document.getElementById('chat-content');
+    const resultReact = document.getElementById('result-react');
 
     if (state.mode === 'chat') {
       overlay.classList.remove('active');
       chatContent.classList.remove('blurred');
+      resultReact.classList.remove('active');
       myVote = null;
       stopPhoneTimer();
       updateVoteUI();
@@ -622,6 +675,7 @@
       questionEl.style.display = 'block';
       timerEl.style.display = 'inline-flex';
       buttonsEl.style.display = 'flex';
+      resultReact.classList.remove('active');
       questionEl.textContent = state.question || '';
       startPhoneTimer(state.votingEndTime);
     } else if (state.mode === 'result') {
@@ -629,6 +683,7 @@
       questionEl.style.display = 'block';
       questionEl.textContent = state.question || '';
       timerEl.style.display = 'none';
+      resultReact.classList.add('active'); // 결과에 붐업/붐따로 반응
       stopPhoneTimer();
     }
 
@@ -673,16 +728,17 @@
     document.getElementById('voting-timer-phone').textContent = remain;
   }
 
-  // ── 리액션 (하트/붐업) ──
+  // ── 리액션 (하트/붐업/붐따) ──
   let lastReactionAt = 0;
-  function sendReaction(type) {
+  function sendReaction(type, btnEl) {
     const now = Date.now();
     if (now - lastReactionAt < 250) return; // 연타 제한
     lastReactionAt = now;
     if (!nickSocket || currentMode === 'voting') return;
     nickSocket.emit('reaction', { type });
 
-    const btn = document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');
+    const btn = btnEl || document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');
+    if (!btn) return;
     btn.classList.remove('pop');
     void btn.offsetWidth; // 애니메이션 재시작 트릭
     btn.classList.add('pop');
