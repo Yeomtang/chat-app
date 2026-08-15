@@ -602,9 +602,15 @@
   const canvas = document.getElementById('voting-canvas');
   const ctx = canvas.getContext('2d');
 
-  const COLOR_YES = '#34c759';
-  const COLOR_NO = '#ff3b30';
-  const BALL_SCALE = 1.5; // 공/레이블 크기 배율
+  const BALL_SCALE = 1.5; // 공/레이블 기본 크기 배율
+
+  // 보기 색 팔레트 (관객 폰과 순서 동일 — 같은 보기 = 같은 색)
+  const YESNO_COLORS = ['#34c759', '#ff3b30'];
+  const OPTION_COLORS = ['#34c759', '#ff9f0a', '#0a84ff', '#af52de', '#ff375f', '#30b0c7'];
+  function colorFor(i) {
+    const arr = voteType === 'yesno' ? YESNO_COLORS : OPTION_COLORS;
+    return arr[i % arr.length];
+  }
 
   // ── 단계별(merge) 공 크기 ──
   // ones: 1표 = 작은 공, tens: 10표 모이면 한 단계 큰 공, hundreds: 100표 모이면 더 큰 공
@@ -616,12 +622,13 @@
   };
   const POP_DURATION = 450; // 새 단계 공 등장 시 팝 애니메이션(ms)
 
-  // side('yes'|'no') -> { ones: [...], tens: [...], hundreds: [...] }
+  // 보기별 tier 슬롯: tierState[i] = { ones:[], tens:[], hundreds:[], extent }
   // 각 슬롯: { x, y, tx, ty, phase, bornAt }
-  let tierState = {
-    yes: { ones: [], tens: [], hundreds: [] },
-    no: { ones: [], tens: [], hundreds: [] },
-  };
+  let tierState = [];
+  let voteOptions = [];      // 현재 질문 보기 라벨 배열
+  let voteType = 'yesno';    // 'yesno' | 'choice'
+  let optCount = 0;          // 보기 수
+  let curScale = 1;          // 보기 수에 따른 공 크기 축소(겹침 방지)
 
   let votingEndTime = null;
   let timerInterval = null;
@@ -638,12 +645,30 @@
   }
   window.addEventListener('resize', resizeCanvas);
 
-  function clusterCenter(side) {
+  function initTierState(n) {
+    tierState = [];
+    for (let i = 0; i < n; i++) tierState.push({ ones: [], tens: [], hundreds: [], extent: 0 });
+  }
+
+  // 보기 수에 맞춰 클러스터를 격자로 배치 (2지=좌우, 3지=가로 3, 4지=2×2 …)
+  function clusterLayout(n) {
+    const cols = n <= 3 ? n : Math.ceil(n / 2);
+    const rows = Math.ceil(n / cols);
+    return { cols, rows };
+  }
+
+  function clusterCenter(i) {
     const w = canvas.width / devicePixelRatio;
     const h = canvas.height / devicePixelRatio;
-    return side === 'yes'
-      ? { x: w * 0.27, y: h * 0.5 }
-      : { x: w * 0.73, y: h * 0.5 };
+    const n = Math.max(1, optCount);
+    const { cols, rows } = clusterLayout(n);
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    // 마지막 행이 덜 찼으면 그 행만 가운데 정렬
+    const itemsInRow = (row === rows - 1) ? (n - row * cols) : cols;
+    const x = w * ((col + 1) / (itemsInRow + 1));
+    const y = h * ((row + 1) / (rows + 1));
+    return { x, y };
   }
 
   function easeOutBack(t) {
@@ -668,24 +693,27 @@
   }
 
   // 클러스터 내 위치 재배치: hundreds(안쪽) → tens(중간) → ones(바깥쪽) 순서로 동심원 배치
-  function repackSide(side) {
-    const slots = tierState[side];
-    const center = clusterCenter(side);
+  function repackSide(i) {
+    const slots = tierState[i];
+    const center = clusterCenter(i);
+    const rH = BALL_R.hundreds * curScale, rT = BALL_R.tens * curScale, rO = BALL_R.ones * curScale;
 
-    const hundredsPack = packTier(center.x, center.y, 0, slots.hundreds.length, BALL_R.hundreds, 0);
-    hundredsPack.positions.forEach((pos, i) => { slots.hundreds[i].tx = pos.x; slots.hundreds[i].ty = pos.y; });
+    const hundredsPack = packTier(center.x, center.y, 0, slots.hundreds.length, rH, 0);
+    hundredsPack.positions.forEach((pos, k) => { slots.hundreds[k].tx = pos.x; slots.hundreds[k].ty = pos.y; });
 
-    const tensPack = packTier(center.x, center.y, 1.3, slots.tens.length, BALL_R.tens, hundredsPack.outerExtent + 4);
-    tensPack.positions.forEach((pos, i) => { slots.tens[i].tx = pos.x; slots.tens[i].ty = pos.y; });
+    const tensPack = packTier(center.x, center.y, 1.3, slots.tens.length, rT, hundredsPack.outerExtent + 4);
+    tensPack.positions.forEach((pos, k) => { slots.tens[k].tx = pos.x; slots.tens[k].ty = pos.y; });
 
-    const onesPack = packTier(center.x, center.y, 2.6, slots.ones.length, BALL_R.ones, tensPack.outerExtent + 4);
-    onesPack.positions.forEach((pos, i) => { slots.ones[i].tx = pos.x; slots.ones[i].ty = pos.y; });
+    const onesPack = packTier(center.x, center.y, 2.6, slots.ones.length, rO, tensPack.outerExtent + 4);
+    onesPack.positions.forEach((pos, k) => { slots.ones[k].tx = pos.x; slots.ones[k].ty = pos.y; });
+
+    slots.extent = Math.max(hundredsPack.outerExtent, tensPack.outerExtent, onesPack.outerExtent);
   }
 
   // 표 개수(total)에 맞춰 ones/tens/hundreds 슬롯 배열 길이를 조정
-  function syncTierArray(side, tierName, desiredCount) {
-    const arr = tierState[side][tierName];
-    const center = clusterCenter(side);
+  function syncTierArray(i, tierName, desiredCount) {
+    const arr = tierState[i][tierName];
+    const center = clusterCenter(i);
     while (arr.length < desiredCount) {
       arr.push({ x: center.x, y: center.y, tx: center.x, ty: center.y, phase: Math.random() * Math.PI * 2, bornAt: performance.now() });
     }
@@ -694,15 +722,13 @@
     }
   }
 
-  function applyCounts(side, total) {
+  function applyCounts(i, total) {
+    if (!tierState[i]) return;
     const n = total || 0;
-    const hundreds = Math.floor(n / 100);
-    const tens = Math.floor((n % 100) / 10);
-    const ones = n % 10;
-    syncTierArray(side, 'hundreds', hundreds);
-    syncTierArray(side, 'tens', tens);
-    syncTierArray(side, 'ones', ones);
-    repackSide(side);
+    syncTierArray(i, 'hundreds', Math.floor(n / 100));
+    syncTierArray(i, 'tens', Math.floor((n % 100) / 10));
+    syncTierArray(i, 'ones', n % 10);
+    repackSide(i);
   }
 
   function drawTier(slots, radius, color, time) {
@@ -731,22 +757,21 @@
     const h = canvas.height / devicePixelRatio;
     ctx.clearRect(0, 0, w, h);
 
-    // 클러스터 레이블
-    const yc = clusterCenter('yes');
-    const nc = clusterCenter('no');
-    ctx.font = `700 ${Math.round(15 * BALL_SCALE)}px -apple-system, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = COLOR_YES;
-    ctx.fillText('YES', yc.x, h * 0.5 - 110 * BALL_SCALE);
-    ctx.fillStyle = COLOR_NO;
-    ctx.fillText('NO', nc.x, h * 0.5 - 110 * BALL_SCALE);
-
-    ['yes', 'no'].forEach((side) => {
-      const color = side === 'yes' ? COLOR_YES : COLOR_NO;
-      drawTier(tierState[side].ones, BALL_R.ones, color, time);
-      drawTier(tierState[side].tens, BALL_R.tens, color, time);
-      drawTier(tierState[side].hundreds, BALL_R.hundreds, color, time);
-    });
+    for (let i = 0; i < optCount; i++) {
+      const slots = tierState[i];
+      if (!slots) continue;
+      const c = clusterCenter(i);
+      const color = colorFor(i);
+      drawTier(slots.ones, BALL_R.ones * curScale, color, time);
+      drawTier(slots.tens, BALL_R.tens * curScale, color, time);
+      drawTier(slots.hundreds, BALL_R.hundreds * curScale, color, time);
+      // 보기 라벨 (공 무리 위, 무리 크기에 따라 위치 조정)
+      ctx.font = `700 ${Math.round(15 * BALL_SCALE * curScale)}px -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = color;
+      const labelY = Math.max(24 * curScale, c.y - (slots.extent || 0) - 14 * curScale);
+      ctx.fillText(voteOptions[i] || '', c.x, labelY);
+    }
 
     ctx.restore();
     rafHandle = requestAnimationFrame(drawFrame);
@@ -770,10 +795,18 @@
   }
 
   function updateResultLine(counts) {
-    const c = counts || { yes: 0, no: 0, total: 0 };
-    const yesPct = c.total ? Math.round((c.yes / c.total) * 100) : 0;
-    const noPct = c.total ? 100 - yesPct : 0;
-    resultLine.textContent = `YES ${yesPct}%  ·  NO ${noPct}%`;
+    const per = counts && counts.perOption ? counts.perOption : [];
+    const total = counts && counts.total ? counts.total : 0;
+    resultLine.innerHTML = '';
+    voteOptions.forEach((label, i) => {
+      const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
+      const span = document.createElement('span');
+      span.style.color = colorFor(i);
+      span.style.margin = '0 10px';
+      span.style.whiteSpace = 'nowrap';
+      span.textContent = `${label} ${pct}%`;
+      resultLine.appendChild(span);
+    });
   }
 
   const answerStream = document.getElementById('answer-stream');
@@ -807,19 +840,24 @@
     votingQuestion.textContent = state.question || '';
     votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
 
-    const isYesNo = state.mode === 'voting' || state.mode === 'result';
-    if (isYesNo) {
-      // 객관식: 공 클러스터 렌더
+    const isVote = state.mode === 'voting' || state.mode === 'result';
+    if (isVote) {
+      // 선택형(YES/NO·N지선다): 공 클러스터 렌더
       answerStream.classList.remove('active');
       clearAnswerStream();
       clearSpotlight();
       cloudWrap.classList.remove('active');
       cloudWrap.innerHTML = '';
-      applyCounts('yes', state.counts ? state.counts.yes : 0);
-      applyCounts('no', state.counts ? state.counts.no : 0);
+      voteOptions = state.voteOptions || [];
+      voteType = state.voteType || 'yesno';
+      optCount = voteOptions.length;
+      curScale = optCount <= 2 ? 1 : (optCount <= 4 ? 0.72 : 0.56);
+      initTierState(optCount);
+      const per = state.counts && state.counts.perOption ? state.counts.perOption : [];
+      for (let i = 0; i < optCount; i++) applyCounts(i, per[i] || 0);
       startRenderLoop();
     } else {
-      // 주관식: 공 캔버스 정지 + 잔상 제거
+      // 주관식/이모지: 공 캔버스 정지 + 잔상 제거
       stopRenderLoop();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
@@ -855,6 +893,15 @@
       clearAnswerStream();
       renderCloud(state.cloud || []);
       cloudWrap.classList.add('active');
+    } else if (state.mode === 'emoji') {
+      // 이모지 반응: 타이머/배너/공 없음. 이모지는 reaction-layer로 떠오름(emojiFloat)
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
     }
   }
 
@@ -1021,9 +1068,8 @@
 
   socket.on('voteUpdate', (data) => {
     if (currentMode !== 'voting') return;
-    const c = data.counts || { yes: 0, no: 0 };
-    applyCounts('yes', c.yes);
-    applyCounts('no', c.no);
+    const per = data.counts && data.counts.perOption ? data.counts.perOption : [];
+    for (let i = 0; i < optCount; i++) applyCounts(i, per[i] || 0);
   });
 
   // ── 리액션 (하트/붐업) — 랜덤 위치에서 떠오르며 사라지는 이모지 ──
@@ -1032,14 +1078,12 @@
 
   const REACTION_EMOJI = { heart: '❤️', thumbs: '👍', down: '👎' };
 
-  socket.on('reaction', (data) => {
-    const type = data && data.type;
-    if (!REACTION_EMOJI[type]) return;
+  // 이모지 하나를 랜덤 위치에서 떠오르게 (리액션·이모지 질문 공용)
+  function spawnFloat(text) {
     if (reactionLayer.childElementCount >= MAX_REACTIONS) return;
-
     const el = document.createElement('div');
     el.className = 'reaction-float';
-    el.textContent = REACTION_EMOJI[type];
+    el.textContent = text;
     el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
     el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
     el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기
@@ -1054,6 +1098,18 @@
       duration: 1800 + Math.random() * 700,
       easing: 'ease-out',
     }).onfinish = () => el.remove();
+  }
+
+  socket.on('reaction', (data) => {
+    const type = data && data.type;
+    if (!REACTION_EMOJI[type]) return;
+    spawnFloat(REACTION_EMOJI[type]);
+  });
+
+  // 이모지 반응 질문: 관객이 고른 이모지가 떠오름
+  socket.on('emojiFloat', (data) => {
+    const emo = data && data.emoji;
+    if (typeof emo === 'string' && emo) spawnFloat(emo);
   });
 
   // 관리자 화면에서 채팅 정지/재생을 누르면 서버가 모든 화면에 broadcast

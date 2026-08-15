@@ -88,6 +88,7 @@
     .mode-result { background: #d4edda; color: #19692c; }
     .mode-subjective { background: #cce5ff; color: #004085; }
     .mode-subjectiveResult { background: #e2d9f3; color: #4b2e83; }
+    .mode-emoji { background: #ffe6f0; color: #a01050; }
 
     label {
       display: block;
@@ -181,7 +182,7 @@
       margin-top: 10px;
     }
     .add-row input { flex: 1; min-width: 0; }
-    .add-row select {
+    .add-row select, select.type-select {
       background: #f2f2f7;
       border: none;
       border-radius: 10px;
@@ -190,6 +191,7 @@
       font-family: inherit;
       color: #1c1c1e;
     }
+    select.type-select { width: 100%; height: 40px; }
     .preset-tag {
       display: inline-block;
       font-size: 11px;
@@ -201,6 +203,9 @@
     }
     .preset-tag.yesno { background: #fff3cd; color: #946c00; }
     .preset-tag.subjective { background: #cce5ff; color: #004085; }
+    .preset-tag.choice { background: #d4edda; color: #19692c; }
+    .preset-tag.emoji { background: #ffe6f0; color: #a01050; }
+    .preset-extra { width: 100%; min-width: 0; margin-top: 8px; }
 
     /* 주관식 답변 목록 / 픽 */
     .answer-list {
@@ -455,8 +460,8 @@
       <span class="status-value" id="status-question">-</span>
     </div>
     <div class="status-row">
-      <span class="status-label">YES / NO</span>
-      <span class="status-value" id="status-counts">0 / 0</span>
+      <span class="status-label">투표 집계</span>
+      <span class="status-value" id="status-counts">-</span>
     </div>
     <div class="status-row">
       <span class="status-label">주관식 답변 수</span>
@@ -480,12 +485,16 @@
     </div>
     <div class="add-row">
       <input type="text" id="preset-input" placeholder="질문 입력 후 추가">
-      <select id="preset-type">
-        <option value="yesno">객관식</option>
+      <select id="preset-type" onchange="onPresetTypeChange()">
+        <option value="yesno">YES/NO</option>
+        <option value="choice">객관식(선택지)</option>
         <option value="subjective">주관식</option>
+        <option value="emoji">이모지 반응</option>
       </select>
       <button onclick="addPreset()">추가</button>
     </div>
+    <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
+    <input type="number" id="preset-maxlen" class="preset-extra" value="20" min="1" max="20" placeholder="최대 글자수 (1~20)" style="display:none">
   </div>
 
   <!-- 즉석 질문 / 컨트롤 -->
@@ -493,15 +502,24 @@
     <h2>즉석 질문 시작</h2>
     <label>질문 내용</label>
     <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?">
-    <label>투표 시간 (초) — 객관식 전용</label>
+    <label>질문 유형</label>
+    <select id="question-type" class="type-select" onchange="onQuestionTypeChange()">
+      <option value="yesno">YES/NO 투표</option>
+      <option value="choice">객관식(선택지)</option>
+      <option value="subjective">주관식 (수동 마감)</option>
+      <option value="emoji">이모지 반응</option>
+    </select>
+    <input type="text" id="question-options" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
+    <label id="question-maxlen-label" style="display:none">최대 글자수 (1~20)</label>
+    <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
+    <label id="duration-label">투표 시간 (초) — 선택형 전용</label>
     <input type="number" id="duration-input" value="30" min="5">
-    <button class="btn btn-primary" onclick="startVotingNow()">객관식(YES/NO) 투표 시작</button>
-    <button class="btn btn-primary" onclick="startSubjectiveNow()">주관식 질문 시작 (수동 마감)</button>
+    <button class="btn btn-primary" onclick="startQuestionNow()">질문 시작</button>
   </div>
 
   <div class="card">
     <h2>진행 제어</h2>
-    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>객관식(YES/NO) 투표 종료</button>
+    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>선택형 투표 종료</button>
     <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
     <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
   </div>
@@ -617,8 +635,13 @@
   }
 
   function renderCounts() {
-    const c = currentState.counts || { yes: 0, no: 0 };
-    document.getElementById('status-counts').textContent = `${c.yes} / ${c.no}`;
+    const c = currentState.counts || { perOption: [], total: 0 };
+    const opts = currentState.voteOptions || [];
+    let txt = '-';
+    if (opts.length && Array.isArray(c.perOption)) {
+      txt = opts.map((o, i) => `${o} ${c.perOption[i] || 0}`).join('  ·  ');
+    }
+    document.getElementById('status-counts').textContent = txt;
     document.getElementById('status-answers').textContent = currentState.answerCount || 0;
   }
 
@@ -819,21 +842,64 @@
     if (remain <= 0) clearInterval(timerInterval);
   }
 
-  function startVotingNow() {
+  // 보기/이모지 파싱 (/ 또는 공백 구분)
+  function parseOptions(str) {
+    return String(str || '').split('/').map(s => s.trim()).filter(Boolean);
+  }
+  function parseEmojis(str) {
+    return String(str || '').split(/[\s/]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  // 유형에 맞는 시작 이벤트 발송 (즉석/사전등록 공용). opts는 이미 파싱된 값.
+  function emitStart(type, question, opts, duration) {
+    if (type === 'choice') {
+      if (!opts.options || opts.options.length < 2) { alert('보기를 2개 이상 입력해주세요 (/로 구분)'); return; }
+      socket.emit('admin:startVoting', { question, type: 'choice', options: opts.options, duration });
+    } else if (type === 'subjective') {
+      socket.emit('admin:startSubjective', { question, maxLen: opts.maxLen || 20 });
+    } else if (type === 'emoji') {
+      if (!opts.emojis || opts.emojis.length < 2) { alert('이모지를 2개 이상 입력해주세요 (공백으로 구분)'); return; }
+      socket.emit('admin:startEmoji', { question, emojis: opts.emojis });
+    } else {
+      socket.emit('admin:startVoting', { question, duration }); // yesno
+    }
+  }
+
+  // 즉석 질문 유형 변경 시 보조 입력칸 표시 토글
+  function onQuestionTypeChange() {
+    const type = document.getElementById('question-type').value;
+    const optIn = document.getElementById('question-options');
+    const maxLbl = document.getElementById('question-maxlen-label');
+    const maxIn = document.getElementById('question-maxlen');
+    const durLbl = document.getElementById('duration-label');
+    const durIn = document.getElementById('duration-input');
+    const showOpt = (type === 'choice' || type === 'emoji');
+    optIn.style.display = showOpt ? 'block' : 'none';
+    optIn.placeholder = type === 'emoji'
+      ? '이모지를 공백으로 구분 (예: 😆 😭 🥹 👀)'
+      : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
+    const showMax = (type === 'subjective');
+    maxLbl.style.display = showMax ? 'block' : 'none';
+    maxIn.style.display = showMax ? 'block' : 'none';
+    const showDur = (type === 'yesno' || type === 'choice');
+    durLbl.style.display = showDur ? 'block' : 'none';
+    durIn.style.display = showDur ? 'block' : 'none';
+  }
+
+  function startQuestionNow() {
     const question = document.getElementById('question-input').value.trim();
-    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
     if (!question) { alert('질문을 입력해주세요'); return; }
-    socket.emit('admin:startVoting', { question, duration });
+    const type = document.getElementById('question-type').value;
+    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    emitStart(type, question, {
+      options: parseOptions(document.getElementById('question-options').value),
+      emojis: parseEmojis(document.getElementById('question-options').value),
+      maxLen: parseInt(document.getElementById('question-maxlen').value, 10) || 20,
+    }, duration);
   }
 
   function endVotingNow() {
     socket.emit('admin:endVoting');
-  }
-
-  function startSubjectiveNow() {
-    const question = document.getElementById('question-input').value.trim();
-    if (!question) { alert('질문을 입력해주세요'); return; }
-    socket.emit('admin:startSubjective', { question });
   }
 
   function endSubjectiveNow() {
@@ -852,14 +918,20 @@
       return;
     }
     list.innerHTML = '';
+    const TAG = {
+      yesno: ['yesno', 'YES/NO'], choice: ['choice', '객관식'],
+      subjective: ['subjective', '주관식'], emoji: ['emoji', '이모지'],
+    };
     presets.forEach((p, i) => {
       const item = document.createElement('div');
       item.className = 'preset-item';
-      const tag = p.type === 'subjective'
-        ? '<span class="preset-tag subjective">주관식</span>'
-        : '<span class="preset-tag yesno">객관식</span>';
+      const t = TAG[p.type] || TAG.yesno;
+      let detail = '';
+      if (p.type === 'choice' && p.options) detail = ` (${p.options.join(' / ')})`;
+      else if (p.type === 'emoji' && p.emojis) detail = ` (${p.emojis.join(' ')})`;
+      else if (p.type === 'subjective' && p.maxLen) detail = ` (${p.maxLen}자)`;
       item.innerHTML = `
-        ${tag}<span>${i + 1}. ${p.text}</span>
+        <span class="preset-tag ${t[0]}">${t[1]}</span><span>${i + 1}. ${p.text}${detail}</span>
         <button onclick="runPreset(${i})">실행</button>
         <button class="remove-btn" onclick="removePreset(${i})">✕</button>
       `;
@@ -867,25 +939,47 @@
     });
   }
 
+  // 사전등록 유형 변경 시 보조 입력칸 표시 토글
+  function onPresetTypeChange() {
+    const type = document.getElementById('preset-type').value;
+    const optIn = document.getElementById('preset-options');
+    const maxIn = document.getElementById('preset-maxlen');
+    const showOpt = (type === 'choice' || type === 'emoji');
+    optIn.style.display = showOpt ? 'block' : 'none';
+    optIn.placeholder = type === 'emoji'
+      ? '이모지를 공백으로 구분 (예: 😆 😭 🥹 👀)'
+      : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
+    maxIn.style.display = (type === 'subjective') ? 'block' : 'none';
+  }
+
   function addPreset() {
     const input = document.getElementById('preset-input');
     const type = document.getElementById('preset-type').value;
     const text = input.value.trim();
     if (!text) return;
-    presets.push({ text, type });
+    const p = { text, type };
+    if (type === 'choice') {
+      const options = parseOptions(document.getElementById('preset-options').value);
+      if (options.length < 2) { alert('보기를 2개 이상 입력해주세요 (/로 구분)'); return; }
+      p.options = options;
+    } else if (type === 'emoji') {
+      const emojis = parseEmojis(document.getElementById('preset-options').value);
+      if (emojis.length < 2) { alert('이모지를 2개 이상 입력해주세요 (공백으로 구분)'); return; }
+      p.emojis = emojis;
+    } else if (type === 'subjective') {
+      p.maxLen = parseInt(document.getElementById('preset-maxlen').value, 10) || 20;
+    }
+    presets.push(p);
     localStorage.setItem('presets', JSON.stringify(presets));
     input.value = '';
+    document.getElementById('preset-options').value = '';
     renderPresets();
   }
 
   function runPreset(i) {
     const p = presets[i];
-    if (p.type === 'subjective') {
-      socket.emit('admin:startSubjective', { question: p.text });
-    } else {
-      const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
-      socket.emit('admin:startVoting', { question: p.text, duration });
-    }
+    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    emitStart(p.type, p.text, { options: p.options, emojis: p.emojis, maxLen: p.maxLen }, duration);
   }
 
   function removePreset(i) {

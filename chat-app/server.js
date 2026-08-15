@@ -79,26 +79,31 @@ const recentMessages = [];
 const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
+const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
+
 // ── 투표(질문) 상태 관리 ──
-// mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult'
-//  - voting/result: 객관식(Yes/No)
+// mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult' | 'emoji'
+//  - voting/result: 선택형 투표. voteType='yesno'(YES/NO 2지) 또는 'choice'(N지선다 2~6지)
 //  - subjective/subjectiveResult: 주관식(자유 텍스트, 제작진 수동 마감 → 워드클라우드)
+//  - emoji: 이모지 반응 질문(관객이 이모지 선택 → LED에 대량으로 떠오름, 비율 X, 분위기 고조용)
 const appState = {
   mode: 'chat',
   question: null,
-  votingDuration: null,   // 초 (객관식 전용)
-  votingEndTime: null,    // epoch ms (객관식 전용)
-  votes: {},              // clientId -> 'yes' | 'no'
+  votingDuration: null,   // 초 (선택형 전용)
+  votingEndTime: null,    // epoch ms (선택형 전용)
+  voteType: 'yesno',      // 'yesno' | 'choice' — 클라이언트 색/레이아웃 분기용
+  voteOptions: ['YES', 'NO'], // 보기 라벨 배열 (yesno는 ['YES','NO'])
+  votes: {},              // clientId -> 보기 인덱스(0-based)
   answers: {},            // clientId -> text (주관식, 1인 1회)
   answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
+  answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
+  emojiOptions: [],       // 이모지 반응 질문의 보기 이모지 배열
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
 };
-
-const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 제한
 
 // 주관식 답변 → 워드클라우드용 빈도 집계 (상위 40개)
 // 단어로 쪼개지 않고 답변 전체를 한 덩어리로 집계 — "나 빼고 다" 같은 문구형 답변의
@@ -117,25 +122,35 @@ function computeCloud() {
     .slice(0, 40);
 }
 
+// 보기별 득표 집계 → { perOption: [n0, n1, ...], total }
 function computeCounts() {
-  let yes = 0, no = 0;
+  const perOption = new Array(appState.voteOptions.length).fill(0);
+  let total = 0;
   for (const v of Object.values(appState.votes)) {
-    if (v === 'yes') yes++;
-    else if (v === 'no') no++;
+    if (typeof v === 'number' && v >= 0 && v < perOption.length) {
+      perOption[v]++;
+      total++;
+    }
   }
-  return { yes, no, total: yes + no };
+  return { perOption, total };
 }
 
 function publicState(forClientId) {
+  const myVote = forClientId != null && appState.votes[forClientId] != null
+    ? appState.votes[forClientId] : null;
   return {
     mode: appState.mode,
     question: appState.question,
     votingDuration: appState.votingDuration,
     votingEndTime: appState.votingEndTime,
-    votes: appState.votes, // clientId -> choice (LED/관리자가 전체 분포를 그리는 데 필요)
+    voteType: appState.voteType,
+    voteOptions: appState.voteOptions,
+    votes: appState.votes, // clientId -> 인덱스 (LED/관리자가 전체 분포를 그리는 데 필요)
     counts: computeCounts(),
-    myVote: forClientId ? (appState.votes[forClientId] || null) : null,
+    myVote, // 내가 고른 보기 인덱스(0-based) 또는 null
     answerCount: Object.keys(appState.answers).length,
+    answerMaxLen: appState.answerMaxLen,
+    emojiOptions: appState.emojiOptions,
     myAnswered: forClientId ? !!appState.answers[forClientId] : null,
     cloud: appState.mode === 'subjectiveResult' ? computeCloud() : null,
     pinnedChat: appState.pinnedChat,
@@ -150,11 +165,14 @@ function clearPinnedChat() {
   io.emit('chatPinned', { message: null });
 }
 
-function startVoting(question, duration) {
+// options: 보기 라벨 배열, type: 'yesno' | 'choice'
+function startVoting(question, options, duration, type) {
   clearPinnedChat();
   if (appState.timerHandle) clearTimeout(appState.timerHandle);
   appState.mode = 'voting';
   appState.question = question;
+  appState.voteType = type;
+  appState.voteOptions = options;
   appState.votingDuration = duration;
   appState.votingEndTime = Date.now() + duration * 1000;
   appState.votes = {};
@@ -169,8 +187,25 @@ function startVoting(question, duration) {
   }, duration * 1000);
 }
 
+// ── 이모지 반응 질문 (타이머 없음, 제작진 수동 마감=채팅 복귀) ──
+// 관객이 이모지를 고르면 LED에 대량으로 떠오름(비율 X). 여러 번 탭 가능(분위기 고조).
+function startEmoji(question, emojis) {
+  clearPinnedChat();
+  if (appState.timerHandle) {
+    clearTimeout(appState.timerHandle);
+    appState.timerHandle = null;
+  }
+  appState.mode = 'emoji';
+  appState.question = question;
+  appState.emojiOptions = emojis;
+  appState.votingDuration = null;
+  appState.votingEndTime = null;
+  appState.votes = {};
+  io.emit('modeChange', publicState());
+}
+
 // ── 주관식 질문 (타이머 없음, 제작진 수동 마감) ──
-function startSubjective(question) {
+function startSubjective(question, maxLen) {
   clearPinnedChat();
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
@@ -178,6 +213,7 @@ function startSubjective(question) {
   }
   appState.mode = 'subjective';
   appState.question = question;
+  appState.answerMaxLen = maxLen;
   appState.votingDuration = null;
   appState.votingEndTime = null;
   appState.votes = {};
@@ -214,11 +250,15 @@ function returnToChat() {
   appState.question = null;
   appState.votingDuration = null;
   appState.votingEndTime = null;
+  appState.voteType = 'yesno';
+  appState.voteOptions = ['YES', 'NO'];
   appState.votes = {};
   appState.answers = {};
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.answerMaxLen = MAX_ANSWER_LENGTH;
+  appState.emojiOptions = [];
   io.emit('modeChange', publicState());
 }
 
@@ -278,7 +318,7 @@ io.on('connection', (socket) => {
   // 투표 중엔 차단(답변에만 집중), 소켓당 3초에 10회로 스팸 제한
   socket.on('reaction', (data) => {
     const { type } = data || {};
-    if (appState.mode === 'voting' || appState.mode === 'subjective') return; // 답변 집중 구간엔 차단
+    if (appState.mode === 'voting' || appState.mode === 'subjective' || appState.mode === 'emoji') return; // 답변 집중 구간엔 차단
     if (type !== 'heart' && type !== 'thumbs' && type !== 'down') return;
     const now = Date.now();
     if (!socket._reactionTimes) socket._reactionTimes = [];
@@ -288,19 +328,32 @@ io.on('connection', (socket) => {
     io.emit('reaction', { type });
   });
 
-  // 투표
+  // 투표 (choice = 보기 인덱스 0-based)
   socket.on('vote', (data) => {
-    const { choice } = data || {};
+    const idx = data && data.choice;
     if (appState.mode !== 'voting') return;
-    if (choice !== 'yes' && choice !== 'no') return;
+    if (typeof idx !== 'number' || idx < 0 || idx >= appState.voteOptions.length) return;
     if (!socket.clientId) return;
 
-    appState.votes[socket.clientId] = choice;
+    appState.votes[socket.clientId] = idx;
     io.emit('voteUpdate', {
       clientId: socket.clientId,
-      choice,
+      choice: idx,
       counts: computeCounts(),
     });
+  });
+
+  // 이모지 반응 질문: 관객이 이모지 선택 → LED에 떠오름. 여러 번 탭 가능(스팸 제한).
+  socket.on('emojiPick', (data) => {
+    if (appState.mode !== 'emoji') return;
+    const emoji = data && data.emoji;
+    if (typeof emoji !== 'string' || !appState.emojiOptions.includes(emoji)) return;
+    const now = Date.now();
+    if (!socket._emojiTimes) socket._emojiTimes = [];
+    socket._emojiTimes = socket._emojiTimes.filter(t => now - t < 3000);
+    if (socket._emojiTimes.length >= 10) return; // 3초에 10회 상한
+    socket._emojiTimes.push(now);
+    io.emit('emojiFloat', { emoji });
   });
 
   // 주관식 답변 (1인 1회, 20자 제한)
@@ -309,7 +362,7 @@ io.on('connection', (socket) => {
     if (!socket.clientId) return;
     if (appState.answers[socket.clientId]) return; // 이미 답변함
     const text = (typeof (data && data.text) === 'string' ? data.text : '')
-      .trim().slice(0, MAX_ANSWER_LENGTH);
+      .trim().slice(0, appState.answerMaxLen);
     if (!text) return;
 
     appState.answers[socket.clientId] = text;
@@ -329,7 +382,17 @@ io.on('connection', (socket) => {
     const question = (data && data.question || '').trim();
     const duration = Math.max(5, parseInt(data && data.duration, 10) || 30);
     if (!question) return;
-    startVoting(question, duration);
+    const type = (data && data.type) === 'choice' ? 'choice' : 'yesno';
+    let options;
+    if (type === 'choice') {
+      options = Array.isArray(data && data.options)
+        ? data.options.map(o => String(o).trim()).filter(Boolean).slice(0, 6)
+        : [];
+      if (options.length < 2) return; // 보기 2개 미만이면 무시
+    } else {
+      options = ['YES', 'NO'];
+    }
+    startVoting(question, options, duration, type);
   });
 
   socket.on('admin:endVoting', () => {
@@ -339,7 +402,20 @@ io.on('connection', (socket) => {
   socket.on('admin:startSubjective', (data) => {
     const question = (data && data.question || '').trim();
     if (!question) return;
-    startSubjective(question);
+    let maxLen = parseInt(data && data.maxLen, 10);
+    if (!Number.isFinite(maxLen) || maxLen < 1) maxLen = MAX_ANSWER_LENGTH;
+    maxLen = Math.min(MAX_ANSWER_LENGTH, maxLen); // 상한 20 (LED 가독성)
+    startSubjective(question, maxLen);
+  });
+
+  socket.on('admin:startEmoji', (data) => {
+    const question = (data && data.question || '').trim();
+    if (!question) return;
+    const emojis = Array.isArray(data && data.emojis)
+      ? data.emojis.map(e => String(e).trim()).filter(Boolean).slice(0, 6)
+      : [];
+    if (emojis.length < 2) return; // 이모지 2개 미만이면 무시
+    startEmoji(question, emojis);
   });
 
   socket.on('admin:endSubjective', () => {

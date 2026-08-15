@@ -199,26 +199,30 @@
       max-width: 320px;
     }
 
+    /* 보기 버튼: 색은 JS가 옵션별 CSS 변수(--tint/--strong/--on)로 주입 (YES/NO·N지선다 공용) */
     .vote-btn {
       flex: 1;
       padding: 22px 0;
       border-radius: 18px;
       border: 3px solid transparent;
       font-size: 18px;
-      font-weight: 800;
+      font-weight: 700;
       cursor: pointer;
       font-family: inherit;
+      background: var(--tint, #f2f2f7);
+      color: var(--on, #1c1c1e);
+      word-break: keep-all;
+      overflow-wrap: break-word;
       transition: transform 0.15s, opacity 0.15s, background 0.15s, color 0.15s;
     }
 
     .vote-btn:active { transform: scale(0.96); }
     .vote-btn:disabled { opacity: 0.45; cursor: default; }
+    .vote-btn.selected { background: var(--strong, #1c1c1e); color: #fff; border-color: var(--on, #1c1c1e); }
 
-    #vote-yes-btn { background: #e9f9ed; color: #1e8a3c; }
-    #vote-yes-btn.selected { background: #34c759; color: #fff; border-color: #1e8a3c; }
-
-    #vote-no-btn { background: #ffebe9; color: #c62b20; }
-    #vote-no-btn.selected { background: #ff3b30; color: #fff; border-color: #c62b20; }
+    /* 3지 이상(N지선다)은 2열 그리드로 줄바꿈 */
+    #voting-buttons.grid { flex-wrap: wrap; }
+    #voting-buttons.grid .vote-btn { flex: 1 1 calc(50% - 7px); padding: 18px 0; font-size: 16px; }
 
     #voting-ratio {
       width: 100%;
@@ -229,22 +233,50 @@
       width: 100%;
       height: 10px;
       border-radius: 6px;
-      background: #ffebe9;
+      background: #e5e5ea;
       display: flex;
       overflow: hidden;
       margin-bottom: 8px;
     }
 
-    #ratio-fill-yes { height: 100%; background: #34c759; transition: width 0.3s ease; }
-    #ratio-fill-no { height: 100%; background: #ff3b30; transition: width 0.3s ease; }
+    .ratio-fill { height: 100%; transition: width 0.3s ease; }
 
     .ratio-text {
       display: flex;
-      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px 14px;
       font-size: 13px;
       font-weight: 700;
       color: #3a3a3c;
     }
+    .ratio-item { display: inline-flex; align-items: center; gap: 5px; }
+    .ratio-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    /* 이모지 반응 버튼 */
+    #emoji-buttons {
+      display: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+    #emoji-buttons.active { display: flex; }
+    .emoji-btn {
+      flex: 1 1 calc(50% - 6px);
+      min-width: 96px;
+      padding: 16px 0;
+      border-radius: 18px;
+      border: none;
+      background: #f2f2f7;
+      font-size: 40px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: transform 0.12s, background 0.12s;
+    }
+    .emoji-btn:active { transform: scale(0.92); background: #e5e5ea; }
+    .emoji-btn.pop { animation: emojiPop 0.3s ease; }
+    @keyframes emojiPop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
 
     /* ── 주관식 답변 입력 ── */
     #subjective-wrap {
@@ -564,20 +596,15 @@
     <div id="voting-card">
       <div id="voting-timer-phone">30</div>
       <div id="voting-question-phone"></div>
-      <div id="voting-buttons">
-        <button class="vote-btn" id="vote-yes-btn" onclick="castVote('yes')">YES</button>
-        <button class="vote-btn" id="vote-no-btn" onclick="castVote('no')">NO</button>
-      </div>
+      <!-- 보기 버튼/비율은 질문 유형(YES/NO·N지선다)에 맞춰 JS가 동적 생성 -->
+      <div id="voting-buttons"></div>
       <div id="voting-ratio">
-        <div class="ratio-bar">
-          <div id="ratio-fill-yes" style="width:0%"></div>
-          <div id="ratio-fill-no" style="width:0%"></div>
-        </div>
-        <div class="ratio-text">
-          <span id="ratio-yes-pct">YES 0%</span>
-          <span id="ratio-no-pct">NO 0%</span>
-        </div>
+        <div class="ratio-bar" id="ratio-bar"></div>
+        <div class="ratio-text" id="ratio-text"></div>
       </div>
+
+      <!-- 이모지 반응 질문 전용: 이모지 선택 (여러 번 탭 가능) -->
+      <div id="emoji-buttons"></div>
 
       <!-- 주관식 모드 전용: 자유 텍스트 답변 (1인 1회, 20자) -->
       <div id="subjective-wrap">
@@ -690,7 +717,7 @@
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
-      nickSocket.on('voteUpdate', (data) => updateRatio(data.counts));
+      nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
     } else {
       // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
       nickSocket.emit('claimNickname', currentNickname);
@@ -712,11 +739,59 @@
   //  투표 모드 (관객 폰)
   // ══════════════════════════════════
   let currentMode = 'chat';
-  let myVote = null;
+  let myVote = null;        // 내가 고른 보기 인덱스(0-based) 또는 null
+  let voteOptions = [];     // 현재 질문의 보기 라벨 배열
+  let voteTypeCur = 'yesno';// 'yesno' | 'choice'
+  let answerMax = 20;       // 현재 주관식 최대 글자수
   let phoneTimerInterval = null;
   let phoneVotingEndTime = null;
 
   let myAnswerDone = false; // 주관식 답변 완료 여부 (1인 1회)
+
+  // 보기 색 팔레트 (LED와 순서 동일하게 유지 — 같은 보기 = 같은 색)
+  const YESNO_STYLES = [
+    { tint: '#e9f9ed', strong: '#34c759', on: '#1e8a3c' }, // YES 초록
+    { tint: '#ffebe9', strong: '#ff3b30', on: '#c62b20' }, // NO 빨강
+  ];
+  const OPTION_STYLES = [
+    { tint: '#e9f9ed', strong: '#34c759', on: '#1e8a3c' },
+    { tint: '#fff2e0', strong: '#ff9f0a', on: '#b56b00' },
+    { tint: '#e6f2ff', strong: '#0a84ff', on: '#0060df' },
+    { tint: '#f3e9fc', strong: '#af52de', on: '#7a2fb0' },
+    { tint: '#ffe9ef', strong: '#ff375f', on: '#c81e45' },
+    { tint: '#e3f6f9', strong: '#30b0c7', on: '#1f7f92' },
+  ];
+  function voteStyles(type) { return type === 'yesno' ? YESNO_STYLES : OPTION_STYLES; }
+
+  function renderVoteButtons(options, type) {
+    const el = document.getElementById('voting-buttons');
+    el.innerHTML = '';
+    const styles = voteStyles(type);
+    options.forEach((label, i) => {
+      const s = styles[i % styles.length];
+      const b = document.createElement('button');
+      b.className = 'vote-btn';
+      b.textContent = label;
+      b.style.setProperty('--tint', s.tint);
+      b.style.setProperty('--strong', s.strong);
+      b.style.setProperty('--on', s.on);
+      b.addEventListener('click', () => castVote(i));
+      el.appendChild(b);
+    });
+    el.classList.toggle('grid', options.length > 2);
+  }
+
+  function renderEmojiButtons(emojis) {
+    const el = document.getElementById('emoji-buttons');
+    el.innerHTML = '';
+    emojis.forEach((emo) => {
+      const b = document.createElement('button');
+      b.className = 'emoji-btn';
+      b.textContent = emo;
+      b.addEventListener('click', () => pickEmoji(emo, b));
+      el.appendChild(b);
+    });
+  }
 
   function applyVoteState(state) {
     const prevMode = currentMode;
@@ -740,7 +815,9 @@
 
     chatContent.classList.add('blurred');
     overlay.classList.add('active');
-    myVote = state.myVote || myVote;
+    // 새 투표 질문 시작 시 내 선택 초기화, 재접속이면 서버 값(인덱스) 복원
+    if (state.mode === 'voting' && prevMode !== 'voting' && prevMode !== 'result') myVote = null;
+    if (state.myVote != null) myVote = state.myVote;
 
     // 새 주관식 질문 시작 시 답변 상태 초기화
     if (state.mode === 'subjective' && prevMode !== 'subjective') {
@@ -759,10 +836,28 @@
     questionEl.textContent = state.question || '';
 
     // 모드별 요소 표시
-    const isYesNo = state.mode === 'voting' || state.mode === 'result';
-    buttonsEl.style.display = isYesNo ? 'flex' : 'none';
-    ratioEl.style.display = isYesNo ? 'block' : 'none';
+    const isVote = state.mode === 'voting' || state.mode === 'result';
+    const isEmoji = state.mode === 'emoji';
+    const emojiEl = document.getElementById('emoji-buttons');
+
+    if (isVote) {
+      voteOptions = state.voteOptions || [];
+      voteTypeCur = state.voteType || 'yesno';
+      renderVoteButtons(voteOptions, voteTypeCur);
+    }
+    buttonsEl.style.display = isVote ? 'flex' : 'none';
+    ratioEl.style.display = isVote ? 'block' : 'none';
+    emojiEl.classList.toggle('active', isEmoji);
+    if (isEmoji) renderEmojiButtons(state.emojiOptions || []);
     subjectiveWrap.classList.toggle('active', state.mode === 'subjective');
+
+    // 주관식 글자수 제한 반영 (질문별 설정)
+    if (state.mode === 'subjective') {
+      answerMax = state.answerMaxLen || 20;
+      const ai = document.getElementById('answer-input');
+      ai.maxLength = answerMax;
+      ai.placeholder = `${answerMax}자 이내로 답해주세요`;
+    }
 
     if (state.mode === 'voting') {
       timerEl.style.display = 'inline-flex';
@@ -781,16 +876,20 @@
       timerEl.style.display = 'none';
       resultReact.classList.add('active'); // 워드클라우드 결과에도 붐업/붐따
       stopPhoneTimer();
+    } else if (state.mode === 'emoji') {
+      timerEl.style.display = 'none';
+      resultReact.classList.remove('active'); // 이모지 모드는 자체 버튼만
+      stopPhoneTimer();
     }
 
     updateVoteUI();
-    if (isYesNo) updateRatio(state.counts);
+    if (isVote) updateRatio(state.counts, voteTypeCur);
   }
 
   // ── 주관식 답변 제출 ──
   function submitAnswer() {
     const input = document.getElementById('answer-input');
-    const text = input.value.trim().slice(0, 20);
+    const text = input.value.trim().slice(0, answerMax);
     if (!text || myAnswerDone || currentMode !== 'subjective' || !nickSocket) return;
     nickSocket.emit('answer', { text });
     myAnswerDone = true; // 낙관적 반영 (서버도 1인 1회 보장)
@@ -798,22 +897,38 @@
   }
 
   function updateVoteUI() {
-    const yesBtn = document.getElementById('vote-yes-btn');
-    const noBtn = document.getElementById('vote-no-btn');
-    yesBtn.classList.toggle('selected', myVote === 'yes');
-    noBtn.classList.toggle('selected', myVote === 'no');
-    yesBtn.disabled = currentMode !== 'voting';
-    noBtn.disabled = currentMode !== 'voting';
+    const btns = document.querySelectorAll('#voting-buttons .vote-btn');
+    btns.forEach((b, i) => {
+      b.classList.toggle('selected', myVote === i);
+      b.disabled = currentMode !== 'voting';
+    });
   }
 
-  function updateRatio(counts) {
-    const c = counts || { yes: 0, no: 0, total: 0 };
-    const yesPct = c.total ? Math.round((c.yes / c.total) * 100) : 0;
-    const noPct = c.total ? 100 - yesPct : 0;
-    document.getElementById('ratio-fill-yes').style.width = yesPct + '%';
-    document.getElementById('ratio-fill-no').style.width = noPct + '%';
-    document.getElementById('ratio-yes-pct').textContent = `YES ${yesPct}%`;
-    document.getElementById('ratio-no-pct').textContent = `NO ${noPct}%`;
+  function updateRatio(counts, type) {
+    const per = counts && counts.perOption ? counts.perOption : [];
+    const total = counts && counts.total ? counts.total : 0;
+    const styles = voteStyles(type || voteTypeCur);
+    const bar = document.getElementById('ratio-bar');
+    const txt = document.getElementById('ratio-text');
+    bar.innerHTML = '';
+    txt.innerHTML = '';
+    voteOptions.forEach((label, i) => {
+      const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
+      const s = styles[i % styles.length];
+      const fill = document.createElement('div');
+      fill.className = 'ratio-fill';
+      fill.style.width = pct + '%';
+      fill.style.background = s.strong;
+      bar.appendChild(fill);
+      const item = document.createElement('span');
+      item.className = 'ratio-item';
+      const dot = document.createElement('span');
+      dot.className = 'ratio-dot';
+      dot.style.background = s.strong;
+      item.appendChild(dot);
+      item.appendChild(document.createTextNode(`${label} ${pct}%`));
+      txt.appendChild(item);
+    });
   }
 
   function startPhoneTimer(endTime) {
@@ -852,9 +967,20 @@
 
   function castVote(choice) {
     if (currentMode !== 'voting' || !nickSocket) return;
-    myVote = choice;
+    myVote = choice; // 보기 인덱스
     updateVoteUI();
     nickSocket.emit('vote', { choice });
+  }
+
+  // 이모지 반응 질문: 이모지 선택 → LED에 떠오름 (여러 번 탭 가능, 250ms 연타 제한)
+  let lastEmojiAt = 0;
+  function pickEmoji(emoji, btnEl) {
+    const now = Date.now();
+    if (now - lastEmojiAt < 250) return;
+    lastEmojiAt = now;
+    if (currentMode !== 'emoji' || !nickSocket) return;
+    nickSocket.emit('emojiPick', { emoji });
+    if (btnEl) { btnEl.classList.remove('pop'); void btnEl.offsetWidth; btnEl.classList.add('pop'); }
   }
 
   function rerollNickname() {
