@@ -846,13 +846,18 @@
   function parseOptions(str) {
     return String(str || '').split('/').map(s => s.trim()).filter(Boolean);
   }
-  // "🔥 소리 질러 / 🥹 벌써 눈물 남" → [{emoji:'🔥', label:'소리 질러'}, ...]
+  // "🔥소리 질러 / 🥹 벌써 눈물 남" → [{emoji:'🔥', label:'소리 질러'}, ...]
+  // 이모지와 뜻이 붙어 있어도(공백 없어도) 선행 이모지를 유니코드 기준으로 분리
   function parseEmojiOptions(str) {
+    const EMOJI_RE = /^((?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*)+)\s*(.*)$/u;
     return String(str || '').split('/').map(part => {
       const t = part.trim();
       if (!t) return null;
-      const m = t.match(/^(\S+)\s*(.*)$/);
-      return { emoji: m[1], label: (m[2] || '').trim() };
+      const m = t.match(EMOJI_RE);
+      if (m) return { emoji: m[1], label: m[2].trim() };
+      // 이모지로 시작하지 않으면 첫 토큰을 이모지로 폴백
+      const m2 = t.match(/^(\S+)\s*(.*)$/);
+      return { emoji: m2[1], label: (m2[2] || '').trim() };
     }).filter(Boolean);
   }
 
