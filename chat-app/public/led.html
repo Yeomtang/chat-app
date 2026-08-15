@@ -195,12 +195,12 @@
     #chat-pin.active { display: flex; }
 
     #chat-pin-card {
-      max-width: 86%;
+      width: 86%;            /* 글자 수와 무관하게 채팅 폭 수준으로 고정 */
       background: #ffffff;
-      border-radius: 26px;
-      padding: 26px 34px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
-      text-align: center;
+      border-radius: 16px;
+      padding: 8px 30px;     /* 세로를 더 얇게 — 길쭉한 슬림 바 */
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+      text-align: center;    /* 닉네임·본문 가운데 정렬 */
       word-break: keep-all;
       overflow-wrap: break-word;
     }
@@ -210,17 +210,18 @@
     }
 
     #chat-pin-nick {
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 700;
       color: #8e8e93;
-      margin-bottom: 8px;
+      margin-bottom: 2px;
     }
 
     #chat-pin-text {
-      font-size: 26px;
+      font-size: 20px;
       font-weight: 700;
       color: #1c1c1e;
-      line-height: 1.4;
+      line-height: 1.3;
+      text-wrap: balance; /* 여러 줄을 길이가 고르게 분배 — 읽기 좋은 줄바꿈 (미지원 시 자연 폴백) */
     }
 
     /* ── 리액션 레이어 ── */

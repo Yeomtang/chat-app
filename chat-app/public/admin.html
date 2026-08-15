@@ -138,18 +138,32 @@
 
     .preset-item {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      align-items: flex-start;
+      gap: 10px;
       background: #f2f2f7;
       border-radius: 10px;
-      padding: 10px 12px;
+      padding: 12px;
     }
 
-    .preset-item span {
-      flex: 1;
+    /* 질문/보기 텍스트 열 — 보기는 아래 줄에 회색으로 분리해 한눈에 파악 */
+    .preset-main { flex: 1; min-width: 0; }
+    .preset-q {
       font-size: 14px;
       color: #1c1c1e;
+      line-height: 1.4;
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
+    .preset-detail {
+      display: block;
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 3px;
+      line-height: 1.35;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    .preset-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
     .preset-item button {
       background: #1c1c1e;
@@ -509,6 +523,7 @@
       <option value="subjective">주관식 (수동 마감)</option>
       <option value="emoji">이모지 반응</option>
     </select>
+    <label id="question-options-label" style="display:none">보기 (선택지)</label>
     <input type="text" id="question-options" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
     <label id="question-maxlen-label" style="display:none">최대 글자수 (1~20)</label>
     <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
@@ -879,12 +894,18 @@
   // 즉석 질문 유형 변경 시 보조 입력칸 표시 토글
   function onQuestionTypeChange() {
     const type = document.getElementById('question-type').value;
+    const optLbl = document.getElementById('question-options-label');
     const optIn = document.getElementById('question-options');
     const maxLbl = document.getElementById('question-maxlen-label');
     const maxIn = document.getElementById('question-maxlen');
     const durLbl = document.getElementById('duration-label');
     const durIn = document.getElementById('duration-input');
+    // 유형 변경 시 이전 유형에서 입력한 보조값 초기화 (혼동 방지)
+    optIn.value = '';
+    maxIn.value = '20';
     const showOpt = (type === 'choice' || type === 'emoji');
+    optLbl.style.display = showOpt ? 'block' : 'none';
+    optLbl.textContent = type === 'emoji' ? '이모지 + 뜻' : '보기 (선택지)';
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
       ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
@@ -938,13 +959,18 @@
       item.className = 'preset-item';
       const t = TAG[p.type] || TAG.yesno;
       let detail = '';
-      if (p.type === 'choice' && p.options) detail = ` (${p.options.join(' / ')})`;
-      else if (p.type === 'emoji' && p.emojis) detail = ` (${p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ')})`;
-      else if (p.type === 'subjective' && p.maxLen) detail = ` (${p.maxLen}자)`;
+      if (p.type === 'choice' && p.options) detail = p.options.join(' / ');
+      else if (p.type === 'emoji' && p.emojis) detail = p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ');
+      else if (p.type === 'subjective' && p.maxLen) detail = `${p.maxLen}자 이내`;
       item.innerHTML = `
-        <span class="preset-tag ${t[0]}">${t[1]}</span><span>${i + 1}. ${p.text}${detail}</span>
-        <button onclick="runPreset(${i})">실행</button>
-        <button class="remove-btn" onclick="removePreset(${i})">✕</button>
+        <div class="preset-main">
+          <span class="preset-tag ${t[0]}">${t[1]}</span><span class="preset-q">${i + 1}. ${p.text}</span>
+          ${detail ? `<span class="preset-detail">${detail}</span>` : ''}
+        </div>
+        <div class="preset-actions">
+          <button onclick="runPreset(${i})">실행</button>
+          <button class="remove-btn" onclick="removePreset(${i})">✕</button>
+        </div>
       `;
       list.appendChild(item);
     });
@@ -955,6 +981,9 @@
     const type = document.getElementById('preset-type').value;
     const optIn = document.getElementById('preset-options');
     const maxIn = document.getElementById('preset-maxlen');
+    // 유형 변경 시 이전 유형에서 입력한 보조값 초기화 (혼동 방지)
+    optIn.value = '';
+    maxIn.value = '20';
     const showOpt = (type === 'choice' || type === 'emoji');
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
