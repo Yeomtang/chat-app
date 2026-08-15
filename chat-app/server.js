@@ -99,7 +99,7 @@ const appState = {
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
-  emojiOptions: [],       // 이모지 반응 질문의 보기 이모지 배열
+  emojiOptions: [],       // 이모지 반응 질문 보기: [{emoji, label}] (라벨=뜻, 관객 폰에 표시)
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
@@ -347,7 +347,7 @@ io.on('connection', (socket) => {
   socket.on('emojiPick', (data) => {
     if (appState.mode !== 'emoji') return;
     const emoji = data && data.emoji;
-    if (typeof emoji !== 'string' || !appState.emojiOptions.includes(emoji)) return;
+    if (typeof emoji !== 'string' || !appState.emojiOptions.some(o => o && o.emoji === emoji)) return;
     const now = Date.now();
     if (!socket._emojiTimes) socket._emojiTimes = [];
     socket._emojiTimes = socket._emojiTimes.filter(t => now - t < 3000);
@@ -411,11 +411,13 @@ io.on('connection', (socket) => {
   socket.on('admin:startEmoji', (data) => {
     const question = (data && data.question || '').trim();
     if (!question) return;
-    const emojis = Array.isArray(data && data.emojis)
-      ? data.emojis.map(e => String(e).trim()).filter(Boolean).slice(0, 6)
-      : [];
-    if (emojis.length < 2) return; // 이모지 2개 미만이면 무시
-    startEmoji(question, emojis);
+    // emojis: [{emoji, label}] — 라벨(뜻)은 관객 폰 버튼에 함께 표시
+    const emojiOptions = (Array.isArray(data && data.emojis) ? data.emojis : [])
+      .map(o => ({ emoji: String(o && o.emoji || '').trim(), label: String(o && o.label || '').trim() }))
+      .filter(o => o.emoji)
+      .slice(0, 6);
+    if (emojiOptions.length < 2) return; // 이모지 2개 미만이면 무시
+    startEmoji(question, emojiOptions);
   });
 
   socket.on('admin:endSubjective', () => {

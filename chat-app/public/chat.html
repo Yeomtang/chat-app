@@ -265,14 +265,27 @@
     .emoji-btn {
       flex: 1 1 calc(50% - 6px);
       min-width: 96px;
-      padding: 16px 0;
+      padding: 14px 8px;
       border-radius: 18px;
       border: none;
       background: #f2f2f7;
-      font-size: 40px;
       cursor: pointer;
       font-family: inherit;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
       transition: transform 0.12s, background 0.12s;
+    }
+    .emoji-btn-icon { font-size: 38px; line-height: 1; }
+    .emoji-btn-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #3a3a3c;
+      text-align: center;
+      line-height: 1.25;
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
     .emoji-btn:active { transform: scale(0.92); background: #e5e5ea; }
     .emoji-btn.pop { animation: emojiPop 0.3s ease; }
@@ -781,14 +794,25 @@
     el.classList.toggle('grid', options.length > 2);
   }
 
-  function renderEmojiButtons(emojis) {
+  function renderEmojiButtons(options) {
     const el = document.getElementById('emoji-buttons');
     el.innerHTML = '';
-    emojis.forEach((emo) => {
+    (options || []).forEach((opt) => {
+      const emoji = opt && opt.emoji ? opt.emoji : '';
+      const label = opt && opt.label ? opt.label : '';
       const b = document.createElement('button');
       b.className = 'emoji-btn';
-      b.textContent = emo;
-      b.addEventListener('click', () => pickEmoji(emo, b));
+      const icon = document.createElement('span');
+      icon.className = 'emoji-btn-icon';
+      icon.textContent = emoji;
+      b.appendChild(icon);
+      if (label) {
+        const l = document.createElement('span');
+        l.className = 'emoji-btn-label';
+        l.textContent = label;
+        b.appendChild(l);
+      }
+      b.addEventListener('click', () => pickEmoji(emoji, b));
       el.appendChild(b);
     });
   }

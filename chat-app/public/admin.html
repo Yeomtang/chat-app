@@ -846,8 +846,14 @@
   function parseOptions(str) {
     return String(str || '').split('/').map(s => s.trim()).filter(Boolean);
   }
-  function parseEmojis(str) {
-    return String(str || '').split(/[\s/]+/).map(s => s.trim()).filter(Boolean);
+  // "🔥 소리 질러 / 🥹 벌써 눈물 남" → [{emoji:'🔥', label:'소리 질러'}, ...]
+  function parseEmojiOptions(str) {
+    return String(str || '').split('/').map(part => {
+      const t = part.trim();
+      if (!t) return null;
+      const m = t.match(/^(\S+)\s*(.*)$/);
+      return { emoji: m[1], label: (m[2] || '').trim() };
+    }).filter(Boolean);
   }
 
   // 유형에 맞는 시작 이벤트 발송 (즉석/사전등록 공용). opts는 이미 파싱된 값.
@@ -858,7 +864,7 @@
     } else if (type === 'subjective') {
       socket.emit('admin:startSubjective', { question, maxLen: opts.maxLen || 20 });
     } else if (type === 'emoji') {
-      if (!opts.emojis || opts.emojis.length < 2) { alert('이모지를 2개 이상 입력해주세요 (공백으로 구분)'); return; }
+      if (!opts.emojis || opts.emojis.length < 2) { alert('이모지+뜻을 2개 이상 입력해주세요 (/로 구분)'); return; }
       socket.emit('admin:startEmoji', { question, emojis: opts.emojis });
     } else {
       socket.emit('admin:startVoting', { question, duration }); // yesno
@@ -876,7 +882,7 @@
     const showOpt = (type === 'choice' || type === 'emoji');
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
-      ? '이모지를 공백으로 구분 (예: 😆 😭 🥹 👀)'
+      ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
       : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
     const showMax = (type === 'subjective');
     maxLbl.style.display = showMax ? 'block' : 'none';
@@ -893,7 +899,7 @@
     const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
     emitStart(type, question, {
       options: parseOptions(document.getElementById('question-options').value),
-      emojis: parseEmojis(document.getElementById('question-options').value),
+      emojis: parseEmojiOptions(document.getElementById('question-options').value),
       maxLen: parseInt(document.getElementById('question-maxlen').value, 10) || 20,
     }, duration);
   }
@@ -928,7 +934,7 @@
       const t = TAG[p.type] || TAG.yesno;
       let detail = '';
       if (p.type === 'choice' && p.options) detail = ` (${p.options.join(' / ')})`;
-      else if (p.type === 'emoji' && p.emojis) detail = ` (${p.emojis.join(' ')})`;
+      else if (p.type === 'emoji' && p.emojis) detail = ` (${p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ')})`;
       else if (p.type === 'subjective' && p.maxLen) detail = ` (${p.maxLen}자)`;
       item.innerHTML = `
         <span class="preset-tag ${t[0]}">${t[1]}</span><span>${i + 1}. ${p.text}${detail}</span>
@@ -947,7 +953,7 @@
     const showOpt = (type === 'choice' || type === 'emoji');
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
-      ? '이모지를 공백으로 구분 (예: 😆 😭 🥹 👀)'
+      ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
       : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
     maxIn.style.display = (type === 'subjective') ? 'block' : 'none';
   }
@@ -963,8 +969,8 @@
       if (options.length < 2) { alert('보기를 2개 이상 입력해주세요 (/로 구분)'); return; }
       p.options = options;
     } else if (type === 'emoji') {
-      const emojis = parseEmojis(document.getElementById('preset-options').value);
-      if (emojis.length < 2) { alert('이모지를 2개 이상 입력해주세요 (공백으로 구분)'); return; }
+      const emojis = parseEmojiOptions(document.getElementById('preset-options').value);
+      if (emojis.length < 2) { alert('이모지+뜻을 2개 이상 입력해주세요 (/로 구분)'); return; }
       p.emojis = emojis;
     } else if (type === 'subjective') {
       p.maxLen = parseInt(document.getElementById('preset-maxlen').value, 10) || 20;
