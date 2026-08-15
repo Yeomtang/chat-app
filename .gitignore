@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 .gemini/
 *.log
+
+# 임시 통합 테스트 스크립트 (커밋 대상 아님)
+__livetest*.js
