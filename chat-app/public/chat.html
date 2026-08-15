@@ -871,8 +871,10 @@
       voteTypeCur = state.voteType || 'yesno';
       renderVoteButtons(voteOptions, voteTypeCur);
     }
+    // 비율(%)은 결과 모드에서만 공개 — 투표 중엔 결과가 궁금하도록 숨김(LED와 동일)
+    const showRatio = state.mode === 'result';
     buttonsEl.style.display = isVote ? 'flex' : 'none';
-    ratioEl.style.display = isVote ? 'block' : 'none';
+    ratioEl.style.display = showRatio ? 'block' : 'none';
     emojiEl.classList.toggle('active', isEmoji);
     if (isEmoji) renderEmojiButtons(state.emojiOptions || []);
     subjectiveWrap.classList.toggle('active', state.mode === 'subjective');
@@ -909,7 +911,7 @@
     }
 
     updateVoteUI();
-    if (isVote) updateRatio(state.counts, voteTypeCur);
+    if (showRatio) updateRatio(state.counts, voteTypeCur);
   }
 
   // ── 주관식 답변 제출 ──
