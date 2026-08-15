@@ -891,6 +891,9 @@
     }
   }
 
+  // 이모지 반응 질문 기본 보기 (공연 [9]번 고정 세트) — 유형 선택 시 자동 채움
+  const DEFAULT_EMOJI_OPTIONS = '🔥 소리 질러 / 🥹 벌써 눈물 남 / 😱 너무 떨려요 / 🤩 빨리 보고 싶어요';
+
   // 즉석 질문 유형 변경 시 보조 입력칸 표시 토글
   function onQuestionTypeChange() {
     const type = document.getElementById('question-type').value;
@@ -900,8 +903,8 @@
     const maxIn = document.getElementById('question-maxlen');
     const durLbl = document.getElementById('duration-label');
     const durIn = document.getElementById('duration-input');
-    // 유형 변경 시 이전 유형에서 입력한 보조값 초기화 (혼동 방지)
-    optIn.value = '';
+    // 유형 변경 시 이전 값 초기화 — 단, 이모지 유형이면 기본 보기를 미리 채움
+    optIn.value = (type === 'emoji') ? DEFAULT_EMOJI_OPTIONS : '';
     maxIn.value = '20';
     const showOpt = (type === 'choice' || type === 'emoji');
     optLbl.style.display = showOpt ? 'block' : 'none';
@@ -981,8 +984,8 @@
     const type = document.getElementById('preset-type').value;
     const optIn = document.getElementById('preset-options');
     const maxIn = document.getElementById('preset-maxlen');
-    // 유형 변경 시 이전 유형에서 입력한 보조값 초기화 (혼동 방지)
-    optIn.value = '';
+    // 유형 변경 시 이전 값 초기화 — 단, 이모지 유형이면 기본 보기를 미리 채움
+    optIn.value = (type === 'emoji') ? DEFAULT_EMOJI_OPTIONS : '';
     maxIn.value = '20';
     const showOpt = (type === 'choice' || type === 'emoji');
     optIn.style.display = showOpt ? 'block' : 'none';
