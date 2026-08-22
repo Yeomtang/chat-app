@@ -241,9 +241,11 @@
 
     .answer-item span {
       flex: 1;
+      min-width: 0; /* flex 자식 기본 최소 너비 해제 — 긴 답변이 버튼을 밀어내지 않게 */
       font-size: 14px;
       color: #1c1c1e;
       word-break: keep-all;
+      overflow-wrap: break-word;
     }
 
     .answer-item .pick-btn {
@@ -419,6 +421,7 @@
       font-size: 14px;
       color: #1c1c1e;
       word-break: keep-all;
+      overflow-wrap: break-word; /* 공백 없는 긴 문자열(ㅋㅋㅋ…)이 박스를 넘치지 않게 */
     }
 
     body.chat-fullscreen #chat-card {

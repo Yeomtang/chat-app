@@ -4,12 +4,33 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>익명 채팅</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* ── 디자인 토큰 (블러시 팔레트) ── LED 화면(led.html)과 동일한 값 유지 */
+    :root {
+      --bg:          #efdcd5; /* 화면 배경 (블러시) */
+      --bg-soft:     #f8ece7; /* 입력창 등 보조 표면 */
+      --surface:     #ffffff; /* 카드 · 말풍선 */
+      --ink:         #1e1e42; /* 본문 텍스트 · 네이비 */
+      --ink-soft:    #6e6a86; /* 보조 텍스트 */
+      --ink-faint:   #a49eb4; /* 흐린 텍스트 · 플레이스홀더 */
+      --orange:      #fb7e55; /* 1번 보기 · 강조 */
+      --orange-tint: #ffe6db;
+      --orange-deep: #b5502e;
+      --purple:      #5b5cc4; /* 2번 보기 */
+      --purple-tint: #e3e3f7;
+      --warn:        #d94f3d;
+      --line:        rgba(30, 30, 66, 0.10);
+      --shadow:      0 8px 24px rgba(30, 30, 66, 0.08);
+      --shadow-lg:   0 18px 50px rgba(30, 30, 66, 0.16);
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
-      background: #f2f2f7;
+      font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+      background: var(--bg);
       height: 100dvh;
       display: flex;
       flex-direction: column;
@@ -24,20 +45,20 @@
       justify-content: center;
       height: 100dvh;
       padding: 32px 24px;
-      background: #ffffff;
+      background: var(--bg);
     }
 
     #entrance h1 {
       font-size: 22px;
       font-weight: 700;
-      color: #1c1c1e;
+      color: var(--ink);
       margin-bottom: 6px;
       text-align: center;
     }
 
     #entrance p {
       font-size: 14px;
-      color: #8e8e93;
+      color: var(--ink-soft);
       margin-bottom: 40px;
       text-align: center;
       line-height: 1.5;
@@ -45,7 +66,8 @@
 
     .nickname-card {
       width: 100%;
-      background: #f2f2f7;
+      background: var(--surface);
+      box-shadow: var(--shadow);
       border-radius: 16px;
       padding: 20px;
       margin-bottom: 16px;
@@ -57,7 +79,7 @@
 
     .nickname-label {
       font-size: 12px;
-      color: #8e8e93;
+      color: var(--ink-soft);
       margin-bottom: 8px;
       letter-spacing: 0.3px;
       width: 100%;
@@ -67,7 +89,7 @@
     #nickname-display {
       font-size: 20px;
       font-weight: 700;
-      color: #1c1c1e;
+      color: var(--ink);
       line-height: 1.3;
       width: 100%;
       text-align: center;
@@ -79,22 +101,22 @@
       justify-content: center;
       gap: 6px;
       background: none;
-      border: 1.5px solid #d1d1d6;
+      border: 1.5px solid rgba(30, 30, 66, 0.18);
       border-radius: 100px;
       padding: 10px 20px;
       font-size: 14px;
-      color: #3a3a3c;
+      color: var(--ink-soft);
       cursor: pointer;
       margin: 0 auto 32px;
       font-family: inherit;
       transition: background 0.15s;
     }
 
-    .btn-reroll:active { background: #e5e5ea; }
+    .btn-reroll:active { background: var(--bg-soft); }
 
     .btn-enter {
       width: 100%;
-      background: #1c1c1e;
+      background: var(--ink);
       color: #fff;
       border: none;
       border-radius: 14px;
@@ -130,13 +152,16 @@
     }
 
     /* ── 투표 오버레이 (관객 폰) ── */
+    /* 보기가 많거나 질문이 길어 카드가 화면보다 커지면 스크롤로 볼 수 있어야 한다.
+       align-items:center + overflow 조합은 위쪽이 잘려 접근 불가라서, 카드에 margin:auto를 쓴다. */
     #voting-overlay {
       display: none;
       position: absolute;
       inset: 0;
-      align-items: center;
       justify-content: center;
       padding: 28px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       z-index: 30;
     }
 
@@ -150,10 +175,12 @@
       gap: 18px;
       width: 100%;
       max-width: 320px;
-      background: #ffffff;
+      margin: auto; /* 공간이 남으면 가운데, 넘치면 위부터 (잘림 방지) */
+      position: relative;
+      background: var(--surface);
       border-radius: 24px;
-      padding: 32px 24px;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+      padding: 44px 24px 28px;
+      box-shadow: var(--shadow-lg);
       opacity: 0;
       transform: scale(0.4);
     }
@@ -168,14 +195,19 @@
       100% { opacity: 1; transform: scale(1); }
     }
 
+    /* 타이머 배지: 카드 상단 중앙에 걸치는 형태 (LED 질문 카드와 동일) */
     #voting-timer-phone {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translate(-50%, -50%);
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 48px;
-      height: 48px;
+      width: 52px;
+      height: 52px;
       border-radius: 50%;
-      background: #1c1c1e;
+      background: var(--ink);
       color: #fff;
       font-size: 18px;
       font-weight: 700;
@@ -184,7 +216,7 @@
     #voting-question-phone {
       font-size: 19px;
       font-weight: 700;
-      color: #1c1c1e;
+      color: var(--ink);
       text-align: center;
       line-height: 1.4;
       max-width: 320px;
@@ -199,30 +231,54 @@
       max-width: 320px;
     }
 
-    /* 보기 버튼: 색은 JS가 옵션별 CSS 변수(--tint/--strong/--on)로 주입 (YES/NO·N지선다 공용) */
+    /* 보기 버튼: 컬러 헤더 + 흰 본문 카드. 색은 JS가 옵션별 --strong으로 주입 (YES/NO·N지선다 공용) */
     .vote-btn {
       flex: 1;
-      padding: 22px 0;
-      border-radius: 18px;
-      border: 3px solid transparent;
-      font-size: 18px;
-      font-weight: 700;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+      border: none;
+      border-radius: 16px;
+      background: var(--surface);
       cursor: pointer;
       font-family: inherit;
-      background: var(--tint, #f2f2f7);
-      color: var(--on, #1c1c1e);
+      box-shadow: 0 4px 14px rgba(30, 30, 66, 0.10);
+      transition: transform 0.15s, opacity 0.15s, box-shadow 0.15s;
+    }
+
+    .vote-btn-head {
+      background: var(--strong, var(--ink));
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      padding: 11px 8px;
+      line-height: 1.25;
       word-break: keep-all;
       overflow-wrap: break-word;
-      transition: transform 0.15s, opacity 0.15s, background 0.15s, color 0.15s;
+    }
+
+    .vote-btn-body {
+      background: var(--bg-soft); /* 흰 카드 위에서도 본문이 상자처럼 읽히도록 살짝 톤 다운 */
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--strong, var(--ink));
     }
 
     .vote-btn:active { transform: scale(0.96); }
-    .vote-btn:disabled { opacity: 0.45; cursor: default; }
-    .vote-btn.selected { background: var(--strong, #1c1c1e); color: #fff; border-color: var(--on, #1c1c1e); }
+    .vote-btn:disabled { cursor: default; } /* 결과 모드에서 비율(%)이 흐려지지 않도록 dim 없음 */
+    .vote-btn.selected { box-shadow: 0 0 0 3px var(--strong, var(--ink)), 0 6px 18px rgba(30, 30, 66, 0.16); }
 
     /* 3지 이상(N지선다)은 2열 그리드로 줄바꿈 */
     #voting-buttons.grid { flex-wrap: wrap; }
-    #voting-buttons.grid .vote-btn { flex: 1 1 calc(50% - 7px); padding: 18px 0; font-size: 16px; }
+    #voting-buttons.grid .vote-btn { flex: 1 1 calc(50% - 7px); }
+    #voting-buttons.grid .vote-btn-head { font-size: 15px; }
+    #voting-buttons.grid .vote-btn-body { min-height: 46px; font-size: 18px; }
 
     #voting-ratio {
       width: 100%;
@@ -233,7 +289,7 @@
       width: 100%;
       height: 10px;
       border-radius: 6px;
-      background: #e5e5ea;
+      background: rgba(30, 30, 66, 0.08);
       display: flex;
       overflow: hidden;
       margin-bottom: 8px;
@@ -244,10 +300,11 @@
     .ratio-text {
       display: flex;
       flex-wrap: wrap;
+      justify-content: center; /* 카드 안 다른 요소(질문·보기·안내문)와 같은 가운데 정렬 */
       gap: 6px 14px;
       font-size: 13px;
       font-weight: 700;
-      color: #3a3a3c;
+      color: var(--ink-soft);
     }
     .ratio-item { display: inline-flex; align-items: center; gap: 5px; }
     .ratio-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
@@ -269,7 +326,7 @@
       padding: 14px 10px;
       border-radius: 18px;
       border: none;
-      background: #f2f2f7;
+      background: var(--bg-soft);
       cursor: pointer;
       font-family: inherit;
       display: flex;
@@ -283,13 +340,13 @@
     .emoji-btn-label {
       font-size: 14px;
       font-weight: 600;
-      color: #1c1c1e;
+      color: var(--ink);
       text-align: center;
       line-height: 1.3;
       word-break: keep-all;
       overflow-wrap: break-word;
     }
-    .emoji-btn:active { transform: scale(0.92); background: #e5e5ea; }
+    .emoji-btn:active { transform: scale(0.92); background: var(--orange-tint); }
     .emoji-btn.pop { animation: emojiPop 0.3s ease; }
     @keyframes emojiPop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
 
@@ -310,20 +367,20 @@
     #answer-input {
       flex: 1;
       min-width: 0; /* input 기본 최소 너비 해제 — 좁은 화면에서 버튼이 카드 밖으로 밀리는 문제 방지 */
-      background: #f2f2f7;
+      background: var(--bg-soft);
       border: none;
       border-radius: 14px;
       padding: 14px;
       font-size: 16px;
       font-family: inherit;
-      color: #1c1c1e;
+      color: var(--ink);
       outline: none;
     }
 
-    #answer-input::placeholder { color: #aeaeb2; }
+    #answer-input::placeholder { color: var(--ink-faint); }
 
     #answer-submit {
-      background: #1c1c1e;
+      background: var(--ink);
       color: #fff;
       border: none;
       border-radius: 14px;
@@ -339,8 +396,8 @@
 
     #answer-done {
       display: none;
-      background: #e9f9ed;
-      color: #1e8a3c;
+      background: var(--orange-tint);
+      color: var(--orange-deep);
       border-radius: 14px;
       padding: 16px;
       font-size: 14px;
@@ -366,7 +423,7 @@
 
     #result-react-hint {
       font-size: 13px;
-      color: #8e8e93;
+      color: var(--ink-soft);
       text-align: center;
     }
 
@@ -380,7 +437,7 @@
       padding: 14px 0;
       border-radius: 16px;
       border: none;
-      background: #f2f2f7;
+      background: var(--bg-soft);
       font-size: 24px;
       line-height: 1;
       cursor: pointer;
@@ -392,8 +449,8 @@
     .result-react-btn.pop { animation: reactPop 0.3s ease; }
 
     #chat-header {
-      background: #ffffff;
-      border-bottom: 1px solid #e5e5ea;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
       padding: 12px 16px;
       display: flex;
       align-items: center;
@@ -404,7 +461,7 @@
     #chat-header .avatar {
       width: 32px;
       height: 32px;
-      background: #1c1c1e;
+      background: var(--ink);
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -417,17 +474,18 @@
 
     #chat-header .header-info {
       flex: 1;
+      min-width: 0; /* 긴 닉네임이 헤더를 밀어내지 않게 */
     }
 
     #chat-header .header-title {
       font-size: 15px;
       font-weight: 600;
-      color: #1c1c1e;
+      color: var(--ink);
     }
 
     #chat-header .header-sub {
       font-size: 12px;
-      color: #8e8e93;
+      color: var(--ink-soft);
     }
 
     #messages {
@@ -448,11 +506,12 @@
     .msg-bubble {
       display: inline-flex;
       flex-direction: column;
-      background: #e9e9eb;
-      color: #1c1c1e;
+      background: var(--surface);
+      color: var(--ink);
       padding: 8px 14px 10px;
       border-radius: 18px;
       border-bottom-left-radius: 4px;
+      box-shadow: 0 3px 12px rgba(30, 30, 66, 0.07);
       font-size: 15px;
       line-height: 1.4;
       max-width: 80%;
@@ -463,18 +522,18 @@
     .msg-nickname {
       font-size: 11px;
       font-weight: 600;
-      color: #8e8e93;
+      color: var(--ink-soft);
       margin-bottom: 2px;
     }
 
     .msg-text {
-      color: #1c1c1e;
+      color: var(--ink);
     }
 
     /* ── 입력창 ── */
     #input-area {
-      background: #ffffff;
-      border-top: 1px solid #e5e5ea;
+      background: var(--surface);
+      border-top: 1px solid var(--line);
       padding: 8px 12px;
       padding-bottom: calc(8px + env(safe-area-inset-bottom));
       display: flex;
@@ -486,26 +545,26 @@
     #msg-input {
       flex: 1;
       min-width: 0; /* 좁은 화면에서 리액션/전송 버튼 밀림 방지 */
-      background: #f2f2f7;
+      background: var(--bg-soft);
       border: none;
       border-radius: 20px;
       padding: 9px 14px;
       font-size: 15px;
       font-family: inherit;
-      color: #1c1c1e;
+      color: var(--ink);
       outline: none;
       resize: none;
       max-height: 100px;
       line-height: 1.4;
     }
 
-    #msg-input::placeholder { color: #aeaeb2; }
+    #msg-input::placeholder { color: var(--ink-faint); }
 
     /* 리액션 버튼 (하트/붐업) */
     .react-btn {
       width: 34px;
       height: 34px;
-      background: #f2f2f7;
+      background: var(--bg-soft);
       border: none;
       border-radius: 50%;
       font-size: 17px;
@@ -530,18 +589,18 @@
     #char-counter {
       display: none;
       font-size: 11px;
-      color: #8e8e93;
+      color: var(--ink-soft);
       flex-shrink: 0;
       align-self: center;
     }
 
     #char-counter.visible { display: block; }
-    #char-counter.limit { color: #ff3b30; font-weight: 700; }
+    #char-counter.limit { color: var(--warn); font-weight: 700; }
 
     #send-btn {
       width: 34px;
       height: 34px;
-      background: #1c1c1e;
+      background: var(--ink);
       border: none;
       border-radius: 50%;
       display: flex;
@@ -765,16 +824,16 @@
 
   // 보기 색 팔레트 (LED와 순서 동일하게 유지 — 같은 보기 = 같은 색)
   const YESNO_STYLES = [
-    { tint: '#e9f9ed', strong: '#34c759', on: '#1e8a3c' }, // YES 초록
-    { tint: '#ffebe9', strong: '#ff3b30', on: '#c62b20' }, // NO 빨강
+    { tint: '#ffe6db', strong: '#fb7e55', on: '#b5502e' }, // YES 오렌지
+    { tint: '#e3e3f7', strong: '#5b5cc4', on: '#3d3e96' }, // NO 인디고
   ];
   const OPTION_STYLES = [
-    { tint: '#e9f9ed', strong: '#34c759', on: '#1e8a3c' },
-    { tint: '#fff2e0', strong: '#ff9f0a', on: '#b56b00' },
-    { tint: '#e6f2ff', strong: '#0a84ff', on: '#0060df' },
-    { tint: '#f3e9fc', strong: '#af52de', on: '#7a2fb0' },
-    { tint: '#ffe9ef', strong: '#ff375f', on: '#c81e45' },
-    { tint: '#e3f6f9', strong: '#30b0c7', on: '#1f7f92' },
+    { tint: '#ffe6db', strong: '#fb7e55', on: '#b5502e' },
+    { tint: '#e3e3f7', strong: '#5b5cc4', on: '#3d3e96' },
+    { tint: '#dcf3f0', strong: '#2fb3a3', on: '#1f7f74' },
+    { tint: '#fdeed8', strong: '#f2a03d', on: '#a86c1c' },
+    { tint: '#fbe2ea', strong: '#e3557f', on: '#a83458' },
+    { tint: '#e4e4ee', strong: '#4a4a7a', on: '#33335c' },
   ];
   function voteStyles(type) { return type === 'yesno' ? YESNO_STYLES : OPTION_STYLES; }
 
@@ -786,7 +845,13 @@
       const s = styles[i % styles.length];
       const b = document.createElement('button');
       b.className = 'vote-btn';
-      b.textContent = label;
+      const head = document.createElement('span');
+      head.className = 'vote-btn-head';
+      head.textContent = label;
+      const body = document.createElement('span');
+      body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
+      b.appendChild(head);
+      b.appendChild(body);
       b.style.setProperty('--tint', s.tint);
       b.style.setProperty('--strong', s.strong);
       b.style.setProperty('--on', s.on);
@@ -929,6 +994,11 @@
     btns.forEach((b, i) => {
       b.classList.toggle('selected', myVote === i);
       b.disabled = currentMode !== 'voting';
+      // 결과 모드의 % 표시를 덮어쓰지 않도록 투표 중일 때만 본문을 갱신
+      if (currentMode === 'voting') {
+        const body = b.querySelector('.vote-btn-body');
+        if (body) body.textContent = myVote === i ? '✓' : '';
+      }
     });
   }
 
@@ -948,6 +1018,13 @@
       fill.style.width = pct + '%';
       fill.style.background = s.strong;
       bar.appendChild(fill);
+      // 보기 카드 본문에도 최종 비율 표시 — 결과 모드에서만 (투표 중엔 비율 비공개)
+      if (currentMode === 'result') {
+        const btn = document.querySelectorAll('#voting-buttons .vote-btn')[i];
+        const body = btn && btn.querySelector('.vote-btn-body');
+        if (body) body.textContent = pct + '%';
+      }
+
       const item = document.createElement('span');
       item.className = 'ratio-item';
       const dot = document.createElement('span');

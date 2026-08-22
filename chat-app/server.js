@@ -80,6 +80,8 @@ const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
 const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
+const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 12자 이하지만
+                                // 클라이언트가 보낸 값을 그대로 쓰므로 LED 레이아웃 보호용으로 자름
 
 // ── 투표(질문) 상태 관리 ──
 // mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult' | 'emoji'
@@ -302,9 +304,11 @@ io.on('connection', (socket) => {
     if (appState.mode !== 'chat') return;
     const text = (typeof data.text === 'string' ? data.text : '').trim().slice(0, MAX_CHAT_LENGTH);
     if (!text) return;
+    const nickname = (typeof data.nickname === 'string' ? data.nickname : '')
+      .trim().slice(0, MAX_NICKNAME_LENGTH);
     const message = {
       id: Date.now(),
-      nickname: data.nickname,
+      nickname,
       text,
       time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     };
