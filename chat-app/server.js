@@ -9,21 +9,44 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// ── 닉네임 풀 생성 (25 × 25 = 625개) ──
-const PREFIXES = [
-  '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
-  '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
-  '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
-  '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
-  '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
-];
-const SUFFIXES = [
-  '사원', '대리', '과장', '차장', '부장',
-  '팀장', '인턴', '계약직', '신입', '3년차',
-  '5년차', '10년차', '직장인', '사무직', '영업사원',
-  '기획자', '디자이너', '개발자', '마케터', '경리',
-  '총무', '프리랜서', '워커', '비서', '실장',
-];
+// ── 닉네임 풀 (테마별 25 × 25 = 625개) ──
+// chat.html의 THEMES와 같은 단어를 써야 한다. 닉네임은 클라이언트가 로컬에서 즉시 고르지만,
+// 동시 접속자와 겹치면 서버가 교체해주는데 이때 테마가 다르면 엉뚱한 닉네임이 내려간다.
+const NICKNAME_THEMES = {
+  office: {
+    prefixes: [
+      '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
+      '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
+      '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
+      '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
+      '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
+    ],
+    suffixes: [
+      '사원', '대리', '과장', '차장', '부장',
+      '팀장', '인턴', '계약직', '신입', '3년차',
+      '5년차', '10년차', '직장인', '사무직', '영업사원',
+      '기획자', '디자이너', '개발자', '마케터', '경리',
+      '총무', '프리랜서', '워커', '비서', '실장',
+    ],
+  },
+  concert: {
+    prefixes: [
+      '티켓팅성공한', '앞자리사수한', '응원봉든', '앙코르기다리는', '목풀고온',
+      '스탠딩버티는', '굿즈지른', '연차쓰고온', '지방에서온', '리허설부터온',
+      '심장뛰는', '눈물참는', '소리지르는', '박수치는', '세트리스트외운',
+      '오늘밤설레는', '두손모은', '무대만보는', '플카든', '숨죽인',
+      '인트로부터운', '노래따라하는', '발끝세운', '조명바라보는', '한곡도못참는',
+    ],
+    suffixes: [
+      '관객', '팬', '덕후', '직관러', '떼창러',
+      '관람객', '리스너', '애청자', '1열관객', '2층관객',
+      '스탠딩러', '첫공러', '막공러', '올콘러', '굿즈러',
+      '늦덕', '입덕러', '고인물', '뉴비', '단골',
+      '동행인', '혼콘러', '최애러', '플카러', '목청러',
+    ],
+  },
+};
+const DEFAULT_THEME = 'office';
 
 function shuffle(arr) {
   const a = [...arr];
@@ -34,19 +57,24 @@ function shuffle(arr) {
   return a;
 }
 
-// 모든 조합 생성 후 셔플
-let nicknamePool = shuffle(
-  PREFIXES.flatMap(p => SUFFIXES.map(s => `${p} ${s}`))
-);
-let poolIndex = 0;
+// 테마별로 모든 조합 생성 후 셔플
+const nicknamePools = {};
+for (const [key, t] of Object.entries(NICKNAME_THEMES)) {
+  nicknamePools[key] = { list: shuffle(t.prefixes.flatMap(p => t.suffixes.map(s => `${p} ${s}`))), index: 0 };
+}
 
-function assignNickname() {
-  if (poolIndex >= nicknamePool.length) {
+function assignNickname(theme) {
+  const pool = nicknamePools[theme] || nicknamePools[DEFAULT_THEME];
+  if (pool.index >= pool.list.length) {
     // 모두 소진되면 재셔플 (실질적으로 500명 이하에서는 발생 안 함)
-    nicknamePool = shuffle(nicknamePool);
-    poolIndex = 0;
+    pool.list = shuffle(pool.list);
+    pool.index = 0;
   }
-  return nicknamePool[poolIndex++];
+  return pool.list[pool.index++];
+}
+
+function poolSize(theme) {
+  return (nicknamePools[theme] || nicknamePools[DEFAULT_THEME]).list.length;
 }
 
 // ── 닉네임 중복 방지 ──
@@ -72,6 +100,11 @@ app.get('/led', (req, res) => {
 });
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+// 행사별 관객 입장 주소 — 같은 chat.html이 경로를 보고 닉네임 풀·문구를 바꾼다.
+// 관리자/LED는 공유하므로 기존 '/' 와 동일한 채팅·투표에 그대로 참여한다.
+app.get('/concert', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'chat.html'));
 });
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
@@ -275,20 +308,23 @@ io.on('connection', (socket) => {
   });
 
   // 닉네임 요청 시 서버에서 고유 닉네임 배정 (레거시, 현재는 클라이언트가 즉시 로컬 배정)
-  socket.on('requestNickname', () => {
-    socket.emit('assignedNickname', assignNickname());
+  socket.on('requestNickname', (theme) => {
+    socket.emit('assignedNickname', assignNickname(theme));
   });
 
   // 클라이언트가 로컬에서 즉시 고른 닉네임 등록 + 동시 중복 확인
-  socket.on('claimNickname', (name) => {
+  // payload: { name, theme } — 예전 클라이언트를 위해 문자열도 허용
+  socket.on('claimNickname', (payload) => {
+    const name = typeof payload === 'string' ? payload : (payload && payload.name);
+    const theme = (payload && payload.theme && NICKNAME_THEMES[payload.theme]) ? payload.theme : DEFAULT_THEME;
     if (!name || typeof name !== 'string') return;
     if (isNicknameTaken(name, socket.id)) {
       let fresh;
       let guard = 0;
       do {
-        fresh = assignNickname();
+        fresh = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
         guard++;
-      } while (isNicknameTaken(fresh, socket.id) && guard < nicknamePool.length);
+      } while (isNicknameTaken(fresh, socket.id) && guard < poolSize(theme));
       activeNicknames.set(socket.id, fresh);
       socket.emit('nicknameReassigned', fresh);
     } else {

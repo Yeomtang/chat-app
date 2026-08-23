@@ -703,21 +703,68 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  // ── 닉네임 풀 생성 (25 × 25 = 625개) ──
-  const PREFIXES = [
-    '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
-    '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
-    '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
-    '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
-    '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
-  ];
-  const SUFFIXES = [
-    '사원', '대리', '과장', '차장', '부장',
-    '팀장', '인턴', '계약직', '신입', '3년차',
-    '5년차', '10년차', '직장인', '사무직', '영업사원',
-    '기획자', '디자이너', '개발자', '마케터', '경리',
-    '총무', '프리랜서', '워커', '비서', '실장',
-  ];
+  // ── 테마 ──
+  // 행사마다 닉네임 풀과 입장 문구가 다르다. 주소로 테마를 고른다.
+  //   /          → office  (12월 본 공연: 직장인 썰루션 토크콘서트)
+  //   /concert   → concert (공연장 현장 테스트용)
+  // ?theme=xxx 로도 지정 가능. 서버(server.js)의 NICKNAME_THEMES와 풀이 동일해야
+  // 닉네임이 중복돼 서버가 교체해줄 때도 같은 테마의 닉네임이 내려온다.
+  const THEMES = {
+    office: {
+      title: '익명 채팅',
+      heading: '오늘의 토론에 참여하세요',
+      headerSub: '익명 토론 채팅',
+      prefixes: [
+        '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
+        '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
+        '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
+        '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
+        '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
+      ],
+      suffixes: [
+        '사원', '대리', '과장', '차장', '부장',
+        '팀장', '인턴', '계약직', '신입', '3년차',
+        '5년차', '10년차', '직장인', '사무직', '영업사원',
+        '기획자', '디자이너', '개발자', '마케터', '경리',
+        '총무', '프리랜서', '워커', '비서', '실장',
+      ],
+    },
+    concert: {
+      title: '공연 실시간 채팅',
+      heading: '오늘 공연에 함께해주세요',
+      headerSub: '실시간 익명 채팅',
+      prefixes: [
+        '티켓팅성공한', '앞자리사수한', '응원봉든', '앙코르기다리는', '목풀고온',
+        '스탠딩버티는', '굿즈지른', '연차쓰고온', '지방에서온', '리허설부터온',
+        '심장뛰는', '눈물참는', '소리지르는', '박수치는', '세트리스트외운',
+        '오늘밤설레는', '두손모은', '무대만보는', '플카든', '숨죽인',
+        '인트로부터운', '노래따라하는', '발끝세운', '조명바라보는', '한곡도못참는',
+      ],
+      suffixes: [
+        '관객', '팬', '덕후', '직관러', '떼창러',
+        '관람객', '리스너', '애청자', '1열관객', '2층관객',
+        '스탠딩러', '첫공러', '막공러', '올콘러', '굿즈러',
+        '늦덕', '입덕러', '고인물', '뉴비', '단골',
+        '동행인', '혼콘러', '최애러', '플카러', '목청러',
+      ],
+    },
+  };
+
+  // 주소로 테마 결정 (?theme= 우선, 없으면 경로)
+  const themeKey = (() => {
+    const q = new URLSearchParams(location.search).get('theme');
+    if (q && THEMES[q]) return q;
+    const path = location.pathname.replace(/\/+$/, '').split('/').pop();
+    return THEMES[path] ? path : 'office';
+  })();
+  const theme = THEMES[themeKey];
+  const PREFIXES = theme.prefixes;
+  const SUFFIXES = theme.suffixes;
+
+  // 테마별 문구 반영
+  document.title = theme.title;
+  document.querySelector('#entrance h1').textContent = theme.heading;
+  document.querySelector('#chat-header .header-sub').textContent = theme.headerSub;
 
   let nicknamePool = [];
   let poolIndex = 0;
@@ -773,7 +820,7 @@
       // 연결 완료 후 identify + 닉네임 중복 확인 요청
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
-        nickSocket.emit('claimNickname', currentNickname);
+        nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
       });
       // 서버가 동시 접속자와의 닉네임 중복을 감지하면 새 닉네임으로 교체
       nickSocket.on('nicknameReassigned', applyReassignedNickname);
@@ -794,7 +841,7 @@
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
     } else {
       // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
-      nickSocket.emit('claimNickname', currentNickname);
+      nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
     }
   }
 
