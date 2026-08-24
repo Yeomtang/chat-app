@@ -75,6 +75,19 @@
     .status-row:last-child { border-bottom: none; }
     .status-label { color: #8e8e93; }
     .status-value { color: #1c1c1e; font-weight: 600; }
+    .stat-reset-btn {
+      margin-left: 8px;
+      border: 1px solid #d1d1d6;
+      background: #fff;
+      color: #8e8e93;
+      border-radius: 8px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .stat-reset-btn:active { background: #f2f2f7; }
 
     .mode-badge {
       display: inline-block;
@@ -483,11 +496,10 @@
     </div>
     <div class="status-row">
       <span class="status-label">최고 동시 접속</span>
-      <span class="status-value" id="status-audience-peak">0명</span>
-    </div>
-    <div class="status-row">
-      <span class="status-label">누적 입장</span>
-      <span class="status-value" id="status-audience-total">0명</span>
+      <span class="status-value">
+        <span id="status-audience-peak">0명</span>
+        <button class="stat-reset-btn" onclick="resetAudienceStats()">초기화</button>
+      </span>
     </div>
     <div class="status-row">
       <span class="status-label">모드</span>
@@ -656,7 +668,6 @@
     if (!a) return;
     document.getElementById('status-audience-current').textContent = (a.current || 0) + '명';
     document.getElementById('status-audience-peak').textContent = (a.peak || 0) + '명';
-    document.getElementById('status-audience-total').textContent = (a.total || 0) + '명';
   }
 
   function renderState() {
@@ -822,6 +833,12 @@
     if (chatFeedItems.length > MAX_FEED) chatFeedItems.shift();
     renderChatFeed();
   });
+
+  // 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌림 (리허설 뒤 본 행사 전)
+  function resetAudienceStats() {
+    if (!confirm('최고 동시 접속 기록을 초기화할까요?')) return;
+    socket.emit('admin:resetAudienceStats');
+  }
 
   // 채팅 초기화 — 되돌릴 수 없으므로 확인 후 실행
   function clearChat() {

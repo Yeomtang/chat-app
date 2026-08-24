@@ -89,11 +89,10 @@ const activeNicknames = new Map(); // socket.id -> nickname
 // → 이걸 관객 식별 기준으로 삼아 LED·관리자 화면이 접속자 수에 섞이지 않게 한다.
 // clientId(localStorage 영구 ID) 기준으로 세므로 한 사람이 탭을 여러 개 열어도 1명이다.
 const audienceSockets = new Map(); // clientId -> 현재 열려 있는 소켓 수
-const audienceSeen = new Set();    // 지금까지 입장한 관객 clientId (누적 순 방문자)
 let audiencePeak = 0;              // 최고 동시 접속자 수
 
 function audienceStats() {
-  return { current: audienceSockets.size, peak: audiencePeak, total: audienceSeen.size };
+  return { current: audienceSockets.size, peak: audiencePeak };
 }
 
 // 접속/해제가 몰릴 때 브로드캐스트가 폭주하지 않도록 살짝 묶어서 보낸다
@@ -348,7 +347,6 @@ io.on('connection', (socket) => {
     if (!socket.isAudience && socket.clientId) {
       socket.isAudience = true;
       audienceSockets.set(socket.clientId, (audienceSockets.get(socket.clientId) || 0) + 1);
-      audienceSeen.add(socket.clientId);
       if (audienceSockets.size > audiencePeak) audiencePeak = audienceSockets.size;
       broadcastAudience();
     }
@@ -514,6 +512,13 @@ io.on('connection', (socket) => {
 
   // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.
   // 서버 보관본을 비워야 새로 접속하는 관객에게 옛 메시지가 history로 다시 내려가지 않는다.
+  // 관리자: 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌린다.
+  // 현재 접속자는 실제 열려 있는 소켓 수라 임의로 못 지운다(peak만 리셋).
+  socket.on('admin:resetAudienceStats', () => {
+    audiencePeak = audienceSockets.size;
+    io.emit('audienceStats', audienceStats());
+  });
+
   socket.on('admin:clearChat', () => {
     recentMessages.length = 0;
     clearPinnedChat(); // 지워진 메시지가 LED에 핀으로 남아 있으면 안 됨

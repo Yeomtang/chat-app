@@ -212,7 +212,7 @@
 - 2026-08-24: **Render 계정 이전** — 새 계정에 서비스를 새로 만들어 이전. 새 주소 `https://chat-app-s6y2.onrender.com` (기존 `chat-app-6kl5`도 당분간 살아 있으며 같은 저장소를 보므로 푸시하면 **양쪽에 다 배포된다**. 현장에선 관리자·LED·관객이 모두 같은 주소를 쓰는지 확인할 것).
   - **Render 설정값 (이 저장소는 기본값으로는 배포 실패함)**: Root Directory `chat-app` (저장소 루트에 package.json이 없음 — 안 넣으면 `npm error ENOENT ... /opt/render/project/src/package.json`), Start Command `node server.js` (package.json에 start 스크립트가 없어 `npm start`는 실패). 환경변수는 없음(PORT는 Render가 자동 주입).
   - 저장소가 public이라 GitHub Collaborator 초대 없이 "Public Git Repository"로 바로 연결 가능.
-- 2026-08-24: **관리자 화면에 접속자 통계 표시** (현재 접속자 / 최고 동시 접속 / 누적 입장). "현재 상태" 카드 맨 위에 3줄 추가, 현재 접속자는 초록색으로 강조.
+- 2026-08-24: **관리자 화면에 접속자 통계 표시** (현재 접속자 / 최고 동시 접속). "현재 상태" 카드 맨 위에 2줄 추가, 현재 접속자는 초록색으로 강조. (당초 "누적 입장"도 넣었으나 사용자 요청으로 제거 — audienceSeen Set 삭제.) 최고 동시 접속 옆 [초기화] 버튼으로 `admin:resetAudienceStats` → peak를 현재 접속자 수로 되돌림(현재 접속자는 실제 소켓 수라 임의로 못 지운다). 리허설 뒤 본 행사 전 기록만 리셋하는 용도.
   - **관객만 세는 방법**: LED도 `identify`를 호출하므로(led-screen-...) identify로는 구분 못 한다. 관객만 호출하는 `claimNickname`을 관객 마킹 기준으로 삼는다(관리자는 둘 다 안 함). 서버에서 claimNickname 첫 호출 시 `socket.isAudience=true` + clientId를 `audienceSockets`(clientId→소켓수)·`audienceSeen`(누적 Set)에 등록, disconnect에서 해제.
   - **clientId(localStorage 영구 ID) 기준**이라 한 사람이 탭을 여러 개 열어도 현재 접속자는 1명. peak은 최고값 유지, total은 재방문해도 안 늘어남(순 방문자).
   - 접속/해제가 몰릴 때 폭주 방지로 `audienceStats` 브로드캐스트를 250ms 디바운스. publicState에도 `audience` 포함해 관리자가 화면 열 때 즉시 표시.
