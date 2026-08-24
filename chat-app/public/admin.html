@@ -478,6 +478,18 @@
   <div class="card">
     <h2>현재 상태</h2>
     <div class="status-row">
+      <span class="status-label">현재 접속자</span>
+      <span class="status-value" id="status-audience-current" style="font-size: 20px; color: #34c759;">0명</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">최고 동시 접속</span>
+      <span class="status-value" id="status-audience-peak">0명</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">누적 입장</span>
+      <span class="status-value" id="status-audience-total">0명</span>
+    </div>
+    <div class="status-row">
       <span class="status-label">모드</span>
       <span class="status-value"><span class="mode-badge mode-chat" id="mode-badge">CHAT</span></span>
     </div>
@@ -628,6 +640,11 @@
     }
   });
 
+  socket.on('audienceStats', (a) => {
+    if (currentState) currentState.audience = a;
+    renderAudience(a);
+  });
+
   socket.on('chatPauseChange', (data) => {
     if (currentState) {
       currentState.chatPaused = !!(data && data.chatPaused);
@@ -635,8 +652,16 @@
     }
   });
 
+  function renderAudience(a) {
+    if (!a) return;
+    document.getElementById('status-audience-current').textContent = (a.current || 0) + '명';
+    document.getElementById('status-audience-peak').textContent = (a.peak || 0) + '명';
+    document.getElementById('status-audience-total').textContent = (a.total || 0) + '명';
+  }
+
   function renderState() {
     if (!currentState) return;
+    renderAudience(currentState.audience);
     const badge = document.getElementById('mode-badge');
     badge.textContent = currentState.mode.toUpperCase();
     badge.className = 'mode-badge mode-' + currentState.mode;

@@ -84,6 +84,28 @@ function poolSize(theme) {
 // 서버는 현재 접속 중인 소켓들의 닉네임을 추적해 동시 중복만 감지/교체한다.
 const activeNicknames = new Map(); // socket.id -> nickname
 
+// ── 관객 접속자 통계 ──
+// 관객만 claimNickname을 호출한다(LED는 identify만, 관리자는 둘 다 안 함)
+// → 이걸 관객 식별 기준으로 삼아 LED·관리자 화면이 접속자 수에 섞이지 않게 한다.
+// clientId(localStorage 영구 ID) 기준으로 세므로 한 사람이 탭을 여러 개 열어도 1명이다.
+const audienceSockets = new Map(); // clientId -> 현재 열려 있는 소켓 수
+const audienceSeen = new Set();    // 지금까지 입장한 관객 clientId (누적 순 방문자)
+let audiencePeak = 0;              // 최고 동시 접속자 수
+
+function audienceStats() {
+  return { current: audienceSockets.size, peak: audiencePeak, total: audienceSeen.size };
+}
+
+// 접속/해제가 몰릴 때 브로드캐스트가 폭주하지 않도록 살짝 묶어서 보낸다
+let audienceBroadcastTimer = null;
+function broadcastAudience() {
+  if (audienceBroadcastTimer) return;
+  audienceBroadcastTimer = setTimeout(() => {
+    audienceBroadcastTimer = null;
+    io.emit('audienceStats', audienceStats());
+  }, 250);
+}
+
 function isNicknameTaken(name, excludeSocketId) {
   for (const [sid, n] of activeNicknames) {
     if (sid !== excludeSocketId && n === name) return true;
@@ -192,6 +214,7 @@ function publicState(forClientId) {
     cloud: appState.mode === 'subjectiveResult' ? computeCloud() : null,
     pinnedChat: appState.pinnedChat,
     chatPaused: appState.chatPaused,
+    audience: audienceStats(),
   };
 }
 
@@ -320,6 +343,15 @@ io.on('connection', (socket) => {
     const name = typeof payload === 'string' ? payload : (payload && payload.name);
     const theme = (payload && payload.theme && NICKNAME_THEMES[payload.theme]) ? payload.theme : DEFAULT_THEME;
     if (!name || typeof name !== 'string') return;
+
+    // 관객 접속 집계 — claimNickname을 처음 보낸 소켓을 관객으로 등록(리롤로 여러 번 와도 1회만)
+    if (!socket.isAudience && socket.clientId) {
+      socket.isAudience = true;
+      audienceSockets.set(socket.clientId, (audienceSockets.get(socket.clientId) || 0) + 1);
+      audienceSeen.add(socket.clientId);
+      if (audienceSockets.size > audiencePeak) audiencePeak = audienceSockets.size;
+      broadcastAudience();
+    }
     if (isNicknameTaken(name, socket.id)) {
       let fresh;
       let guard = 0;
@@ -540,6 +572,12 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     activeNicknames.delete(socket.id);
+    if (socket.isAudience && socket.clientId) {
+      const n = (audienceSockets.get(socket.clientId) || 0) - 1;
+      if (n <= 0) audienceSockets.delete(socket.clientId);
+      else audienceSockets.set(socket.clientId, n);
+      broadcastAudience();
+    }
     console.log('연결 끊김:', socket.id);
   });
 });
