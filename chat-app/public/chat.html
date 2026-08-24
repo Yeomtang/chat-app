@@ -837,6 +837,10 @@
         addMessage(msg);
         scrollToBottom();
       });
+      // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
+      nickSocket.on('chatCleared', () => {
+        document.getElementById('messages').innerHTML = '';
+      });
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);

@@ -480,6 +480,14 @@ io.on('connection', (socket) => {
     clearPinnedChat();
   });
 
+  // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.
+  // 서버 보관본을 비워야 새로 접속하는 관객에게 옛 메시지가 history로 다시 내려가지 않는다.
+  socket.on('admin:clearChat', () => {
+    recentMessages.length = 0;
+    clearPinnedChat(); // 지워진 메시지가 LED에 핀으로 남아 있으면 안 됨
+    io.emit('chatCleared');
+  });
+
   // 관리자: 답변 전체 목록 요청 (제작진이 훑어보고 픽하기 위함)
   socket.on('admin:getAnswers', () => {
     socket.emit('answerList', {

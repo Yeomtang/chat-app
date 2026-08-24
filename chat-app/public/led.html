@@ -589,6 +589,13 @@
     addMessage(msg);
   });
 
+  // 관리자가 채팅을 초기화하면 화면과 버퍼를 함께 비운다
+  // (버퍼를 안 비우면 일시정지 해제 시 지운 메시지가 되살아난다)
+  socket.on('chatCleared', () => {
+    messages.length = 0;
+    container.innerHTML = '';
+  });
+
   // 메시지 수신: 항상 버퍼(messages)에는 기록하되, 일시정지 중이면 화면엔 그리지 않음
   function addMessage(msg) {
     messages.push(msg);

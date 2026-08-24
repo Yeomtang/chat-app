@@ -130,6 +130,15 @@
     .btn-danger { background: #ff3b30; color: #fff; }
     .btn-secondary { background: #e9e9eb; color: #1c1c1e; }
 
+    /* 채팅 카드 하단 액션 — 좁은 화면에선 세로로 쌓임 */
+    .chat-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .chat-actions .btn { flex: 1 1 160px; min-width: 0; }
+
     .preset-list {
       display: flex;
       flex-direction: column;
@@ -561,7 +570,10 @@
     <div class="chat-feed" id="chat-feed">
       <div class="empty-hint">아직 채팅이 없습니다</div>
     </div>
-    <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()" style="margin-top: 12px;">LED 채팅창 멈추기</button>
+    <div class="chat-actions">
+      <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
+      <button class="btn btn-danger" onclick="clearChat()">채팅 초기화</button>
+    </div>
   </div>
 
   <!-- 주관식 답변 목록 / 픽 -->
@@ -783,6 +795,17 @@
   socket.on('chat', (msg) => {
     chatFeedItems.push(msg);
     if (chatFeedItems.length > MAX_FEED) chatFeedItems.shift();
+    renderChatFeed();
+  });
+
+  // 채팅 초기화 — 되돌릴 수 없으므로 확인 후 실행
+  function clearChat() {
+    if (!confirm('LED와 관객 화면의 채팅을 모두 지웁니다.\n되돌릴 수 없습니다. 진행할까요?')) return;
+    socket.emit('admin:clearChat');
+  }
+
+  socket.on('chatCleared', () => {
+    chatFeedItems = [];
     renderChatFeed();
   });
 

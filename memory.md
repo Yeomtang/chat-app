@@ -201,4 +201,14 @@
   - **⚠️ 반드시 지킬 것**: 닉네임 풀은 **chat.html의 `THEMES`와 server.js의 `NICKNAME_THEMES`에 같은 단어가 들어 있어야 한다.** 클라이언트가 로컬에서 즉시 닉네임을 고르지만 동시 접속 중복이 나면 서버가 교체해주는데, 서버 풀이 다르면 공연 화면에 직장인 닉네임이 튀어나온다. `claimNickname`이 `{ name, theme }`을 보내고 서버가 해당 테마 풀에서만 교체하도록 처리했다(문자열도 받도록 하위 호환 유지). 테마를 추가·수정할 땐 양쪽을 함께 고칠 것.
   - **검증(종단)**: `/concert`에서 실제 UI로 입장→채팅 전송 → 기존 `/` 화면과 LED 양쪽에 공연 닉네임 그대로 표시됨 확인. 관리자가 투표 시작 → `/concert`에서 버튼 클릭 → LED 캔버스에 공 반영 확인. `/`의 제목·문구·닉네임은 변경 전과 동일함(회귀 없음).
   - **현장 운영 주의**: Render 무료 플랜은 유휴 시 서버가 잠들어 **첫 접속에 30~60초** 걸린다. 29일 현장에서 관객에게 QR을 열기 **몇 분 전에 미리 주소를 한 번 열어 서버를 깨워둘 것.** (안 그러면 첫 관객이 먹통으로 오해함)
-  - 참고: 채팅 기록·투표는 서버 메모리에만 있어 재시작하면 지워진다. 별도 "채팅 초기화" 관리자 기능은 아직 없음 — 리허설과 본 테스트 사이에 화면을 비우고 싶다면 필요.
+  - 참고: 채팅 기록·투표는 서버 메모리에만 있어 재시작하면 지워진다.
+- 2026-08-24: **관리자 화면에 "채팅 초기화" 버튼 추가** (리허설 뒤 본 행사 전에 화면을 비우려고).
+  - 서버 `admin:clearChat` → `recentMessages` 비우고 `clearPinnedChat()` 호출 후 `chatCleared` 브로드캐스트. **핀도 함께 내린다** — 지워진 메시지가 LED 중앙에 핀으로 남아 있으면 안 되기 때문.
+  - **`recentMessages`를 비우는 게 핵심**: 이걸 안 비우면 화면만 지워지고 나중에 접속하는 관객에게 `history`로 옛 메시지가 다시 내려간다.
+  - led.html은 DOM(`container`)과 **일시정지 버퍼(`messages`)를 함께** 비운다. 버퍼를 안 비우면 정지 해제 시 지운 메시지가 되살아난다.
+  - chat.html(관객)·admin.html(피드)도 `chatCleared`에서 목록을 비운다. 관리자 버튼은 `confirm()`으로 한 번 확인받는다(되돌릴 수 없음).
+  - admin에 `.chat-actions` flex 래퍼 추가 — 멈추기/초기화 버튼을 나란히 두고 좁은 화면에선 줄바꿈.
+  - 검증: 초기화 후 신규 접속자 history 0개·핀 없음, 열려 있던 LED/관리자 화면이 실시간으로 비워짐, confirm 취소 시 아무 변화 없음까지 확인.
+- 2026-08-24: **Render 계정 이전** — 새 계정에 서비스를 새로 만들어 이전. 새 주소 `https://chat-app-s6y2.onrender.com` (기존 `chat-app-6kl5`도 당분간 살아 있으며 같은 저장소를 보므로 푸시하면 **양쪽에 다 배포된다**. 현장에선 관리자·LED·관객이 모두 같은 주소를 쓰는지 확인할 것).
+  - **Render 설정값 (이 저장소는 기본값으로는 배포 실패함)**: Root Directory `chat-app` (저장소 루트에 package.json이 없음 — 안 넣으면 `npm error ENOENT ... /opt/render/project/src/package.json`), Start Command `node server.js` (package.json에 start 스크립트가 없어 `npm start`는 실패). 환경변수는 없음(PORT는 Render가 자동 주입).
+  - 저장소가 public이라 GitHub Collaborator 초대 없이 "Public Git Repository"로 바로 연결 가능.
