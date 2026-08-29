@@ -133,6 +133,10 @@ app.get('/concert', (req, res) => {
 app.get('/led/concert', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'led-concert.html'));
 });
+// 운영자(진행자/제작진) 채팅 화면 — 닉네임 직접 입력, LED에 구분 표시
+app.get('/host', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'host.html'));
+});
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
@@ -368,6 +372,12 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 운영자(진행자/제작진) 등록 — /host 화면에서 호출. 이 소켓의 채팅은 isOperator로 표시된다.
+  // 관객 집계(claimNickname)와 무관 → 운영자는 '현재 접속자' 수에 포함되지 않는다.
+  socket.on('registerOperator', () => {
+    socket.isOperator = true;
+  });
+
   // 새 연결에 최근 메시지 전송
   socket.emit('history', recentMessages);
 
@@ -382,6 +392,7 @@ io.on('connection', (socket) => {
       id: Date.now(),
       nickname,
       text,
+      isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
       time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     };
     recentMessages.push(message);

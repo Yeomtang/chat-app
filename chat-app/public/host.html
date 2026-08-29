@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>익명 채팅</title>
+  <title>운영자 채팅</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
@@ -623,25 +623,20 @@
 </head>
 <body>
 
-<!-- 입장 화면 -->
+<!-- 입장 화면 (운영자) -->
 <div id="entrance">
-  <h1>오늘의 토론에 참여하세요</h1>
-  <p>아래 닉네임으로 익명 채팅에 참여합니다.<br>마음에 들지 않으면 다시 뽑아보세요.</p>
+  <h1>운영자 채팅</h1>
+  <p>진행자·제작진용 채팅입니다.<br>화면에 표시될 이름을 입력하세요.</p>
 
   <div class="nickname-card">
-    <div class="nickname-label">나의 닉네임</div>
-    <div id="nickname-display">로딩 중...</div>
+    <div class="nickname-label">운영자 이름</div>
+    <input id="operator-name" type="text" maxlength="20" placeholder="예: 진행자, MC, 운영진"
+           style="width:100%; min-width:0; border:none; background:transparent; text-align:center;
+                  font-size:20px; font-weight:700; color:var(--ink); outline:none;"
+           onkeydown="if(event.key==='Enter')enterChat()">
   </div>
 
-  <button class="btn-reroll" onclick="rerollNickname()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
-      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-    </svg>
-    다른 닉네임 뽑기
-  </button>
-
-  <button class="btn-enter" onclick="enterChat()">이 닉네임으로 참여하기</button>
+  <button class="btn-enter" onclick="enterChat()">이 이름으로 시작하기</button>
 </div>
 
 <!-- 채팅 화면 -->
@@ -768,10 +763,6 @@
   const PREFIXES = theme.prefixes;
   const SUFFIXES = theme.suffixes;
 
-  // 테마별 문구 반영
-  document.title = theme.title;
-  document.querySelector('#entrance h1').textContent = theme.heading;
-  document.querySelector('#chat-header .header-sub').textContent = theme.headerSub;
 
   let nicknamePool = [];
   let poolIndex = 0;
@@ -818,19 +809,14 @@
   }
   const clientId = getClientId();
 
+  // 운영자 화면: 페이지 로드 시 소켓만 연결(닉네임은 입장 때 확정). 랜덤 닉네임/중복교체 없음.
   function requestNickname() {
-    currentNickname = getNewNickname();
-    document.getElementById('nickname-display').textContent = currentNickname;
-
     if (!nickSocket) {
       nickSocket = io();
-      // 연결 완료 후 identify + 닉네임 중복 확인 요청
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
-        nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
+        nickSocket.emit('registerOperator'); // 이 소켓의 채팅은 운영자로 표시
       });
-      // 서버가 동시 접속자와의 닉네임 중복을 감지하면 새 닉네임으로 교체
-      nickSocket.on('nicknameReassigned', applyReassignedNickname);
       // 이전 메시지 수신
       nickSocket.on('history', (messages) => {
         document.getElementById('messages').innerHTML = ''; // 재연결 시 중복 방지
@@ -850,9 +836,6 @@
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
-    } else {
-      // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
-      nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
     }
   }
 
@@ -1146,12 +1129,12 @@
     if (btnEl) { btnEl.classList.remove('pop'); void btnEl.offsetWidth; btnEl.classList.add('pop'); }
   }
 
-  function rerollNickname() {
-    requestNickname();
-  }
-
   function enterChat() {
-    if (!currentNickname) return;
+    // 운영자: 입력한 이름을 닉네임으로 확정
+    const input = document.getElementById('operator-name');
+    const name = (input ? input.value : '').trim().slice(0, 20);
+    if (!name) { if (input) input.focus(); return; }
+    currentNickname = name;
 
     // 닉네임 요청에 쓰던 소켓을 채팅에 재사용
     socket = nickSocket;

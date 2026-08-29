@@ -138,6 +138,11 @@
       overflow-wrap: break-word;
     }
 
+    /* 운영자(진행자·제작진) 메시지 — 네이비 배경으로 관객과 구분 */
+    .led-bubble.operator { background: var(--ink); }
+    .led-bubble.operator .led-nickname { color: rgba(255, 255, 255, 0.7); }
+    .led-bubble.operator .led-text { color: #fff; }
+
     .led-nickname {
       font-size: calc(14px * var(--u));
       font-weight: 600;
@@ -610,7 +615,7 @@
     group.className = 'led-msg-group';
 
     const bubble = document.createElement('div');
-    bubble.className = 'led-bubble';
+    bubble.className = 'led-bubble' + (msg.isOperator ? ' operator' : '');
 
     const nick = document.createElement('div');
     nick.className = 'led-nickname';
