@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LED 채팅 화면 (콘서트 4:3)</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ── 디자인 토큰 (블러시 팔레트) ──
+       시안 기준: 블러시 배경 위에 흰 카드, 오렌지/인디고 포인트, 네이비 잉크 */
+    :root {
+      --u: 1; /* 화면 배율 — JS가 #screen 폭 ÷ 800 으로 설정 (해상도 무관 동일 비율) */
+      --bg:          #efdcd5; /* 화면 배경 (블러시) */
+      --bg-soft:     #f8ece7; /* 입력창 등 보조 표면 */
+      --surface:     #ffffff; /* 카드 · 말풍선 */
+      --ink:         #1e1e42; /* 본문 텍스트 · 네이비 */
+      --ink-soft:    #6e6a86; /* 보조 텍스트 */
+      --ink-faint:   #a49eb4; /* 흐린 텍스트 · 플레이스홀더 */
+      --orange:      #fb7e55; /* 1번 보기 · 강조 */
+      --orange-tint: #ffe6db;
+      --orange-deep: #b5502e;
+      --purple:      #5b5cc4; /* 2번 보기 */
+      --purple-tint: #e3e3f7;
+      --warn:        #d94f3d;
+      --line:        rgba(30, 30, 66, 0.10);
+      --shadow:      0 calc(8px * var(--u)) calc(24px * var(--u)) rgba(30, 30, 66, 0.08);
+      --shadow-lg:   0 calc(18px * var(--u)) calc(50px * var(--u)) rgba(30, 30, 66, 0.16);
+    }
+
+    body {
+      font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      background: var(--bg);
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* 4:3 가로형 컨테이너 — 현장 LED 2496×1872 전용 (세로형의 좌우 여백 문제 해결) */
+    #screen {
+      width: min(100vw, calc(100vh * 4 / 3));
+      height: min(100vh, calc(100vw * 3 / 4));
+      background: var(--bg);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* 채팅 레이어 (블러 대상) */
+    #chat-layer {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      transition: filter 0.5s ease, opacity 0.5s ease, transform 0.5s ease;
+    }
+
+    /* 질문 모드 진입 시: 블러 + 살짝 뒤로 물러나는 깊이감 (복귀 시 역재생) */
+    #chat-layer.blurred {
+      filter: blur(calc(16px * var(--u)));
+      opacity: 0.5;
+      transform: scale(0.94);
+    }
+
+    /* 상단 헤더 */
+    #led-header {
+      padding: calc(28px * var(--u)) calc(28px * var(--u)) calc(16px * var(--u));
+      flex-shrink: 0;
+      border-bottom: calc(1px * var(--u)) solid var(--line);
+    }
+
+    #led-header .title {
+      font-size: calc(13px * var(--u));
+      font-weight: 600;
+      color: var(--ink-soft);
+      letter-spacing: calc(1px * var(--u));
+      text-transform: uppercase;
+    }
+
+    /* 메시지 영역 */
+    #led-messages {
+      flex: 1;
+      overflow: hidden;
+      padding: calc(16px * var(--u)) calc(28px * var(--u)) calc(24px * var(--u));
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 0;
+      position: relative;
+    }
+
+    /* 상단 페이드 그라디언트 */
+    #led-messages::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: calc(80px * var(--u));
+      background: linear-gradient(to bottom, var(--bg), transparent);
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .led-msg-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start; /* 가로형: 말풍선을 내용 크기에 맞춤 (짧은 글은 작게, iMessage 스타일) */
+      margin-bottom: calc(12px * var(--u));
+      animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(calc(20px * var(--u)));
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .led-bubble {
+      display: inline-flex;
+      flex-direction: column;
+      background: var(--surface);
+      padding: calc(10px * var(--u)) calc(16px * var(--u)) calc(13px * var(--u));
+      border-radius: calc(20px * var(--u));
+      border-bottom-left-radius: calc(5px * var(--u));
+      box-shadow: 0 calc(4px * var(--u)) calc(14px * var(--u)) rgba(30, 30, 66, 0.07);
+      /* 가로형: 말풍선이 화면 폭 전체로 늘어나지 않도록 제한 */
+      max-width: 62%;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
+    .led-nickname {
+      font-size: calc(14px * var(--u));
+      font-weight: 600;
+      color: var(--ink-faint);
+      margin-bottom: calc(3px * var(--u));
+      letter-spacing: calc(0.2px * var(--u));
+    }
+
+    .led-text {
+      font-size: calc(22px * var(--u));
+      font-weight: 400;
+      color: var(--ink);
+      line-height: 1.45;
+    }
+
+    /* 하단 입력 표시 영역 (장식용) */
+    #led-footer {
+      padding: calc(12px * var(--u)) calc(28px * var(--u)) calc(20px * var(--u));
+      border-top: calc(1px * var(--u)) solid var(--line);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: calc(10px * var(--u));
+    }
+
+    .footer-bar {
+      flex: 1;
+      height: calc(38px * var(--u));
+      background: var(--surface);
+      border-radius: calc(19px * var(--u));
+      display: flex;
+      align-items: center;
+      padding: 0 calc(14px * var(--u));
+      gap: calc(8px * var(--u));
+    }
+
+    .footer-dot {
+      width: calc(5px * var(--u));
+      height: calc(5px * var(--u));
+      border-radius: 50%;
+      background: var(--ink-faint);
+      animation: blink 1.4s infinite;
+    }
+
+    .footer-dot:nth-child(2) { animation-delay: 0.2s; }
+    .footer-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0.3; }
+      40% { opacity: 1; }
+    }
+
+    .footer-text {
+      font-size: calc(13px * var(--u));
+      color: var(--ink-faint);
+    }
+
+    .footer-send {
+      width: calc(36px * var(--u));
+      height: calc(36px * var(--u));
+      background: var(--bg-soft);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── 채팅 핀 팝업 ── */
+    #chat-pin {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      padding: 0 calc(32px * var(--u));
+      z-index: 15; /* 채팅 위, 투표(20)/리액션(25) 아래 */
+      background: rgba(239, 220, 213, 0.62); /* 반투명 — 뒤에서 채팅이 계속 흐르는 게 보임 */
+      pointer-events: none;
+    }
+
+    #chat-pin.active { display: flex; }
+
+    #chat-pin-card {
+      width: 86%;            /* 글자 수와 무관하게 채팅 폭 수준으로 고정 */
+      background: var(--orange); /* 강조 말풍선 — 일반 흰 말풍선과 구분 */
+      border-radius: calc(16px * var(--u));
+      padding: calc(8px * var(--u)) calc(30px * var(--u));     /* 세로를 더 얇게 — 길쭉한 슬림 바 */
+      box-shadow: 0 calc(14px * var(--u)) calc(40px * var(--u)) rgba(0, 0, 0, 0.18);
+      text-align: center;    /* 닉네임·본문 가운데 정렬 */
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
+    #chat-pin.active #chat-pin-card {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    #chat-pin-nick {
+      font-size: calc(12px * var(--u));
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.75);
+      margin-bottom: calc(2px * var(--u));
+    }
+
+    #chat-pin-text {
+      font-size: calc(20px * var(--u));
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.3;
+      text-wrap: balance; /* 여러 줄을 길이가 고르게 분배 — 읽기 좋은 줄바꿈 (미지원 시 자연 폴백) */
+    }
+
+    /* ── 리액션 레이어 ── */
+    #reaction-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 25; /* 채팅/투표 레이어 위에 항상 표시 */
+      overflow: hidden;
+    }
+
+    .reaction-float {
+      position: absolute;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 calc(2px * var(--u)) calc(6px * var(--u)) rgba(0, 0, 0, 0.15));
+    }
+
+    /* ── 투표 오버레이 레이어 ── */
+    #voting-layer {
+      position: absolute;
+      inset: 0;
+      display: none;
+      z-index: 20;
+    }
+
+    #voting-layer.active { display: block; }
+
+    /* 질문: 공 클러스터 위쪽 가까이 배치 (화면 최상단 X) */
+    #voting-question-wrap {
+      position: absolute;
+      top: 15%;
+      left: 0;
+      right: 0;
+      padding: 0 calc(28px * var(--u));
+      text-align: center;
+      z-index: 2;
+      opacity: 0;
+      transform: scale(0.4);
+    }
+
+    /* 질문+타이머 등장: 관객 폰 투표 카드와 동일한 팝인 바운스
+       (voting→result 동안 레이어가 유지되면 재생 안 되고, 다음 질문에서만 다시 재생) */
+    #voting-layer.active #voting-question-wrap {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes popIn {
+      0%   { opacity: 0; transform: scale(0.4); }
+      60%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* 질문 카드: 흰 카드 위쪽 중앙에 네이비 배지가 걸쳐진 형태 */
+    #voting-question-card {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      background: var(--surface);
+      border-radius: calc(18px * var(--u));
+      padding: calc(26px * var(--u)) calc(30px * var(--u)) calc(22px * var(--u));
+      box-shadow: var(--shadow);
+    }
+
+    #voting-timer {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: calc(70px * var(--u));
+      height: calc(70px * var(--u));
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-size: calc(26px * var(--u));
+      font-weight: 700;
+    }
+
+    #voting-question {
+      font-size: calc(34px * var(--u));
+      font-weight: 700;
+      color: var(--ink);
+      line-height: 1.4;
+      word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
+      overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
+    }
+
+    /* 공 상자 영역: 위로는 질문 카드, 아래로는 결과 배너와 겹치지 않도록 여백 확보 */
+    #voting-canvas-wrap {
+      position: absolute;
+      top: 22%;
+      bottom: 22%;
+      left: 0;
+      right: 0;
+    }
+
+    #voting-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* ── 주관식: 답변 흘려보내기 ── */
+    #answer-stream {
+      display: none;
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #answer-stream.active { display: block; }
+
+    .answer-float {
+      position: absolute;
+      white-space: nowrap;
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 600;
+      padding: calc(12px * var(--u)) calc(22px * var(--u));
+      border-radius: calc(100px * var(--u));
+      will-change: transform;
+      box-shadow: 0 calc(2px * var(--u)) calc(10px * var(--u)) rgba(0, 0, 0, 0.06);
+    }
+
+    /* ── 주관식: 워드클라우드 ── */
+    #cloud-wrap {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 24%;
+      bottom: 12%;
+      align-items: center;
+      justify-content: center;
+      padding: 0 calc(36px * var(--u));
+      z-index: 1;
+    }
+
+    #cloud-wrap.active {
+      display: flex;
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    #cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: calc(14px * var(--u)) calc(20px * var(--u));
+      justify-content: center;
+      align-items: center;
+      max-width: 100%;
+    }
+
+    .cloud-word {
+      font-weight: 700; /* 800은 한글 시스템 폰트에 없어 가짜 굵기(획 뭉개짐)가 생김 */
+      line-height: 1.2;
+      word-break: keep-all;
+      overflow-wrap: break-word; /* 20자 답변이 큰 글씨로 커졌을 때 화면 밖으로 나가지 않게 */
+      max-width: 100%;
+      opacity: 0;
+      /* 답변마다 랜덤 오프셋/기울기(JS에서 --dx/--dy/--rot 지정) —
+         한 줄로 이어져 한 사람 답변처럼 보이는 것 방지 */
+      --dx: calc(0px * var(--u));
+      --dy: calc(0px * var(--u));
+      --rot: 0deg;
+      animation: wordIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes wordIn {
+      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
+      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
+    }
+
+    /* 1등 단어: 마지막에 크게 튕기며 등장 */
+    .cloud-word.top {
+      animation: wordInTop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes wordInTop {
+      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
+      60%  { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1.3); }
+      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
+    }
+
+    .cloud-empty {
+      font-size: calc(17px * var(--u));
+      color: var(--ink-soft);
+      font-weight: 600;
+    }
+
+    /* ── 제작진 픽 스포트라이트 ── */
+    #spotlight {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      padding: 0 calc(36px * var(--u));
+      z-index: 3; /* 흘려보내기/워드클라우드 위, 리액션(25) 아래 */
+      pointer-events: none;
+    }
+
+    #spotlight.active { display: flex; }
+
+    #spotlight-card {
+      max-width: 86%;
+      background: var(--ink);
+      color: #fff;
+      font-size: calc(30px * var(--u));
+      font-weight: 700; /* 800은 한글 폰트 가짜 굵기 문제 */
+      line-height: 1.35;
+      text-align: center;
+      padding: calc(28px * var(--u)) calc(36px * var(--u));
+      border-radius: calc(24px * var(--u));
+      box-shadow: 0 calc(20px * var(--u)) calc(60px * var(--u)) rgba(0, 0, 0, 0.25);
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
+    #spotlight.active #spotlight-card {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    /* 결과 퍼센트: 공 클러스터 아래쪽 가까이 배치 (화면 최하단 X) */
+    #result-banner {
+      display: none;
+      position: absolute;
+      bottom: 11%;
+      left: 0;
+      right: 0;
+      padding: 0 calc(28px * var(--u));
+      text-align: center;
+      z-index: 2;
+    }
+
+    #result-banner.active {
+      display: block;
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    #result-banner .result-line {
+      display: inline-block;
+      background: var(--surface);
+      border-radius: calc(100px * var(--u));
+      padding: calc(12px * var(--u)) calc(28px * var(--u));
+      box-shadow: var(--shadow);
+      font-size: calc(24px * var(--u));
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    #result-banner .result-pct {
+      font-size: calc(15px * var(--u));
+      color: var(--ink);
+      font-weight: 700;
+      margin-top: calc(4px * var(--u));
+    }
+  </style>
+</head>
+<body>
+
+<div id="screen">
+  <div id="chat-layer">
+    <div id="led-header">
+      <div class="title">Live Chat</div>
+    </div>
+
+    <div id="led-messages"></div>
+
+    <div id="led-footer">
+      <div class="footer-bar">
+        <div class="footer-dot"></div>
+        <div class="footer-dot"></div>
+        <div class="footer-dot"></div>
+        <div class="footer-text">실시간 익명 채팅</div>
+      </div>
+      <div class="footer-send">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a49eb4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
+  <div id="chat-pin">
+    <div id="chat-pin-card">
+      <div id="chat-pin-nick"></div>
+      <div id="chat-pin-text"></div>
+    </div>
+  </div>
+
+  <!-- 리액션 레이어 (하트/붐업 이모지 떠오르는 효과) -->
+  <div id="reaction-layer"></div>
+
+  <!-- 투표 오버레이 -->
+  <div id="voting-layer">
+    <div id="voting-question-wrap">
+      <div id="voting-question-card">
+        <div id="voting-timer">30</div>
+        <div id="voting-question"></div>
+      </div>
+    </div>
+    <div id="voting-canvas-wrap">
+      <canvas id="voting-canvas"></canvas>
+    </div>
+    <!-- 주관식: 답변 흘려보내기 -->
+    <div id="answer-stream"></div>
+    <!-- 주관식: 마감 후 워드클라우드 -->
+    <div id="cloud-wrap"></div>
+    <!-- 제작진 픽 → 스포트라이트 카드 -->
+    <div id="spotlight">
+      <div id="spotlight-card"></div>
+    </div>
+    <div id="result-banner">
+      <div class="result-line" id="result-line">YES 00% · NO 00%</div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
+  const MAX_BUFFER = 300; // 일시정지 중에도 누적되는 메시지 버퍼 상한(메모리 보호용)
+  const messages = [];
+  let chatPaused = false; // 채팅 빈 영역 클릭으로 일시정지된 상태인지
+
+  const container = document.getElementById('led-messages');
+  const socket = io();
+
+  socket.on('history', (history) => {
+    const recent = history.slice(-MAX_VISIBLE);
+    recent.forEach(addMessage);
+  });
+
+  socket.on('chat', (msg) => {
+    addMessage(msg);
+  });
+
+  // 관리자가 채팅을 초기화하면 화면과 버퍼를 함께 비운다
+  // (버퍼를 안 비우면 일시정지 해제 시 지운 메시지가 되살아난다)
+  socket.on('chatCleared', () => {
+    messages.length = 0;
+    container.innerHTML = '';
+  });
+
+  // 메시지 수신: 항상 버퍼(messages)에는 기록하되, 일시정지 중이면 화면엔 그리지 않음
+  function addMessage(msg) {
+    messages.push(msg);
+    if (messages.length > MAX_BUFFER) messages.shift();
+    if (chatPaused) return;
+    renderMessage(msg);
+  }
+
+  function renderMessage(msg) {
+    const group = document.createElement('div');
+    group.className = 'led-msg-group';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'led-bubble';
+
+    const nick = document.createElement('div');
+    nick.className = 'led-nickname';
+    nick.textContent = msg.nickname;
+
+    const text = document.createElement('div');
+    text.className = 'led-text';
+    text.textContent = msg.text;
+
+    bubble.appendChild(nick);
+    bubble.appendChild(text);
+    group.appendChild(bubble);
+    container.appendChild(group);
+
+    // 최대 개수 초과 시 가장 오래된 것 제거
+    const groups = container.querySelectorAll('.led-msg-group');
+    if (groups.length > MAX_VISIBLE) {
+      groups[0].remove();
+    }
+  }
+
+  // 일시정지: 화면 갱신만 멈춤(버퍼링은 계속) — 더블클릭 시 최신 상태로 점프
+  function pauseChat() {
+    if (chatPaused) return;
+    chatPaused = true;
+  }
+
+  function resumeChat() {
+    if (!chatPaused) return;
+    chatPaused = false;
+    container.innerHTML = '';
+    messages.slice(-MAX_VISIBLE).forEach(renderMessage);
+  }
+
+  // ══════════════════════════════════
+  //  투표 모드
+  // ══════════════════════════════════
+  const chatLayer = document.getElementById('chat-layer');
+
+  // 채팅 일시정지는 LED 화면 클릭이 아니라 관리자 화면(admin.html)에서 제어한다.
+  // 서버가 보내는 'chatPauseChange'/state.chatPaused 값을 그대로 따른다.
+
+  const votingLayer = document.getElementById('voting-layer');
+  const votingQuestion = document.getElementById('voting-question');
+  const votingTimer = document.getElementById('voting-timer');
+  const resultBanner = document.getElementById('result-banner');
+  const resultLine = document.getElementById('result-line');
+
+  const canvas = document.getElementById('voting-canvas');
+  const ctx = canvas.getContext('2d');
+
+  // 보기 색 팔레트 (관객 폰과 순서 동일 — 같은 보기 = 같은 색)
+  const YESNO_COLORS = ['#fb7e55', '#5b5cc4'];
+  const OPTION_COLORS = ['#fb7e55', '#5b5cc4', '#2fb3a3', '#f2a03d', '#e3557f', '#4a4a7a'];
+  function colorFor(i) {
+    const arr = voteType === 'yesno' ? YESNO_COLORS : OPTION_COLORS;
+    return arr[i % arr.length];
+  }
+
+  // ── 공 크기 ──
+  // 1표 = 공 1개. 표가 가장 많은 보기가 상자를 거의 채우도록 반지름을 역산하고,
+  // 그 값을 모든 보기에 똑같이 적용한다(보기마다 크기가 다르면 양 비교가 왜곡됨).
+  const BALL_MIN_R = 2.5;
+  const BALL_MAX_R = 15;  // 표가 적을 땐 이 크기를 유지해 차오르는 과정이 보이게
+  const POP_DURATION = 450; // 새 공 등장 시 팝 애니메이션(ms)
+
+  // ── 보기 상자 ── 시안대로 컬러 헤더 + 흰 본문, 공이 그 안에 담김
+  const BOX = { headerH: 46, pad: 16, radius: 18, gap: 22, minW: 120, marginRatio: 0.11 };
+
+  // 세로 비율 상한(높이 ÷ 너비). 열이 많아 상자가 좁아질수록 세로로 길어야
+  // 담긴 높이가 읽히므로 상한을 키운다. 2지선다는 시안대로 정사각형에 가깝게 유지.
+  function maxAspectFor(cols, rows) {
+    if (rows > 1) return 1.6;
+    return cols <= 2 ? 1.15 : 2.2;
+  }
+  const BOX_FONT = "'Pretendard Variable', Pretendard, -apple-system, sans-serif";
+
+  // 보기별 공 목록: ballState[i] = { balls: [{ x, y, tx, ty, phase, bornAt }] }
+  let ballState = [];
+  let ballR = BALL_MAX_R;    // 목표 공 반지름
+  let curBallR = BALL_MAX_R; // 실제 렌더 반지름 (목표값으로 부드럽게 수렴)
+  let voteOptions = [];      // 현재 질문 보기 라벨 배열
+  let voteType = 'yesno';    // 'yesno' | 'choice'
+  let optCount = 0;          // 보기 수
+  let curScale = 1;          // 보기 수에 따른 공 크기 축소(겹침 방지)
+
+  let votingEndTime = null;
+  let timerInterval = null;
+  let rafHandle = null;
+  let currentMode = 'chat';
+
+  // 화면 배율: 설계 기준 폭 800px 대비 실제 #screen 폭. CSS(--u)와 캔버스 좌표계에 함께 적용해
+  // LED 해상도가 600이든 1080이든 화면 구성 비율이 완전히 동일하게 보이도록 한다.
+  const BASE_W = 1040; // 가로형 논리 기준폭 (세로형은 800). 작을수록 요소가 화면 대비 커짐
+  const screenEl = document.getElementById('screen');
+  let uScale = 1;
+
+  function applyScreenScale() {
+    uScale = (screenEl.clientWidth || BASE_W) / BASE_W;
+    screenEl.style.setProperty('--u', uScale.toFixed(4));
+  }
+  applyScreenScale();
+
+  // 캔버스 논리 크기 — 항상 800px 기준으로 환산해서 쓴다 (상자·공 상수를 그대로 재사용)
+  function logicalW() { return canvas.width / devicePixelRatio / uScale; }
+  function logicalH() { return canvas.height / devicePixelRatio / uScale; }
+
+  function resizeCanvas() {
+    const wrap = document.getElementById('voting-canvas-wrap');
+    const rect = wrap.getBoundingClientRect();
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    // 캔버스 크기가 바뀌면 클러스터 중심도 바뀐다 → 공 목표 위치 재계산
+    for (let i = 0; i < ballState.length; i++) repackSide(i);
+  }
+  // 질문 카드 높이에 맞춰 그 아래 콘텐츠(공 상자·워드클라우드)의 시작 위치를 잡는다.
+  // 질문이 길어 카드가 2줄 이상이 되면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다.
+  function layoutBelowQuestion() {
+    const layerH = votingLayer.clientHeight;
+    if (!layerH) return; // 채팅 모드에선 레이어가 숨겨져 있어 측정 불가
+    const qWrap = document.getElementById('voting-question-wrap');
+    const qCard = document.getElementById('voting-question-card');
+    // offsetHeight는 팝인 transform의 영향을 받지 않아 등장 애니메이션 중에도 정확
+    const bottom = qWrap.offsetTop + qCard.offsetHeight;
+    const gap = layerH * 0.03;
+    document.getElementById('voting-canvas-wrap').style.top = Math.max(layerH * 0.22, bottom + gap) + 'px';
+    cloudWrap.style.top = Math.max(layerH * 0.24, bottom + gap) + 'px';
+  }
+
+  window.addEventListener('resize', () => { applyScreenScale(); layoutBelowQuestion(); resizeCanvas(); });
+
+  function initBallState(n) {
+    ballState = [];
+    for (let i = 0; i < n; i++) ballState.push({ balls: [] });
+  }
+
+  // 보기 수에 맞춰 클러스터를 격자로 배치 (2지=좌우, 3지=가로 3, 4지=2×2 …)
+  function clusterLayout(n) {
+    // 가로형(4:3): 보기를 항상 한 줄로 배치 → 상자가 세로로 길어져 공이 쌓이고 비율이 읽힌다.
+    // (세로형은 4개 이상을 2열로 나눴지만, 가로형은 폭이 넓어 6개까지 한 줄이 낫다.)
+    return { cols: n, rows: 1 };
+  }
+
+  // 공 클러스터 중심 = 보기 상자 본문(헤더 아래)의 한가운데.
+  // 배치의 기준은 상자(boxRect)이고 공은 거기에 따라온다.
+  function clusterCenter(i) {
+    const b = boxRect(i);
+    return { x: b.x + b.w / 2, y: b.y + BOX.headerH + (b.h - BOX.headerH) / 2 };
+  }
+
+  // 모서리별 반경을 따로 주는 둥근 사각형 경로 (헤더는 위쪽만 둥글게)
+  function roundRectPath(x, y, w, h, tl, tr, br, bl) {
+    ctx.beginPath();
+    ctx.moveTo(x + tl, y);
+    ctx.lineTo(x + w - tr, y);
+    ctx.arcTo(x + w, y, x + w, y + tr, tr);
+    ctx.lineTo(x + w, y + h - br);
+    ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+    ctx.lineTo(x + bl, y + h);
+    ctx.arcTo(x, y + h, x, y + h - bl, bl);
+    ctx.lineTo(x, y + tl);
+    ctx.arcTo(x, y, x + tl, y, tl);
+    ctx.closePath();
+  }
+
+  // 보기 상자 위치·크기. 본문(헤더 아래) 한가운데가 공 클러스터 중심과 맞도록 배치하고,
+  // 표가 쌓여 무리가 커지면 셀 크기 한도까지 상자도 함께 커진다.
+  function boxRect(i) {
+    const w = logicalW();
+    const h = logicalH();
+    const n = Math.max(1, optCount);
+    const { cols, rows } = clusterLayout(n);
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const itemsInRow = (row === rows - 1) ? (n - row * cols) : cols;
+
+    // 크기는 표 수와 무관하게 고정 — 보기끼리 상자 크기가 달라 보이거나 서로 겹치면 안 됨.
+    // 표가 많아 무리가 상자보다 커지면 공 쪽을 축소해 담는다(drawFrame의 fit).
+    const margin = w * BOX.marginRatio;
+    const bw = Math.max(BOX.minW, (w - margin * 2 - BOX.gap * (cols - 1)) / cols);
+    const bh = Math.min(Math.max(BOX.minW, (h - BOX.gap * (rows - 1)) / rows), bw * maxAspectFor(cols, rows));
+
+    // 마지막 행이 덜 찼으면 그 행만 가운데 정렬
+    const rowW = itemsInRow * bw + (itemsInRow - 1) * BOX.gap;
+    const gridH = rows * bh + (rows - 1) * BOX.gap;
+    return {
+      x: (w - rowW) / 2 + col * (bw + BOX.gap),
+      y: (h - gridH) / 2 + row * (bh + BOX.gap),
+      w: bw,
+      h: bh,
+    };
+  }
+
+  function drawBox(box, color, label) {
+    const r = BOX.radius;
+    // 흰 본문 + 그림자
+    ctx.save();
+    ctx.shadowColor = 'rgba(30, 30, 66, 0.12)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    roundRectPath(box.x, box.y, box.w, box.h, r, r, r, r);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.restore();
+    // 컬러 헤더 (위쪽 모서리만 둥글게)
+    ctx.save();
+    roundRectPath(box.x, box.y, box.w, BOX.headerH, r, r, 0, 0);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.clip();
+    ctx.font = `700 ${Math.round(27 * curScale)}px ${BOX_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, box.x + box.w / 2, box.y + BOX.headerH / 2 + 1, box.w - 16);
+    ctx.restore();
+  }
+
+  function easeOutBack(t) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  }
+
+  // ── 벌집 쌓기 ── 상자 바닥부터 한 줄씩 채워 올린다. 쌓인 높이가 곧 표 수.
+  const BALL_GAP = 1.1;   // 공 사이 간격 배율 (1이면 딱 붙어 겹쳐 보임)
+  const HEADROOM = 1.12;  // 1등 보기가 천장에 닿지 않도록 남기는 여유
+  const ROW_RATIO = Math.sqrt(3); // 벌집 배열의 줄 간격 = r * √3
+
+  function hexPerRow(innerW, r) { return Math.max(1, Math.floor(innerW / (2 * r * BALL_GAP))); }
+  function hexRowCount(innerH, r) { return Math.max(1, Math.floor((innerH - 2 * r) / (r * ROW_RATIO * BALL_GAP)) + 1); }
+
+  // 반지름 r일 때 상자 하나에 담기는 공의 최대 개수 (홀수 줄은 반 칸 어긋나 하나 적음)
+  function hexCapacity(innerW, innerH, r) {
+    const per = hexPerRow(innerW, r);
+    const rows = hexRowCount(innerH, r);
+    const odd = Math.floor(rows / 2);
+    return (rows - odd) * per + odd * Math.max(1, per - 1);
+  }
+
+  // 가장 많은 표(maxCount)가 상자에 딱 담기는 최대 반지름을 이분 탐색으로 찾는다
+  function computeBallR(maxCount) {
+    if (maxCount <= 0) return BALL_MAX_R;
+    const b = boxRect(0);
+    const innerW = b.w - BOX.pad * 2;
+    const innerH = b.h - BOX.headerH - BOX.pad * 2;
+    const need = maxCount * HEADROOM;
+    if (hexCapacity(innerW, innerH, BALL_MAX_R) >= need) return BALL_MAX_R;
+    let lo = BALL_MIN_R, hi = BALL_MAX_R;
+    for (let k = 0; k < 20; k++) {
+      const mid = (lo + hi) / 2;
+      if (hexCapacity(innerW, innerH, mid) >= need) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  function hexPositions(box, r, count) {
+    const per = hexPerRow(box.w - BOX.pad * 2, r);
+    const step = 2 * r * BALL_GAP;
+    const rowH = r * ROW_RATIO * BALL_GAP;
+    const bottom = box.y + box.h - BOX.pad - r;
+    const cx = box.x + box.w / 2;
+    const out = [];
+    let row = 0;
+    while (out.length < count && row < 600) {
+      const cap = (row % 2 && per > 1) ? per - 1 : per;
+      const take = Math.min(cap, count - out.length);
+      const startX = cx - (take - 1) * step / 2; // 줄마다 가운데 정렬 → 홀수 줄이 자연스럽게 반 칸 어긋남
+      for (let c = 0; c < take; c++) out.push({ x: startX + c * step, y: bottom - row * rowH });
+      row++;
+    }
+    return out;
+  }
+
+  function repackSide(i) {
+    const slots = ballState[i];
+    if (!slots) return;
+    const pos = hexPositions(boxRect(i), curBallR, slots.balls.length);
+    slots.balls.forEach((p, k) => {
+      if (!pos[k]) return;
+      p.tx = pos[k].x;
+      p.ty = pos[k].y;
+    });
+  }
+
+  // 표 개수에 맞춰 공 배열 길이 조정. 새 공은 상자 바닥 가운데에서 생겨나 제자리로 날아간다.
+  function syncBalls(i, desired) {
+    const arr = ballState[i].balls;
+    const box = boxRect(i);
+    const sx = box.x + box.w / 2;
+    const sy = box.y + box.h - BOX.pad;
+    while (arr.length < desired) {
+      arr.push({ x: sx, y: sy, tx: sx, ty: sy, phase: Math.random() * Math.PI * 2, bornAt: performance.now() });
+    }
+    while (arr.length > desired) arr.pop();
+  }
+
+  // 모든 보기를 한 번에 갱신 — 공 크기는 보기 전체의 최댓값 기준이라 개별 갱신하면 안 됨.
+  // snap=true면 크기 변화 애니메이션 없이 즉시 반영(모드 진입·재접속 시).
+  function applyAllCounts(perOption, snap) {
+    let maxCount = 0;
+    for (let i = 0; i < optCount; i++) maxCount = Math.max(maxCount, (perOption && perOption[i]) || 0);
+    ballR = computeBallR(maxCount);
+    if (snap) curBallR = ballR;
+    for (let i = 0; i < optCount; i++) {
+      if (!ballState[i]) continue;
+      syncBalls(i, (perOption && perOption[i]) || 0);
+      repackSide(i);
+    }
+  }
+
+  function drawBalls(balls, radius, color, time) {
+    const jitter = radius * 0.07; // 흔들림도 공 크기에 비례 (겹쳐 보이지 않을 만큼만)
+    ctx.fillStyle = color;
+    balls.forEach((p) => {
+      p.x += (p.tx - p.x) * 0.12;
+      p.y += (p.ty - p.y) * 0.12;
+      const t = Math.min(1, (performance.now() - p.bornAt) / POP_DURATION);
+      const scale = Math.max(0, t >= 1 ? 1 : easeOutBack(t));
+      ctx.beginPath();
+      ctx.arc(
+        p.x + Math.sin(time / 600 + p.phase) * jitter,
+        p.y + Math.cos(time / 700 + p.phase) * jitter,
+        radius * scale, 0, Math.PI * 2
+      );
+      ctx.fill();
+    });
+  }
+
+  function drawFrame(time) {
+    ctx.save();
+    ctx.scale(devicePixelRatio * uScale, devicePixelRatio * uScale); // 논리 좌표계(800px 기준)
+    ctx.clearRect(0, 0, logicalW(), logicalH());
+
+    // 표가 늘어 공이 작아질 때 크기가 툭 튀지 않도록 부드럽게 수렴시키고, 그 크기로 다시 쌓는다
+    curBallR += (ballR - curBallR) * 0.15;
+    if (Math.abs(curBallR - ballR) < 0.05) curBallR = ballR;
+    for (let i = 0; i < optCount; i++) repackSide(i);
+
+    for (let i = 0; i < optCount; i++) {
+      const slots = ballState[i];
+      if (!slots) continue;
+      const color = colorFor(i);
+      const box = boxRect(i);
+      drawBox(box, color, voteOptions[i] || ''); // 라벨은 헤더 안에
+
+      ctx.save();
+      roundRectPath(box.x, box.y + BOX.headerH, box.w, box.h - BOX.headerH, 0, 0, BOX.radius, BOX.radius);
+      ctx.clip();
+      drawBalls(slots.balls, curBallR, color, time);
+      ctx.restore();
+    }
+
+    ctx.restore();
+    rafHandle = requestAnimationFrame(drawFrame);
+  }
+
+  function startRenderLoop() {
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    resizeCanvas();
+    rafHandle = requestAnimationFrame(drawFrame);
+  }
+
+  function stopRenderLoop() {
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    rafHandle = null;
+  }
+
+  function updateTimerDisplay() {
+    if (!votingEndTime) return;
+    const remain = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000));
+    votingTimer.textContent = remain;
+  }
+
+  function updateResultLine(counts) {
+    const per = counts && counts.perOption ? counts.perOption : [];
+    const total = counts && counts.total ? counts.total : 0;
+    resultLine.innerHTML = '';
+    voteOptions.forEach((label, i) => {
+      const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
+      const span = document.createElement('span');
+      span.style.color = colorFor(i);
+      span.style.margin = '0 10px';
+      span.style.whiteSpace = 'nowrap';
+      span.textContent = `${label} ${pct}%`;
+      resultLine.appendChild(span);
+    });
+  }
+
+  const answerStream = document.getElementById('answer-stream');
+  const cloudWrap = document.getElementById('cloud-wrap');
+
+  function applyState(state) {
+    currentMode = state.mode;
+
+    // 채팅 일시정지 상태는 모드와 별개로 항상 서버 값을 따른다(관리자 화면에서 제어)
+    if (state.chatPaused) pauseChat(); else resumeChat();
+
+    if (state.mode === 'chat') {
+      chatLayer.classList.remove('blurred');
+      votingLayer.classList.remove('active');
+      resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      clearSpotlight();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+      stopRenderLoop();
+      if (timerInterval) clearInterval(timerInterval);
+      showChatPin(state.pinnedChat || null); // 재접속 시 핀 상태 복원
+      return;
+    }
+
+    // 질문 모드 공통 (voting/result/subjective/subjectiveResult)
+    document.getElementById('chat-pin').classList.remove('active'); // 질문 모드에선 핀 숨김
+    chatLayer.classList.add('blurred');
+    votingLayer.classList.add('active');
+    votingQuestion.textContent = state.question || '';
+    votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
+    layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
+
+    const isVote = state.mode === 'voting' || state.mode === 'result';
+    if (isVote) {
+      // 선택형(YES/NO·N지선다): 공 클러스터 렌더
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      clearSpotlight();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+      voteOptions = state.voteOptions || [];
+      voteType = state.voteType || 'yesno';
+      optCount = voteOptions.length;
+      curScale = optCount <= 2 ? 1 : (optCount <= 4 ? 0.72 : 0.56);
+      initBallState(optCount);
+      resizeCanvas(); // 공 배치 전에 캔버스 실제 크기 확정 (기본값 300x150 상태로 배치되는 것 방지)
+      const per = state.counts && state.counts.perOption ? state.counts.perOption : [];
+      applyAllCounts(per, true);
+      startRenderLoop();
+    } else {
+      // 주관식/이모지: 공 캔버스 정지 + 잔상 제거
+      stopRenderLoop();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    if (state.mode === 'voting') {
+      // 투표 중엔 숫자 배너 없이 공 클러스터 이동만으로 실시간 현황을 보여줌
+      resultBanner.classList.remove('active');
+      votingTimer.style.display = 'inline-flex';
+      votingEndTime = state.votingEndTime;
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimerDisplay, 200);
+      updateTimerDisplay();
+    } else if (state.mode === 'result') {
+      // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      updateResultLine(state.counts);
+      resultBanner.classList.add('active');
+    } else if (state.mode === 'subjective') {
+      // 답변 접수 중: 타이머 없음, 답변 흘려보내기
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+      answerStream.classList.add('active');
+    } else if (state.mode === 'subjectiveResult') {
+      // 마감: 흘려보내기 정리 후 워드클라우드
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      renderCloud(state.cloud || []);
+      cloudWrap.classList.add('active');
+    } else if (state.mode === 'emoji') {
+      // 이모지 반응: 타이머/배너/공 없음. 이모지는 reaction-layer로 떠오름(emojiFloat)
+      if (timerInterval) clearInterval(timerInterval);
+      votingTimer.style.display = 'none';
+      resultBanner.classList.remove('active');
+      answerStream.classList.remove('active');
+      clearAnswerStream();
+      cloudWrap.classList.remove('active');
+      cloudWrap.innerHTML = '';
+    }
+  }
+
+  // ── 주관식: 답변 흘려보내기 (대기열 + 레인 방식) ──
+  // 폭주 시에도 답변을 버리지 않고 줄 세워 고른 밀도로 배출하고,
+  // 가로 레인에 배정해 겹침을 방지한다.
+  const answerQueue = [];
+  const MAX_QUEUE = 200;        // 대기열 상한 (초과 시 오래된 것부터 포기)
+  const LANE_COUNT = 8;         // 가로 레인 수
+  const LANE_COOLDOWN = 3500;   // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
+  const laneBusyUntil = new Array(LANE_COUNT).fill(0);
+  let spawnTimer = null;
+
+  socket.on('subjectiveAnswer', (data) => {
+    if (currentMode !== 'subjective') return;
+    if (!data || typeof data.text !== 'string') return;
+    answerQueue.push(data.text);
+    if (answerQueue.length > MAX_QUEUE) answerQueue.shift();
+    scheduleSpawn();
+  });
+
+  function scheduleSpawn() {
+    if (spawnTimer) return;
+    const tick = () => {
+      if (currentMode !== 'subjective' || answerQueue.length === 0) {
+        spawnTimer = null;
+        return;
+      }
+      spawnAnswerFloat(answerQueue.shift());
+      // 밀린 답변이 많을수록 배출 간격을 자동으로 줄임
+      const delay = answerQueue.length > 60 ? 150
+                  : answerQueue.length > 25 ? 250
+                  : 420;
+      spawnTimer = setTimeout(tick, delay);
+    };
+    spawnTimer = setTimeout(tick, 50);
+  }
+
+  function clearAnswerStream() {
+    answerQueue.length = 0;
+    if (spawnTimer) { clearTimeout(spawnTimer); spawnTimer = null; }
+    answerStream.innerHTML = '';
+  }
+
+  function pickLane() {
+    const now = performance.now();
+    const free = [];
+    for (let i = 0; i < LANE_COUNT; i++) {
+      if (laneBusyUntil[i] <= now) free.push(i);
+    }
+    let lane;
+    if (free.length > 0) {
+      lane = free[Math.floor(Math.random() * free.length)];
+    } else {
+      // 모두 사용 중이면 가장 먼저 비는 레인
+      lane = laneBusyUntil.indexOf(Math.min(...laneBusyUntil));
+    }
+    laneBusyUntil[lane] = now + LANE_COOLDOWN;
+    return lane;
+  }
+
+  function spawnAnswerFloat(text) {
+    const el = document.createElement('div');
+    el.className = 'answer-float';
+    el.textContent = text;
+    el.style.fontSize = Math.round(18 + Math.random() * 12) + 'px';
+    // 레인 배치: 14%~82% 사이를 균등 분할
+    const lane = pickLane();
+    el.style.top = (14 + lane * (68 / (LANE_COUNT - 1))) + '%';
+    answerStream.appendChild(el);
+
+    const w = el.offsetWidth;
+    const sw = answerStream.clientWidth;
+    el.style.left = sw + 'px'; // 오른쪽 밖에서 시작
+    el.animate([
+      { transform: 'translateX(0)' },
+      { transform: `translateX(${-(sw + w + 60)}px)` },
+    ], {
+      duration: 9000 + Math.random() * 5000, // 9~14초에 걸쳐 통과
+      easing: 'linear',
+    }).onfinish = () => el.remove();
+  }
+
+  // ── 제작진 픽 → 스포트라이트 카드 ──
+  const spotlight = document.getElementById('spotlight');
+  const spotlightCard = document.getElementById('spotlight-card');
+  let spotlightTimer = null;
+  const SPOTLIGHT_DURATION = 8000; // 표시 유지 시간(ms)
+
+  socket.on('answerPicked', (data) => {
+    if (currentMode !== 'subjective' && currentMode !== 'subjectiveResult') return;
+    if (!data || typeof data.text !== 'string') return;
+    spotlightCard.textContent = data.text;
+    spotlight.classList.remove('active');
+    void spotlight.offsetWidth; // 연속 픽 시 애니메이션 재시작
+    spotlight.classList.add('active');
+    if (spotlightTimer) clearTimeout(spotlightTimer);
+    spotlightTimer = setTimeout(() => spotlight.classList.remove('active'), SPOTLIGHT_DURATION);
+  });
+
+  function clearSpotlight() {
+    if (spotlightTimer) { clearTimeout(spotlightTimer); spotlightTimer = null; }
+    spotlight.classList.remove('active');
+  }
+
+  // ── 주관식: 워드클라우드 렌더 ──
+  // 인접한 답변이 같은 색이 되지 않도록 팔레트를 순환 배정 (랜덤 X)
+  const CLOUD_COLORS = [
+    '#1e1e42', '#fb7e55', '#5b5cc4', '#2fb3a3', '#e3557f',
+    '#f2a03d', '#4a4a7a', '#c2544a', '#7b6cf0', '#1f8f83',
+  ];
+
+  function renderCloud(cloud) {
+    cloudWrap.innerHTML = '';
+    const inner = document.createElement('div');
+    inner.id = 'cloud';
+
+    if (!cloud.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cloud-empty';
+      empty.textContent = '접수된 답변이 없습니다';
+      inner.appendChild(empty);
+    } else {
+      const maxCount = cloud[0].count; // 서버가 빈도순 정렬해서 보냄
+      const topEntry = cloud[0];       // 1등 단어 (마지막에 크게 등장)
+      // 큰 단어가 한쪽에 몰리지 않게 표시 순서는 섞음
+      const shuffled = [...cloud];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      // 등장 순서: 빈도 낮은 것부터 하나씩 → 1등은 잠깐 뜸 들인 뒤 마지막에 등장
+      const revealOrder = [...cloud].reverse(); // 빈도 오름차순
+      const step = Math.max(80, Math.min(250, Math.round(4000 / cloud.length)));
+      const delayByWord = new Map();
+      revealOrder.forEach((entry, i) => delayByWord.set(entry, i * step));
+      delayByWord.set(topEntry, (cloud.length - 1) * step + 600); // 1등만 추가 딜레이
+
+      shuffled.forEach((entry, i) => {
+        const { word, count } = entry;
+        const span = document.createElement('span');
+        const isTop = entry === topEntry;
+        span.className = 'cloud-word' + (isTop ? ' top' : '');
+        // 빈도 비례 18~92px — 지수(^1.6)를 줘서 상위 단어가 확실히 크게
+        const scale = maxCount > 1 ? (count - 1) / (maxCount - 1) : 0.5;
+        span.style.fontSize = Math.round(18 + 74 * Math.pow(scale, 1.6)) + 'px';
+        // 표시 순서대로 팔레트 순환 — 이웃 답변끼리 항상 다른 색
+        span.style.color = CLOUD_COLORS[i % CLOUD_COLORS.length];
+        // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼
+        span.style.setProperty('--dx', Math.round(Math.random() * 30 - 15) + 'px');
+        span.style.setProperty('--dy', Math.round(Math.random() * 90 - 45) + 'px');
+        span.style.setProperty('--rot', (isTop ? 0 : (Math.random() * 10 - 5).toFixed(1)) + 'deg');
+        span.style.animationDelay = delayByWord.get(entry) + 'ms';
+        span.textContent = word;
+        inner.appendChild(span);
+      });
+    }
+    cloudWrap.appendChild(inner);
+  }
+
+  socket.on('state', applyState);
+  socket.on('modeChange', applyState);
+
+  socket.on('voteUpdate', (data) => {
+    if (currentMode !== 'voting') return;
+    applyAllCounts(data.counts && data.counts.perOption ? data.counts.perOption : [], false);
+  });
+
+  // ── 리액션 (하트/붐업) — 랜덤 위치에서 떠오르며 사라지는 이모지 ──
+  const reactionLayer = document.getElementById('reaction-layer');
+  const MAX_REACTIONS = 80; // 동시 표시 상한 (LED 성능 보호)
+
+  const REACTION_EMOJI = { heart: '❤️', thumbs: '👍', down: '👎' };
+
+  // 이모지 하나를 랜덤 위치에서 떠오르게 (리액션·이모지 질문 공용)
+  function spawnFloat(text) {
+    if (reactionLayer.childElementCount >= MAX_REACTIONS) return;
+    const el = document.createElement('div');
+    el.className = 'reaction-float';
+    el.textContent = text;
+    el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
+    el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
+    el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기
+    reactionLayer.appendChild(el);
+
+    const driftX = Math.random() * 60 - 30; // 좌우로 살짝 흔들리며 상승
+    el.animate([
+      { transform: 'translate(0, 0) scale(0)', opacity: 0 },
+      { transform: `translate(${driftX * 0.3}px, -25px) scale(1.2)`, opacity: 1, offset: 0.15 },
+      { transform: `translate(${driftX}px, -140px) scale(1)`, opacity: 0 },
+    ], {
+      duration: 1800 + Math.random() * 700,
+      easing: 'ease-out',
+    }).onfinish = () => el.remove();
+  }
+
+  socket.on('reaction', (data) => {
+    const type = data && data.type;
+    if (!REACTION_EMOJI[type]) return;
+    spawnFloat(REACTION_EMOJI[type]);
+  });
+
+  // 이모지 반응 질문: 관객이 고른 이모지가 떠오름
+  socket.on('emojiFloat', (data) => {
+    const emo = data && data.emoji;
+    if (typeof emo === 'string' && emo) spawnFloat(emo);
+  });
+
+  // 관리자 화면에서 채팅 정지/재생을 누르면 서버가 모든 화면에 broadcast
+  socket.on('chatPauseChange', (data) => {
+    if (data && data.chatPaused) pauseChat(); else resumeChat();
+  });
+
+  // ── 채팅 핀 팝업 (관리자가 특정 채팅을 클릭해 고정) ──
+  const chatPin = document.getElementById('chat-pin');
+  const chatPinNick = document.getElementById('chat-pin-nick');
+  const chatPinText = document.getElementById('chat-pin-text');
+
+  function showChatPin(message) {
+    if (!message) {
+      chatPin.classList.remove('active');
+      return;
+    }
+    chatPinNick.textContent = message.nickname || '';
+    chatPinText.textContent = message.text || '';
+    chatPin.classList.remove('active');
+    void chatPin.offsetWidth; // 교체 시 팝인 애니메이션 재시작
+    chatPin.classList.add('active');
+  }
+
+  socket.on('chatPinned', (data) => {
+    showChatPin(data && data.message);
+  });
+
+  socket.emit('identify', 'led-screen-' + Math.random().toString(36).slice(2));
+</script>
+</body>
+</html>

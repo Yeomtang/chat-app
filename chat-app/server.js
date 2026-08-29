@@ -129,6 +129,10 @@ app.get('/admin', (req, res) => {
 app.get('/concert', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'chat.html'));
 });
+// 콘서트 현장 LED (4:3 가로형, 2496×1872) — 관리자/관객은 기존 것 그대로 공유
+app.get('/led/concert', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'led-concert.html'));
+});
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
