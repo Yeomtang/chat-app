@@ -678,7 +678,7 @@
   const POP_DURATION = 450; // 새 공 등장 시 팝 애니메이션(ms)
 
   // ── 보기 상자 ── 시안대로 컬러 헤더 + 흰 본문, 공이 그 안에 담김
-  const BOX = { headerH: 58, pad: 16, radius: 18, gap: 22, minW: 120, marginRatio: 0.11 };
+  const BOX = { headerH: 48, pad: 16, radius: 18, gap: 22, minW: 120, marginRatio: 0.11 };
 
   // 세로 비율 상한(높이 ÷ 너비). 열이 많아 상자가 좁아질수록 세로로 길어야
   // 담긴 높이가 읽히므로 상한을 키운다. 2지선다는 시안대로 정사각형에 가깝게 유지.
@@ -823,7 +823,7 @@
     ctx.fillStyle = color;
     ctx.fill();
     ctx.clip();
-    ctx.font = `700 ${Math.round(36)}px ${BOX_FONT}`; // 보기 라벨: 상자 폭에 맞게 크게(넘치면 maxWidth로 자동 축소)
+    ctx.font = `700 ${Math.round(24)}px ${BOX_FONT}`; // 보기 라벨: 상자 폭에 맞게(넘치면 maxWidth로 자동 축소)
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';
