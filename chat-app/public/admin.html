@@ -651,16 +651,8 @@
   });
 
   socket.on('presets', (list) => {
+    // 서버가 유일한 소스. 빈 목록이면 그대로 비운다(삭제가 되살아나지 않도록 로컬 복원 안 함).
     presets = Array.isArray(list) ? list : [];
-    // 마이그레이션: 서버가 비었는데 이 PC 로컬에 예전 등록분이 있으면 1회 서버로 올림
-    if (presets.length === 0) {
-      const local = JSON.parse(localStorage.getItem('presets') || '[]')
-        .map(p => (typeof p === 'string' ? { text: p, type: 'yesno' } : p));
-      if (local.length > 0) {
-        presets = local;
-        socket.emit('admin:setPresets', presets);
-      }
-    }
     renderPresets();
   });
 
@@ -1168,9 +1160,8 @@
     renderPresets();
   }
 
-  // 프리셋을 서버(공유) + 로컬(백업)에 함께 저장
+  // 프리셋은 서버가 단일 소스(파일 저장). 로컬 백업을 쓰면 삭제가 되살아나므로 쓰지 않는다.
   function savePresets() {
-    localStorage.setItem('presets', JSON.stringify(presets));
     socket.emit('admin:setPresets', presets);
   }
 

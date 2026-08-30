@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -141,8 +142,19 @@ app.get('/host', (req, res) => {
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
 let msgSeq = 0; // 메시지 고유 id 시퀀스 (Date.now() 단독은 동시 전송 시 충돌 → 삭제 오작동)
-// 관리자 질문 사전 등록 목록 — 여러 관리자 PC가 공유(서버 메모리에 보관, 재시작 시 초기화)
-let questionPresets = [];
+
+// 관리자 질문 사전 등록 목록 — 여러 관리자 PC가 공유. 파일에 저장해 서버 재시작에도 유지한다.
+// (단 Render는 재배포 시 파일시스템이 초기화되므로 재배포 때는 사라질 수 있음 — 완전 영속은 외부 DB 필요)
+const PRESETS_FILE = path.join(__dirname, 'presets.json');
+function loadPresets() {
+  try { const v = JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8')); return Array.isArray(v) ? v : []; }
+  catch { return []; }
+}
+function persistPresets() {
+  try { fs.writeFileSync(PRESETS_FILE, JSON.stringify(questionPresets)); }
+  catch (e) { console.error('프리셋 저장 실패:', e.message); }
+}
+let questionPresets = loadPresets();
 const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
@@ -578,6 +590,7 @@ io.on('connection', (socket) => {
     questionPresets = list
       .filter(p => p && typeof p.text === 'string')
       .slice(0, 100); // 과도한 등록 방지
+    persistPresets(); // 파일에 저장 → 재시작에도 유지 (삭제로 빈 목록이어도 그대로 저장 = 삭제 확정)
     socket.broadcast.emit('presets', questionPresets); // 나를 제외한 다른 관리자에게 반영
   });
 

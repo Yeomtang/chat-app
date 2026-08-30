@@ -5,3 +5,6 @@ node_modules/
 
 # 임시 통합 테스트 스크립트 (커밋 대상 아님)
 __livetest*.js
+
+# 런타임 생성 데이터 (커밋 금지)
+chat-app/presets.json
