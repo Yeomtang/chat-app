@@ -56,9 +56,13 @@
 
 ## 진행 상황 (구현 단계)
 - ✅ **1단계 완료 + 배포**: 채팅 시스템 (QR 입장 가정, 닉네임 자동배정 625개 풀, iMessage 스타일, LED 표시)
-  - 관객: https://chat-app-6kl5.onrender.com/
-  - LED: https://chat-app-6kl5.onrender.com/led
-  - ⚠️ Render 무료 플랜은 비활성 시 서버 슬립 → 첫 접속 시 30~60초 지연 가능. 실사용(12월) 전 유료 플랜 전환 검토 필요
+  - **현재 운영 주소(2026-08-30 기준, Render 계정 이전 후)**: `https://chat-app-s6y2.onrender.com`
+    - 관객(직장인 테마): `/`  · 관객(공연 테마): `/concert`
+    - LED 세로형 2:3: `/led`  · LED 콘서트 가로형 4:3(2496×1872): `/led/concert`
+    - 관리자: `/admin`  · 운영진 채팅: `/host`
+    - (구 주소 `https://chat-app-6kl5.onrender.com`도 같은 저장소를 보므로 push 시 함께 배포됨 — 현장에선 모든 화면이 s6y2를 쓰는지 확인)
+  - ⚠️ Render 무료 플랜은 비활성 시 서버 슬립 → 첫 접속 시 30~60초 지연 가능. **행사 전 미리 접속해 깨워둘 것.** 실사용(12월) 전 유료 플랜 전환 검토 필요
+  - ⚠️ 서버 메모리에만 보관되는 상태(채팅·투표·접속자수·질문프리셋)는 재배포/재시작 시 모두 초기화됨. 배포는 현장 진행 중이 아닐 때 하거나 사용자 확인 후.
 - 🔄 **2단계 구현 중**: Yes/No 투표 + 공 애니메이션 + 30초 타이머
   - 서버(server.js): `mode: 'chat'|'voting'|'result'` 상태머신 추가. `votes` 객체는 clientId → 'yes'|'no'로 저장(중복 방지). `identify` 이벤트로 클라이언트 영구 ID 수신. `admin:startVoting/endVoting/returnToChat/getState` 이벤트로 제작진 제어. 타이머는 서버가 `votingEndTime`(epoch ms)을 계산해 브로드캐스트, 각 클라이언트는 로컬에서 카운트다운만 표시(서버 권위 방식).
   - LED 화면(led.html): 채팅 레이어 블러 처리 + 투표 오버레이. Canvas 기반 공 파티클 애니메이션(클라이언트별 1개 공, YES/NO 클러스터로 sunflower 패킹 배치, 부드러운 이동 애니메이션). voting 모드에서 질문+타이머 표시, result 모드에서는 질문/타이머 숨기고 결과 비율만 floating 표시.
@@ -231,7 +235,7 @@
   - 본문 폰트 20→30px(1.5배). 닉네임 12→16px.
   - 폭 `width:86%`(고정) → `max-width:72%`로 변경 → 일반 길이 문장이 2줄로 자연스럽게 감김(짧으면 내용만큼만). 세로 패딩 8→22px로 2줄 수용.
   - 세로형 led.html의 핀은 그대로(오렌지 강조 유지) — 콘서트 가로형만 변경.
-- 2026-08-29: **운영자(진행자·제작진) 채팅 환경 추가 — `/host`** (host.html 신규). ⚠️ **코드만 커밋, 아직 배포 안 함**(현장 진행 중 초기화 방지). 나중에 push하면 반영.
+- 2026-08-29: **운영자(진행자·제작진) 채팅 환경 추가 — `/host`** (host.html 신규). ✅ **2026-08-30 배포 완료.**
   - **접속·닉네임**: `/host` → 이름 직접 입력(랜덤 아님). host.html은 chat.html 복사본에서 입장화면을 이름 입력창으로, `requestNickname`을 소켓 연결+`registerOperator`로, `enterChat`을 입력값 검증으로 교체. 리롤/테마 닉네임 로직 제거.
   - **서버**: `registerOperator` 이벤트 → `socket.isOperator=true`. chat 메시지에 `isOperator` 플래그 추가. `/host` 라우트. 운영자는 `claimNickname`을 안 보내므로 **접속자 집계에서 자동 제외**(현재 접속자 수에 안 잡힘) — 검증 완료.
   - **LED/폰 구분 표시**: `.led-bubble.operator` / `.msg-bubble.operator` = **네이비(--ink) 배경 + 흰 글씨**. led-concert.html·led.html·chat.html·host.html 모두 `msg.isOperator ? ' operator'` 분기 추가. 관객 흰 말풍선과 확실히 구분됨.
@@ -260,3 +264,4 @@
   - **수신**: led-concert·led·chat·host·admin 모두 `chatDeleted`에서 화면·버퍼(messages/chatFeedItems)에서 제거.
   - **host 스크롤 유지**: host는 관객 chat.html 기반이라 새 메시지마다 무조건 scrollToBottom → 운영진이 위로 올려 삭제 중 딸려내려감. `chat` 리스너에서 맨 아래일 때만 따라가도록 수정(admin 채팅 피드와 동일 패턴).
   - 검증: 동시 3건 id 고유, 가운데 1건만 삭제, 서버/history 반영, 운영진(host 소켓) 삭제 동작, host 위로 스크롤 시 새 메시지 5건 와도 위치 유지 — 모두 확인.
+- 2026-08-30 **배포 현황 요약**: 오늘 아래 4건 모두 `chat-app-s6y2`에 배포·검증 완료. (1) 관리자 질문 프리셋 서버 공유, (2) 관리자 채팅 피드 스크롤 유지+검색, (3) 비속어 * 마스킹 필터, (4) 채팅 개별 삭제(관리자+운영진)+host 스크롤 유지. 최신 커밋 `6cef6da`. 세로형 LED(`led.html`) 관련 개선(가독성 폰트확대 등 콘서트 전용 항목)은 아직 미적용 — 사용자가 "다음은 led.html 수정" 의사 밝힘(미착수).
