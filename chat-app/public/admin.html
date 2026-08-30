@@ -427,7 +427,20 @@
       padding: 8px 12px;
       cursor: pointer;
       transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
+    .chat-item .chat-body { flex: 1; min-width: 0; }
+    .chat-item .chat-del {
+      flex-shrink: 0;
+      width: 26px; height: 26px;
+      border: none; border-radius: 8px;
+      background: #ffe1de; color: #ff3b30;
+      font-size: 15px; font-weight: 700; line-height: 1;
+      cursor: pointer;
+    }
+    .chat-item .chat-del:hover { background: #ff3b30; color: #fff; }
 
     .chat-item:hover { background: #e5e5ea; }
     .chat-item.pinned { background: #fff3cd; }
@@ -874,6 +887,12 @@
     renderChatFeed();
   });
 
+  socket.on('chatDeleted', (id) => {
+    chatFeedItems = chatFeedItems.filter(m => m.id !== id);
+    if (pinnedChatMsg && pinnedChatMsg.id === id) { pinnedChatMsg = null; renderPinStatus(); }
+    renderChatFeed();
+  });
+
   socket.on('chatPinned', (data) => {
     pinnedChatMsg = (data && data.message) || null;
     renderPinStatus();
@@ -882,6 +901,12 @@
 
   function pinChat(msg) {
     socket.emit('admin:pinChat', { id: msg.id, nickname: msg.nickname, text: msg.text });
+  }
+
+  // 개별 채팅 삭제 — 모든 화면에서 즉시 사라짐(되돌릴 수 없음)
+  function deleteMessage(msg) {
+    if (!confirm('이 채팅을 모든 화면에서 삭제할까요?\n\n' + msg.nickname + ': ' + msg.text)) return;
+    socket.emit('admin:deleteMessage', msg.id);
   }
 
   function unpinChat() {
@@ -925,16 +950,25 @@
     items.forEach((m) => {
       const item = document.createElement('div');
       item.className = 'chat-item' + (pinnedChatMsg && pinnedChatMsg.id === m.id ? ' pinned' : '');
-      item.title = 'LED에 핀 고정';
+      const body = document.createElement('div');
+      body.className = 'chat-body';
+      body.title = 'LED에 핀 고정';
       const nick = document.createElement('div');
       nick.className = 'chat-nick';
       nick.textContent = m.nickname;
       const text = document.createElement('div');
       text.className = 'chat-text';
       text.textContent = m.text;
-      item.appendChild(nick);
-      item.appendChild(text);
-      item.onclick = () => pinChat(m);
+      body.appendChild(nick);
+      body.appendChild(text);
+      body.onclick = () => pinChat(m);
+      const del = document.createElement('button');
+      del.className = 'chat-del';
+      del.textContent = '✕';
+      del.title = '이 채팅 삭제';
+      del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
+      item.appendChild(body);
+      item.appendChild(del);
       feed.appendChild(item);
     });
     // 맨 아래면 최신으로 따라가고, 위로 스크롤 중이면 재렌더 전 위치를 복원(제작진이 상위 글을 찾을 수 있게)

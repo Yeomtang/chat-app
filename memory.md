@@ -253,3 +253,10 @@
   - **오탐 방지 원칙**: 방송 노출 보호가 목적이라 강조어로도 쓰이는 단어는 제외. 특히 **"미친"은 넣지 않음**(공연 채팅의 "목소리 미쳤다"=칭찬) — "미친놈/미친년"만. 명백한 욕설 + 흔한 초성체(ㅅㅂ,ㅄ,ㅈㄹ 등) + 영타(tlqkf 등) 위주.
   - 완벽 차단은 불가능(자모 분리·띄어쓰기 우회). 단어 추가/수정은 server.js `PROFANITY` 배열에서. 오탐 신고되면 해당 단어 제거.
   - 검증: 욕설 6종 마스킹 + 정상 단어(미쳤다/새로운/시간/앙코르) 통과 + 종단(관객 전송→마스킹본 브로드캐스트) 확인.
+- 2026-08-30: **채팅 개별 삭제 + host 스크롤 유지** — 제작진이 부적절한 메시지를 즉시 내릴 수 있게.
+  - **메시지 고유 id**: 기존 `id: Date.now()`는 동시 전송 시 충돌해 삭제/핀이 여러 개에 걸릴 수 있었음 → `id: ${Date.now()}-${msgSeq++}`로 변경(server.js). 모든 렌더(LED×2, chat, host)의 group에 `dataset.id` 부여.
+  - **서버 `admin:deleteMessage`**(id): recentMessages에서 제거 + 핀된 것이면 해제 + `chatDeleted` 브로드캐스트. history에서도 빠져 신규 접속자에게 안 감. (인증 없음 — 현장용. admin·host 소켓 모두 호출 가능.)
+  - **삭제 실행 주체 2곳**: 관리자 `/admin`(채팅 피드 각 항목 ✕ 버튼, 본문 클릭=핀과 분리) + 운영진 `/host`(각 말풍선 우측 ✕ 버튼). 둘 다 confirm 후 `admin:deleteMessage` emit.
+  - **수신**: led-concert·led·chat·host·admin 모두 `chatDeleted`에서 화면·버퍼(messages/chatFeedItems)에서 제거.
+  - **host 스크롤 유지**: host는 관객 chat.html 기반이라 새 메시지마다 무조건 scrollToBottom → 운영진이 위로 올려 삭제 중 딸려내려감. `chat` 리스너에서 맨 아래일 때만 따라가도록 수정(admin 채팅 피드와 동일 패턴).
+  - 검증: 동시 3건 id 고유, 가운데 1건만 삭제, 서버/history 반영, 운영진(host 소켓) 삭제 동작, host 위로 스크롤 시 새 메시지 5건 와도 위치 유지 — 모두 확인.

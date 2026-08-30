@@ -140,6 +140,7 @@ app.get('/host', (req, res) => {
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
+let msgSeq = 0; // 메시지 고유 id 시퀀스 (Date.now() 단독은 동시 전송 시 충돌 → 삭제 오작동)
 // 관리자 질문 사전 등록 목록 — 여러 관리자 PC가 공유(서버 메모리에 보관, 재시작 시 초기화)
 let questionPresets = [];
 const MAX_MESSAGES = 50;
@@ -423,7 +424,7 @@ io.on('connection', (socket) => {
     const nickname = (typeof data.nickname === 'string' ? data.nickname : '')
       .trim().slice(0, MAX_NICKNAME_LENGTH);
     const message = {
-      id: Date.now(),
+      id: `${Date.now()}-${msgSeq++}`, // 고유 id (삭제/핀 대상 식별)
       nickname,
       text,
       isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
@@ -558,6 +559,14 @@ io.on('connection', (socket) => {
 
   socket.on('admin:unpinChat', () => {
     clearPinnedChat();
+  });
+
+  // 관리자: 개별 채팅 삭제 — 부적절한 메시지를 즉시 내림. 모든 화면에서 사라진다.
+  socket.on('admin:deleteMessage', (id) => {
+    const idx = recentMessages.findIndex(m => m.id === id);
+    if (idx !== -1) recentMessages.splice(idx, 1);
+    if (appState.pinnedChat && appState.pinnedChat.id === id) clearPinnedChat(); // 핀된 걸 지우면 핀도 해제
+    io.emit('chatDeleted', id);
   });
 
   // 관리자: 질문 사전 등록 목록 조회/저장 — 다른 관리자 PC와 실시간 공유

@@ -500,6 +500,7 @@
     .msg-group {
       display: flex;
       flex-direction: column;
+      position: relative;
       margin-bottom: 8px;
     }
 
@@ -523,6 +524,16 @@
     .msg-bubble.operator { background: var(--ink); }
     .msg-bubble.operator .msg-nickname { color: rgba(255, 255, 255, 0.7); }
     .msg-bubble.operator .msg-text { color: #fff; }
+    /* 운영진 전용: 각 메시지 삭제 버튼 */
+    .host-del {
+      position: absolute; top: 2px; right: 2px;
+      width: 30px; height: 30px;
+      border: none; border-radius: 8px;
+      background: rgba(255, 59, 48, 0.12); color: var(--warn);
+      font-size: 15px; font-weight: 700; line-height: 1;
+      cursor: pointer; opacity: 0.75;
+    }
+    .host-del:active { background: var(--warn); color: #fff; opacity: 1; }
 
     .msg-nickname {
       font-size: 11px;
@@ -825,12 +836,20 @@
       });
       // 새 메시지 수신
       nickSocket.on('chat', (msg) => {
+        // 운영진이 위로 스크롤해 삭제하는 중이면 딸려 내려가지 않게, 맨 아래일 때만 따라감
+        const box = document.getElementById('messages');
+        const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
         addMessage(msg);
-        scrollToBottom();
+        if (atBottom) scrollToBottom();
       });
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
       nickSocket.on('chatCleared', () => {
         document.getElementById('messages').innerHTML = '';
+      });
+      // 관리자가 개별 채팅을 삭제하면 내 화면에서도 제거
+      nickSocket.on('chatDeleted', (id) => {
+        const el = document.querySelector('#messages [data-id="' + id + '"]');
+        if (el) el.remove();
       });
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
@@ -1153,6 +1172,7 @@
     const messages = document.getElementById('messages');
     const group = document.createElement('div');
     group.className = 'msg-group';
+    if (msg.id != null) group.dataset.id = msg.id;
 
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble' + (msg.isOperator ? ' operator' : '');
@@ -1168,6 +1188,19 @@
     bubble.appendChild(nick);
     bubble.appendChild(text);
     group.appendChild(bubble);
+
+    // 운영진: 부적절한 채팅을 직접 삭제 (모든 화면에서 사라짐)
+    if (msg.id != null) {
+      const del = document.createElement('button');
+      del.className = 'host-del';
+      del.textContent = '✕';
+      del.title = '이 채팅 삭제';
+      del.onclick = () => {
+        if (!confirm('이 채팅을 모든 화면에서 삭제할까요?\n\n' + msg.nickname + ': ' + msg.text)) return;
+        nickSocket.emit('admin:deleteMessage', msg.id);
+      };
+      group.appendChild(del);
+    }
     messages.appendChild(group);
   }
 
