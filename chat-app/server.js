@@ -140,6 +140,8 @@ app.get('/host', (req, res) => {
 
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
+// 관리자 질문 사전 등록 목록 — 여러 관리자 PC가 공유(서버 메모리에 보관, 재시작 시 초기화)
+let questionPresets = [];
 const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
@@ -523,6 +525,18 @@ io.on('connection', (socket) => {
 
   socket.on('admin:unpinChat', () => {
     clearPinnedChat();
+  });
+
+  // 관리자: 질문 사전 등록 목록 조회/저장 — 다른 관리자 PC와 실시간 공유
+  socket.on('admin:getPresets', () => {
+    socket.emit('presets', questionPresets);
+  });
+  socket.on('admin:setPresets', (list) => {
+    if (!Array.isArray(list)) return;
+    questionPresets = list
+      .filter(p => p && typeof p.text === 'string')
+      .slice(0, 100); // 과도한 등록 방지
+    socket.broadcast.emit('presets', questionPresets); // 나를 제외한 다른 관리자에게 반영
   });
 
   // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.

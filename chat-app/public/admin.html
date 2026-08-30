@@ -623,15 +623,29 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
   const socket = io();
-  // 기존 문자열 프리셋(구버전)을 {text, type} 형태로 마이그레이션
-  let presets = JSON.parse(localStorage.getItem('presets') || '[]')
-    .map(p => (typeof p === 'string' ? { text: p, type: 'yesno' } : p));
+  // 질문 사전 등록 목록 — 서버에서 받아 모든 관리자 PC가 공유 (아래 socket.on('presets'))
+  let presets = [];
   let currentState = null;
   let timerInterval = null;
 
   socket.on('connect', () => {
     socket.emit('admin:getState');
     socket.emit('admin:getAnswers');
+    socket.emit('admin:getPresets');
+  });
+
+  socket.on('presets', (list) => {
+    presets = Array.isArray(list) ? list : [];
+    // 마이그레이션: 서버가 비었는데 이 PC 로컬에 예전 등록분이 있으면 1회 서버로 올림
+    if (presets.length === 0) {
+      const local = JSON.parse(localStorage.getItem('presets') || '[]')
+        .map(p => (typeof p === 'string' ? { text: p, type: 'yesno' } : p));
+      if (local.length > 0) {
+        presets = local;
+        socket.emit('admin:setPresets', presets);
+      }
+    }
+    renderPresets();
   });
 
   socket.on('state', (state) => {
@@ -1081,7 +1095,7 @@
       p.maxLen = parseInt(document.getElementById('preset-maxlen').value, 10) || 20;
     }
     presets.push(p);
-    localStorage.setItem('presets', JSON.stringify(presets));
+    savePresets();
     input.value = '';
     document.getElementById('preset-options').value = '';
     renderPresets();
@@ -1095,8 +1109,14 @@
 
   function removePreset(i) {
     presets.splice(i, 1);
-    localStorage.setItem('presets', JSON.stringify(presets));
+    savePresets();
     renderPresets();
+  }
+
+  // 프리셋을 서버(공유) + 로컬(백업)에 함께 저장
+  function savePresets() {
+    localStorage.setItem('presets', JSON.stringify(presets));
+    socket.emit('admin:setPresets', presets);
   }
 
   renderPresets();
