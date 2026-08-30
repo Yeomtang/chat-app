@@ -591,6 +591,9 @@
       <span id="pin-status-text">핀 고정된 채팅 없음</span>
       <button id="unpin-btn" onclick="unpinChat()" disabled>핀 내리기</button>
     </div>
+    <div class="answer-toolbar">
+      <input type="text" id="chat-search" placeholder="채팅 내용·닉네임 검색">
+    </div>
     <div class="chat-feed" id="chat-feed">
       <div class="empty-hint">아직 채팅이 없습니다</div>
     </div>
@@ -784,6 +787,12 @@
     renderAnswers();
   });
 
+  let chatSearchKeyword = '';
+  document.getElementById('chat-search').addEventListener('input', (e) => {
+    chatSearchKeyword = e.target.value.trim().toLowerCase();
+    renderChatFeed();
+  });
+
   function renderAnswers() {
     const list = document.getElementById('answer-list');
     let filtered = answerItems;
@@ -900,9 +909,20 @@
       feed.innerHTML = '<div class="empty-hint">아직 채팅이 없습니다</div>';
       return;
     }
-    const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10;
+    // 검색어가 있으면 닉네임·본문에 포함된 것만
+    const kw = chatSearchKeyword;
+    const items = kw
+      ? chatFeedItems.filter(m => (m.text || '').toLowerCase().includes(kw) || (m.nickname || '').toLowerCase().includes(kw))
+      : chatFeedItems;
+    if (items.length === 0) {
+      feed.innerHTML = '<div class="empty-hint">검색 결과가 없습니다</div>';
+      return;
+    }
+    // 맨 아래에 있을 때만 새 채팅을 따라간다. 위로 스크롤해 읽는 중이거나 검색 중이면 위치 유지.
+    const atBottom = !kw && feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10;
+    const prevTop = feed.scrollTop;
     feed.innerHTML = '';
-    chatFeedItems.forEach((m) => {
+    items.forEach((m) => {
       const item = document.createElement('div');
       item.className = 'chat-item' + (pinnedChatMsg && pinnedChatMsg.id === m.id ? ' pinned' : '');
       item.title = 'LED에 핀 고정';
@@ -917,7 +937,8 @@
       item.onclick = () => pinChat(m);
       feed.appendChild(item);
     });
-    if (atBottom) feed.scrollTop = feed.scrollHeight; // 새 채팅 따라가기
+    // 맨 아래면 최신으로 따라가고, 위로 스크롤 중이면 재렌더 전 위치를 복원(제작진이 상위 글을 찾을 수 있게)
+    feed.scrollTop = atBottom ? feed.scrollHeight : prevTop;
   }
 
   function toggleChatFullscreen() {
