@@ -270,3 +270,6 @@
   - **버그2 — 재시작 시 사라짐**: 서버 메모리에만 있어서. **해결: server.js가 `chat-app/presets.json` 파일에 저장/로드(loadPresets/persistPresets). setPresets마다 파일 기록 → 재시작/슬립복귀 시 복원.** `.gitignore`에 presets.json 추가(런타임 데이터, 커밋 금지).
   - **⚠️ Render 한계**: 파일은 **재배포(git push) 시엔 초기화됨**(Render는 배포마다 새 파일시스템). 즉 단순 재시작·슬립복귀엔 유지되지만, 코드 배포하면 프리셋도 사라짐. 완전 영속(재배포에도 유지)은 외부 DB(Supabase/MongoDB Atlas/Upstash 등)나 Render 유료 디스크 필요 — 미적용, 필요 시 별도 작업.
   - 검증: B 삭제→A·새접속자·파일 모두 0개(안 되살아남), 서버 재시작→파일서 2개 복원, 실제 admin UI 삭제→2개만 남음 확인.
+- 2026-09-28: **운영진(/host) 삭제 버튼 개선** (host.html) — 말풍선 위에 겹쳐 있던 작은 `✕` 아이콘(absolute, 30×30)이 누르기 어렵고 내용을 가리던 문제.
+  - `.msg-group`을 가로 flex(row, align-items center, gap 8px)로 바꿔 **삭제 버튼을 말풍선 오른쪽에 나란히 배치**.
+  - 버튼 텍스트 `✕` → **"삭제"**, `.host-del`은 padding 8px 14px·radius 10px·13px/700, flex-shrink 0, 반투명 opacity 제거(누를 때 --warn 배경+흰 글씨 유지).

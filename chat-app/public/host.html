@@ -499,8 +499,9 @@
 
     .msg-group {
       display: flex;
-      flex-direction: column;
-      position: relative;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
       margin-bottom: 8px;
     }
 
@@ -526,14 +527,14 @@
     .msg-bubble.operator .msg-text { color: #fff; }
     /* 운영진 전용: 각 메시지 삭제 버튼 */
     .host-del {
-      position: absolute; top: 2px; right: 2px;
-      width: 30px; height: 30px;
-      border: none; border-radius: 8px;
+      flex-shrink: 0;
+      padding: 8px 14px;
+      border: none; border-radius: 10px;
       background: rgba(255, 59, 48, 0.12); color: var(--warn);
-      font-size: 15px; font-weight: 700; line-height: 1;
-      cursor: pointer; opacity: 0.75;
+      font-size: 13px; font-weight: 700; line-height: 1;
+      cursor: pointer;
     }
-    .host-del:active { background: var(--warn); color: #fff; opacity: 1; }
+    .host-del:active { background: var(--warn); color: #fff; }
 
     .msg-nickname {
       font-size: 11px;
@@ -1193,7 +1194,7 @@
     if (msg.id != null) {
       const del = document.createElement('button');
       del.className = 'host-del';
-      del.textContent = '✕';
+      del.textContent = '삭제';
       del.title = '이 채팅 삭제';
       del.onclick = () => {
         if (!confirm('이 채팅을 모든 화면에서 삭제할까요?\n\n' + msg.nickname + ': ' + msg.text)) return;
