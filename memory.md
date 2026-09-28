@@ -273,3 +273,6 @@
 - 2026-09-28: **운영진(/host) 삭제 버튼 개선** (host.html) — 말풍선 위에 겹쳐 있던 작은 `✕` 아이콘(absolute, 30×30)이 누르기 어렵고 내용을 가리던 문제.
   - `.msg-group`을 가로 flex(row, align-items center, gap 8px)로 바꿔 **삭제 버튼을 말풍선 오른쪽에 나란히 배치**.
   - 버튼 텍스트 `✕` → **"삭제"**, `.host-del`은 padding 8px 14px·radius 10px·13px/700, flex-shrink 0, 반투명 opacity 제거(누를 때 --warn 배경+흰 글씨 유지).
+- 2026-09-28: **GitHub push를 HTTPS → SSH로 전환**. HTTPS+토큰 방식은 macOS 키체인 저장 실패(`failed to store: -25308`)로 매번 토큰 입력이 필요했음.
+  - 키 `~/.ssh/github_yeomtang`(ed25519, 패스프레이즈 없음) 생성 → GitHub `Yeomtang` 계정에 등록. `~/.ssh/config`에 `Host github.com` 항목 추가.
+  - remote: `git@github.com:Yeomtang/chat-app.git`. 이제 Claude가 입력 없이 push 가능. (push = Render 자동배포이므로 현장 진행 중엔 push 금지 원칙은 동일)
