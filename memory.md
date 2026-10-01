@@ -60,7 +60,7 @@
     - 관객(직장인 테마): `/`  · 관객(공연 테마): `/concert`
     - LED 세로형 2:3: `/led`  · LED 콘서트 가로형 4:3(2496×1872): `/led/concert`
     - 관리자: `/admin`  · 운영진 채팅: `/host`
-    - (구 주소 `https://chat-app-6kl5.onrender.com`도 같은 저장소를 보므로 push 시 함께 배포됨 — 현장에선 모든 화면이 s6y2를 쓰는지 확인)
+    - (구 주소 `https://chat-app-6kl5.onrender.com`은 **2026-10-01 사용 중단 결정** — 코드에서 옛 주소 접속을 s6y2로 301 리다이렉트 + 소켓 차단. 서비스 자체 정지/삭제는 예전 Render 계정 대시보드에서 사용자가 직접 해야 함)
   - ⚠️ Render 무료 플랜은 비활성 시 서버 슬립 → 첫 접속 시 30~60초 지연 가능. **행사 전 미리 접속해 깨워둘 것.** 실사용(12월) 전 유료 플랜 전환 검토 필요
   - ⚠️ 서버 메모리에만 보관되는 상태(채팅·투표·접속자수·질문프리셋)는 재배포/재시작 시 모두 초기화됨. 배포는 현장 진행 중이 아닐 때 하거나 사용자 확인 후.
 - 🔄 **2단계 구현 중**: Yes/No 투표 + 공 애니메이션 + 30초 타이머
@@ -276,3 +276,11 @@
 - 2026-09-28: **GitHub push를 HTTPS → SSH로 전환**. HTTPS+토큰 방식은 macOS 키체인 저장 실패(`failed to store: -25308`)로 매번 토큰 입력이 필요했음.
   - 키 `~/.ssh/github_yeomtang`(ed25519, 패스프레이즈 없음) 생성 → GitHub `Yeomtang` 계정에 등록. `~/.ssh/config`에 `Host github.com` 항목 추가.
   - remote: `git@github.com:Yeomtang/chat-app.git`. 이제 Claude가 입력 없이 push 가능. (push = Render 자동배포이므로 현장 진행 중엔 push 금지 원칙은 동일)
+- 2026-09-30: **보안 점검(서브에이전트 3종: 보안/서버 로직/동시접속 부하) 후 1차 보안 수정** (미커밋·미배포).
+  - **제작진 인증 추가**: 환경변수 `ADMIN_KEY`(관리자 — 모든 `admin:*` + 운영진 권한), `HOST_KEY`(운영진 — `registerOperator`·`admin:deleteMessage`만). 소켓 접속 시 `handshake.auth.key`로 역할 결정(`io.use`), 권한 없으면 무시 + `authError` 1회 전송. **ADMIN_KEY 미설정 시 관리자 기능 잠김** → ⚠️ **Render 환경변수에 ADMIN_KEY(필요시 HOST_KEY) 먼저 등록한 뒤 push할 것**(구 주소 6kl5 서비스도 동일).
+  - 화면 사용법: `/admin?key=키`, `/host?key=키`로 한 번 열면 localStorage(`adminKey`/`hostKey`)에 저장되고 주소창에서 키 제거. 키 없거나 틀리면 prompt로 입력 요청 후 재접속. 관객·LED 화면은 변경 없음.
+  - **서버 다운 방지**: 모든 소켓 핸들러를 try/catch 래퍼(`on`/`onAdmin`/`onStaff`)로 감쌈 + `uncaughtException` 로그. 입력값 `cleanStr`(문자열 아니면 '', 코드포인트 기준 자르기 — 이모지 반쪽 방지)/`asObj`로 정리. 질문 200자·보기 40자·이모지 16자·라벨 30자·투표 시간 5~600초 상한, clientId 64자 이하 문자열만.
+  - **관리자 프리셋 XSS 수정**: admin.html 프리셋 목록을 innerHTML → createElement+textContent, 인라인 onclick → addEventListener. 서버도 `cleanPreset`으로 type 화이트리스트·필드 형식 검증(저장·로드 모두).
+  - 검증: 소켓 통합 테스트 20개 통과(관객/틀린 키 차단, 운영진 사칭 차단, 운영진 권한 범위, 비정상 페이로드 14종 후 서버 생존, 프리셋 정리, 투표·주관식·채팅 회귀) + 헤드리스 Chrome(CDP)으로 키 prompt 흐름·`?key=` 제거·XSS 미실행 확인.
+  - **남은 점검 결과(미수정, 우선순위순)**: ① 관객 닉네임 서버 배정값 강제·clientId 위조(무제한 투표)·`publicState`의 `votes`(clientId→선택) 전체 방송 제거 ② 채팅/투표 서버 속도 제한·슬로우 모드 ③ 끊긴 동안 누른 투표/답변 유실(emitBuffered가 identify보다 먼저 도착 → `io({auth:{clientId}})`로 해결) ④ 투표 시작 중복 클릭 시 표 초기화 ⑤ LED 재접속 시 history 중복·identify 미재전송으로 상태 고착 ⑥ 폰이 안 쓰는 이벤트(reaction/voteUpdate/subjectiveAnswer 등)를 화면 전용 room으로 분리(N² 부하) ⑦ **Render 무료 플랜(0.1CPU 가정)은 200명 버스트도 감당 못 함(LED 지연 26초) → 유료 전환 필요** ⑧ 관리자 피드 전체 재렌더·관객폰 DOM 무제한 ⑨ 전송 ack/중복방지 ⑩ 닉네임 풀 625개 확대 ⑪ 욕설 필터 우회(공백·숫자 삽입).
+- 2026-10-01: **구 주소(chat-app-6kl5) 사용 중단**. 예전 Render 계정 접근 수단(CLI/API 키)이 없어 서비스 정지는 못 하고, server.js에 `LEGACY_HOSTS` 추가 — 옛 호스트로 오는 HTTP는 `CANONICAL_ORIGIN`(s6y2)으로 301(경로·쿼리 유지), 소켓은 `io.use`에서 'moved' 에러로 거부. 다음 push로 옛 서비스에도 이 코드가 배포되면 사실상 폐쇄됨. 옛 계정에서 Suspend/Delete 하면 완전 정리(이후 이 코드는 무해). 통합 테스트 23개 통과(옛 주소 3 + 기존 20).

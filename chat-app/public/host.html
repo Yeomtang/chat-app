@@ -821,10 +821,35 @@
   }
   const clientId = getClientId();
 
+  // ── 제작진 인증 키 ── /host?key=비밀키 로 한 번 열면 이 브라우저에 기억된다(주소창에서는 지움).
+  // 키가 없거나 틀리면 서버가 authError를 보내고, 여기서 키를 다시 물어본다.
+  const STAFF_KEY_STORE = 'hostKey';
+  function loadStaffKey() {
+    const params = new URLSearchParams(location.search);
+    const fromUrl = params.get('key');
+    if (fromUrl) {
+      try { localStorage.setItem(STAFF_KEY_STORE, fromUrl); } catch {}
+      params.delete('key');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      return fromUrl;
+    }
+    try { return localStorage.getItem(STAFF_KEY_STORE) || ''; } catch { return ''; }
+  }
+  let staffKey = loadStaffKey();
+  function askStaffKey(sock) {
+    const k = prompt('운영진 키가 필요합니다. 키를 입력해주세요.');
+    if (!k) return;
+    staffKey = k.trim();
+    try { localStorage.setItem(STAFF_KEY_STORE, staffKey); } catch {}
+    sock.disconnect().connect(); // 새 키로 재접속 (auth는 접속할 때마다 staffKey를 읽음)
+  }
+
   // 운영자 화면: 페이지 로드 시 소켓만 연결(닉네임은 입장 때 확정). 랜덤 닉네임/중복교체 없음.
   function requestNickname() {
     if (!nickSocket) {
-      nickSocket = io();
+      nickSocket = io({ auth: (cb) => cb({ key: staffKey }) });
+      nickSocket.on('authError', () => askStaffKey(nickSocket));
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
         nickSocket.emit('registerOperator'); // 이 소켓의 채팅은 운영자로 표시

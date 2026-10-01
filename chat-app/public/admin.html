@@ -638,7 +638,31 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const socket = io();
+  // ── 제작진 인증 키 ── /admin?key=비밀키 로 한 번 열면 이 브라우저에 기억된다(주소창에서는 지움).
+  // 키가 없거나 틀리면 서버가 authError를 보내고, 여기서 키를 다시 물어본다.
+  const STAFF_KEY_STORE = 'adminKey';
+  function loadStaffKey() {
+    const params = new URLSearchParams(location.search);
+    const fromUrl = params.get('key');
+    if (fromUrl) {
+      try { localStorage.setItem(STAFF_KEY_STORE, fromUrl); } catch {}
+      params.delete('key');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      return fromUrl;
+    }
+    try { return localStorage.getItem(STAFF_KEY_STORE) || ''; } catch { return ''; }
+  }
+  let staffKey = loadStaffKey();
+  function askStaffKey(sock) {
+    const k = prompt('관리자 키가 필요합니다. 키를 입력해주세요.');
+    if (!k) return;
+    staffKey = k.trim();
+    try { localStorage.setItem(STAFF_KEY_STORE, staffKey); } catch {}
+    sock.disconnect().connect(); // 새 키로 재접속 (auth는 접속할 때마다 staffKey를 읽음)
+  }
+  const socket = io({ auth: (cb) => cb({ key: staffKey }) });
+  socket.on('authError', () => askStaffKey(socket));
   // 질문 사전 등록 목록 — 서버에서 받아 모든 관리자 PC가 공유 (아래 socket.on('presets'))
   let presets = [];
   let currentState = null;
@@ -1091,19 +1115,26 @@
       item.className = 'preset-item';
       const t = TAG[p.type] || TAG.yesno;
       let detail = '';
-      if (p.type === 'choice' && p.options) detail = p.options.join(' / ');
-      else if (p.type === 'emoji' && p.emojis) detail = p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ');
+      if (p.type === 'choice' && Array.isArray(p.options)) detail = p.options.join(' / ');
+      else if (p.type === 'emoji' && Array.isArray(p.emojis)) detail = p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ');
       else if (p.type === 'subjective' && p.maxLen) detail = `${p.maxLen}자 이내`;
-      item.innerHTML = `
-        <div class="preset-main">
-          <span class="preset-tag ${t[0]}">${t[1]}</span><span class="preset-q">${i + 1}. ${p.text}</span>
-          ${detail ? `<span class="preset-detail">${detail}</span>` : ''}
-        </div>
-        <div class="preset-actions">
-          <button onclick="runPreset(${i})">실행</button>
-          <button class="remove-btn" onclick="removePreset(${i})">✕</button>
-        </div>
-      `;
+      // 프리셋 문구는 사용자 입력이므로 innerHTML이 아닌 textContent로만 넣는다(XSS 방지)
+      const el = (tag, cls, text) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text != null) e.textContent = text;
+        return e;
+      };
+      const main = el('div', 'preset-main');
+      main.append(el('span', `preset-tag ${t[0]}`, t[1]), el('span', 'preset-q', `${i + 1}. ${p.text}`));
+      if (detail) main.append(el('span', 'preset-detail', detail));
+      const actions = el('div', 'preset-actions');
+      const runBtn = el('button', '', '실행');
+      runBtn.addEventListener('click', () => runPreset(i));
+      const removeBtn = el('button', 'remove-btn', '✕');
+      removeBtn.addEventListener('click', () => removePreset(i));
+      actions.append(runBtn, removeBtn);
+      item.append(main, actions);
       list.appendChild(item);
     });
   }
