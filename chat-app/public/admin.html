@@ -886,6 +886,13 @@
     renderChatFeed();
   });
 
+  // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 — 목록은 한 번만 다시 그린다
+  socket.on('chatBatch', (list) => {
+    chatFeedItems.push(...list);
+    if (chatFeedItems.length > MAX_FEED) chatFeedItems.splice(0, chatFeedItems.length - MAX_FEED);
+    renderChatFeed();
+  });
+
   // 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌림 (리허설 뒤 본 행사 전)
   function resetAudienceStats() {
     if (!confirm('최고 동시 접속 기록을 초기화할까요?')) return;

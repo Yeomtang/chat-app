@@ -103,7 +103,7 @@ function broadcastAudience() {
   if (audienceBroadcastTimer) return;
   audienceBroadcastTimer = setTimeout(() => {
     audienceBroadcastTimer = null;
-    io.emit('audienceStats', audienceStats());
+    io.to(ADMINS).emit('audienceStats', audienceStats());
   }, 250);
 }
 
@@ -333,7 +333,6 @@ function publicState(forClientId) {
     votingEndTime: appState.votingEndTime,
     voteType: appState.voteType,
     voteOptions: appState.voteOptions,
-    votes: appState.votes, // clientId -> 인덱스 (LED/관리자가 전체 분포를 그리는 데 필요)
     counts: computeCounts(),
     myVote, // 내가 고른 보기 인덱스(0-based) 또는 null
     answerCount: Object.keys(appState.answers).length,
@@ -347,11 +346,46 @@ function publicState(forClientId) {
   };
 }
 
+// ── 전송 대상 분리 ── 관객 폰이 쓰지 않는 이벤트(리액션·투표 중간 집계·주관식 답변 등)는
+// 화면(LED·관리자·운영진)에만 보낸다. 관객 수만큼 곱해지는 전송량(N²)을 줄이는 핵심.
+const SCREENS = 'screens'; // LED + 관리자 + 운영진
+const ADMINS = 'admins';   // 관리자 화면 전용 (프리셋·별표·접속 통계)
+
+// 채팅 묶음 전송 — 한가할 땐 즉시 'chat'으로 보내고, 그 뒤 CHAT_BATCH_MS 안에 몰려 온 메시지는
+// 'chatBatch' 한 번으로 묶어 보낸다. 평소 지연은 0, 폭주 시 소켓당 전송 횟수가 크게 준다.
+const CHAT_BATCH_MS = 100;
+let chatQueue = [];
+let chatWindowTimer = null;
+function broadcastChat(message) {
+  if (chatWindowTimer) { chatQueue.push(message); return; }
+  io.emit('chat', message);
+  chatWindowTimer = setTimeout(flushChatQueue, CHAT_BATCH_MS);
+}
+function flushChatQueue() {
+  if (!chatQueue.length) { chatWindowTimer = null; return; }
+  const batch = chatQueue;
+  chatQueue = [];
+  if (batch.length === 1) io.emit('chat', batch[0]);
+  else io.emit('chatBatch', batch);
+  chatWindowTimer = setTimeout(flushChatQueue, CHAT_BATCH_MS);
+}
+
+// 투표 집계는 표마다 보내지 않고 VOTE_UPDATE_MS마다 최신 집계만 화면에 보낸다
+const VOTE_UPDATE_MS = 200;
+let voteUpdateTimer = null;
+function scheduleVoteUpdate() {
+  if (voteUpdateTimer) return;
+  voteUpdateTimer = setTimeout(() => {
+    voteUpdateTimer = null;
+    if (appState.mode === 'voting') io.to(SCREENS).emit('voteUpdate', { counts: computeCounts() });
+  }, VOTE_UPDATE_MS);
+}
+
 // 질문 모드 진입/복귀 시 채팅 핀 해제 (오래된 핀이 남는 것 방지)
 function clearPinnedChat() {
   if (!appState.pinnedChat) return;
   appState.pinnedChat = null;
-  io.emit('chatPinned', { message: null });
+  io.to(SCREENS).emit('chatPinned', { message: null });
 }
 
 // options: 보기 라벨 배열, type: 'yesno' | 'choice'
@@ -452,16 +486,23 @@ function returnToChat() {
 }
 
 // 접속 시 인증 키로 역할 결정 — 관객은 키 없이 그대로 접속(audience)
+function isValidClientId(v) { return typeof v === 'string' && v.length > 0 && v.length <= 64; }
+
 io.use((socket, next) => {
   if (isLegacyHost(socket.handshake.headers.host)) return next(new Error('moved')); // 옛 주소 소켓 접속 차단
-  socket.data.role = roleForKey(asObj(socket.handshake.auth).key);
+  const auth = asObj(socket.handshake.auth);
+  socket.data.role = roleForKey(auth.key);
+  // clientId를 접속 시점에 받는다 — 끊긴 동안 쌓인 투표/답변이 identify보다 먼저 도착해 버려지는 문제 방지
+  socket.data.clientId = isValidClientId(auth.clientId) ? auth.clientId : null;
   next();
 });
 
 io.on('connection', (socket) => {
   console.log('연결됨:', socket.id);
-  socket.clientId = null;
+  socket.clientId = socket.data.clientId;
   const role = socket.data.role;
+  if (role === 'admin') socket.join([SCREENS, ADMINS]);
+  else if (role === 'host') socket.join(SCREENS);
 
   // 핸들러 예외가 서버 전체를 죽이지 않도록 모든 이벤트를 감싼다
   const on = (event, fn) => socket.on(event, (...args) => {
@@ -485,10 +526,14 @@ io.on('connection', (socket) => {
 
   // 클라이언트 식별 (localStorage 기반 영구 ID) — 투표 중복/재접속 처리용
   on('identify', (clientId) => {
-    if (typeof clientId !== 'string' || !clientId || clientId.length > 64) return;
-    socket.clientId = clientId;
-    socket.emit('state', publicState(clientId));
+    if (!isValidClientId(clientId)) return;
+    // 한 소켓의 clientId는 처음 정해진 값으로 고정 — 바꿔 가며 여러 번 투표하는 것 방지
+    if (!socket.clientId) socket.clientId = clientId;
+    socket.emit('state', publicState(socket.clientId));
   });
+
+  // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
+  on('registerScreen', () => socket.join(SCREENS));
 
   // 닉네임 요청 시 서버에서 고유 닉네임 배정 (레거시, 현재는 클라이언트가 즉시 로컬 배정)
   on('requestNickname', (theme) => {
@@ -509,19 +554,26 @@ io.on('connection', (socket) => {
       if (audienceSockets.size > audiencePeak) audiencePeak = audienceSockets.size;
       broadcastAudience();
     }
-    if (isNicknameTaken(name, socket.id)) {
-      let fresh;
-      let guard = 0;
-      do {
-        fresh = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
-        guard++;
-      } while (isNicknameTaken(fresh, socket.id) && guard < poolSize(theme));
-      activeNicknames.set(socket.id, fresh);
-      socket.emit('nicknameReassigned', fresh);
-    } else {
-      activeNicknames.set(socket.id, name);
-    }
+    socket.nickTheme = theme;
+    claimFor(cleanStr(name, MAX_NICKNAME_LENGTH), theme);
   });
+
+  // 닉네임 등록(동시 중복이면 같은 테마의 안 쓰는 닉네임으로 교체해 알려줌) → 확정된 닉네임 반환
+  function claimFor(name, theme) {
+    if (name && !isNicknameTaken(name, socket.id)) {
+      activeNicknames.set(socket.id, name);
+      return name;
+    }
+    let fresh;
+    let guard = 0;
+    do {
+      fresh = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
+      guard++;
+    } while (isNicknameTaken(fresh, socket.id) && guard < poolSize(theme));
+    activeNicknames.set(socket.id, fresh);
+    socket.emit('nicknameReassigned', fresh);
+    return fresh;
+  }
 
   // 운영자(진행자/제작진) 등록 — /host 화면에서 호출. 이 소켓의 채팅은 isOperator로 표시된다.
   // 관객 집계(claimNickname)와 무관 → 운영자는 '현재 접속자' 수에 포함되지 않는다.
@@ -540,8 +592,19 @@ io.on('connection', (socket) => {
     const d = asObj(data);
     const raw = cleanStr(d.text, MAX_CHAT_LENGTH);
     if (!raw) return;
+    // 도배 제한 (운영진 제외): 5초에 5건 — 정상 입력 속도로는 걸리지 않는 수준
+    if (!socket.isOperator) {
+      const now = Date.now();
+      socket._chatTimes = (socket._chatTimes || []).filter(t => now - t < 5000);
+      if (socket._chatTimes.length >= 5) return;
+      socket._chatTimes.push(now);
+    }
     const text = maskProfanity(raw); // 비속어 * 처리
-    const nickname = cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
+    // 운영진은 직접 입력한 이름, 관객은 서버에 등록된 닉네임만 사용(다른 관객 사칭 방지).
+    // 등록 전(재접속 직후 등)이면 보낸 이름으로 즉시 등록 — 중복이면 교체된다.
+    const nickname = socket.isOperator
+      ? cleanStr(d.nickname, MAX_NICKNAME_LENGTH)
+      : (activeNicknames.get(socket.id) || claimFor(cleanStr(d.nickname, MAX_NICKNAME_LENGTH), socket.nickTheme || DEFAULT_THEME));
     const message = {
       id: `${Date.now()}-${msgSeq++}`, // 고유 id (삭제/핀 대상 식별)
       nickname,
@@ -551,7 +614,7 @@ io.on('connection', (socket) => {
     };
     recentMessages.push(message);
     if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
-    io.emit('chat', message);
+    broadcastChat(message);
   });
 
   // 리액션 (하트/붐업/붐따) — LED 화면에 떠오르는 이모지 효과
@@ -566,7 +629,7 @@ io.on('connection', (socket) => {
     socket._reactionTimes = socket._reactionTimes.filter(t => now - t < 3000);
     if (socket._reactionTimes.length >= 10) return;
     socket._reactionTimes.push(now);
-    io.emit('reaction', { type });
+    io.to(SCREENS).emit('reaction', { type });
   });
 
   // 투표 (choice = 보기 인덱스 0-based)
@@ -577,11 +640,7 @@ io.on('connection', (socket) => {
     if (!socket.clientId) return;
 
     appState.votes[socket.clientId] = idx;
-    io.emit('voteUpdate', {
-      clientId: socket.clientId,
-      choice: idx,
-      counts: computeCounts(),
-    });
+    scheduleVoteUpdate();
   });
 
   // 이모지 반응 질문: 관객이 이모지 선택 → LED에 떠오름. 여러 번 탭 가능(스팸 제한).
@@ -594,7 +653,7 @@ io.on('connection', (socket) => {
     socket._emojiTimes = socket._emojiTimes.filter(t => now - t < 3000);
     if (socket._emojiTimes.length >= 10) return; // 3초에 10회 상한
     socket._emojiTimes.push(now);
-    io.emit('emojiFloat', { emoji });
+    io.to(SCREENS).emit('emojiFloat', { emoji });
   });
 
   // 주관식 답변 (1인 1회, 20자 제한)
@@ -610,7 +669,7 @@ io.on('connection', (socket) => {
     const entry = { id: appState.answerList.length + 1, text };
     appState.answerList.push(entry);
     // LED 흘려보내기 + 관리자 목록/카운트용 (익명: 텍스트만 공개)
-    io.emit('subjectiveAnswer', {
+    io.to(SCREENS).emit('subjectiveAnswer', {
       id: entry.id,
       text,
       answerCount: Object.keys(appState.answers).length,
@@ -620,6 +679,7 @@ io.on('connection', (socket) => {
 
   // ── 관리자(제작진) 전용 이벤트 ──
   onAdmin('admin:startVoting', (data) => {
+    if (appState.mode === 'voting') return; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
     const d = asObj(data);
     const question = cleanStr(d.question, MAX_QUESTION_LENGTH);
     const duration = Math.min(MAX_VOTING_SECONDS, Math.max(5, parseInt(d.duration, 10) || 30));
@@ -640,6 +700,7 @@ io.on('connection', (socket) => {
   });
 
   onAdmin('admin:startSubjective', (data) => {
+    if (appState.mode === 'subjective') return; // 접수 중 재시작 시 답변 초기화 방지
     const question = cleanStr(asObj(data).question, MAX_QUESTION_LENGTH);
     if (!question) return;
     let maxLen = parseInt(asObj(data).maxLen, 10);
@@ -670,7 +731,7 @@ io.on('connection', (socket) => {
     if (!text) return;
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
     appState.pinnedChat = { id, nickname, text };
-    io.emit('chatPinned', { message: appState.pinnedChat });
+    io.to(SCREENS).emit('chatPinned', { message: appState.pinnedChat });
   });
 
   onAdmin('admin:unpinChat', () => {
@@ -682,6 +743,7 @@ io.on('connection', (socket) => {
     if (typeof id !== 'string') return;
     const idx = recentMessages.findIndex(m => m.id === id);
     if (idx !== -1) recentMessages.splice(idx, 1);
+    chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
     if (appState.pinnedChat && appState.pinnedChat.id === id) clearPinnedChat(); // 핀된 걸 지우면 핀도 해제
     io.emit('chatDeleted', id);
   });
@@ -696,7 +758,7 @@ io.on('connection', (socket) => {
       .slice(0, 100) // 과도한 등록 방지
       .map(cleanPreset).filter(Boolean); // 형식 검증 (문자열·길이·유형 화이트리스트)
     persistPresets(); // 파일에 저장 → 재시작에도 유지 (삭제로 빈 목록이어도 그대로 저장 = 삭제 확정)
-    socket.broadcast.emit('presets', questionPresets); // 나를 제외한 다른 관리자에게 반영
+    socket.to(ADMINS).emit('presets', questionPresets); // 나를 제외한 다른 관리자에게 반영
   });
 
   // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.
@@ -705,11 +767,12 @@ io.on('connection', (socket) => {
   // 현재 접속자는 실제 열려 있는 소켓 수라 임의로 못 지운다(peak만 리셋).
   onAdmin('admin:resetAudienceStats', () => {
     audiencePeak = audienceSockets.size;
-    io.emit('audienceStats', audienceStats());
+    io.to(ADMINS).emit('audienceStats', audienceStats());
   });
 
   onAdmin('admin:clearChat', () => {
     recentMessages.length = 0;
+    chatQueue = [];
     clearPinnedChat(); // 지워진 메시지가 LED에 핀으로 남아 있으면 안 됨
     io.emit('chatCleared');
   });
@@ -732,7 +795,7 @@ io.on('connection', (socket) => {
     const starred = idx === -1;
     if (starred) appState.starredAnswers.push(id);
     else appState.starredAnswers.splice(idx, 1);
-    io.emit('answerStarred', { id, starred });
+    io.to(ADMINS).emit('answerStarred', { id, starred });
   });
 
   // 관리자: 답변 픽 → LED 스포트라이트로 크게 표시 (접수 중/마감 후 모두 가능)
@@ -742,7 +805,7 @@ io.on('connection', (socket) => {
     const entry = appState.answerList.find(a => a.id === id);
     if (!entry) return;
     if (!appState.pickedAnswers.includes(id)) appState.pickedAnswers.push(id);
-    io.emit('answerPicked', { id: entry.id, text: entry.text });
+    io.to(SCREENS).emit('answerPicked', { id: entry.id, text: entry.text });
   });
 
   onAdmin('admin:returnToChat', () => {
@@ -756,12 +819,12 @@ io.on('connection', (socket) => {
   // LED 화면의 채팅 표시만 멈춤/재생. 관객 쪽 채팅 송수신은 계속 정상 동작.
   onAdmin('admin:pauseChat', () => {
     appState.chatPaused = true;
-    io.emit('chatPauseChange', { chatPaused: true });
+    io.to(SCREENS).emit('chatPauseChange', { chatPaused: true });
   });
 
   onAdmin('admin:resumeChat', () => {
     appState.chatPaused = false;
-    io.emit('chatPauseChange', { chatPaused: false });
+    io.to(SCREENS).emit('chatPauseChange', { chatPaused: false });
   });
 
   socket.on('disconnect', () => {

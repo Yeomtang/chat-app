@@ -586,12 +586,20 @@
   const socket = io();
 
   socket.on('history', (history) => {
+    // 재접속 때도 history가 다시 오므로 기존 화면·버퍼를 비우고 다시 그린다(중복 표시 방지)
+    messages.length = 0;
+    container.innerHTML = '';
     const recent = history.slice(-MAX_VISIBLE);
     recent.forEach(addMessage);
   });
 
   socket.on('chat', (msg) => {
     addMessage(msg);
+  });
+
+  // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
+  socket.on('chatBatch', (list) => {
+    list.forEach(addMessage);
   });
 
   // 관리자가 채팅을 초기화하면 화면과 버퍼를 함께 비운다
@@ -1345,7 +1353,13 @@
     showChatPin(data && data.message);
   });
 
-  socket.emit('identify', 'led-screen-' + Math.random().toString(36).slice(2));
+  // 접속(재접속 포함)할 때마다 상태를 다시 받고 화면 전용 이벤트를 구독한다
+  // (최초 1회만 보내면 서버 재시작·네트워크 끊김 뒤 옛 모드에 고착됨)
+  const ledScreenId = 'led-screen-' + Math.random().toString(36).slice(2);
+  socket.on('connect', () => {
+    socket.emit('identify', ledScreenId);
+    socket.emit('registerScreen');
+  });
 </script>
 </body>
 </html>

@@ -848,7 +848,7 @@
   // 운영자 화면: 페이지 로드 시 소켓만 연결(닉네임은 입장 때 확정). 랜덤 닉네임/중복교체 없음.
   function requestNickname() {
     if (!nickSocket) {
-      nickSocket = io({ auth: (cb) => cb({ key: staffKey }) });
+      nickSocket = io({ auth: (cb) => cb({ key: staffKey, clientId }) });
       nickSocket.on('authError', () => askStaffKey(nickSocket));
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
@@ -866,6 +866,13 @@
         const box = document.getElementById('messages');
         const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
         addMessage(msg);
+        if (atBottom) scrollToBottom();
+      });
+      // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
+      nickSocket.on('chatBatch', (list) => {
+        const box = document.getElementById('messages');
+        const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+        list.forEach(addMessage);
         if (atBottom) scrollToBottom();
       });
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
