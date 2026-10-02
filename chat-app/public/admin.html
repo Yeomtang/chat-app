@@ -334,6 +334,7 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .title-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
     /* 카드 헤더의 전체화면/닫기 버튼 — 모든 카드 공용 (디자인 일관성) */
     .expand-btn {
@@ -542,7 +543,16 @@
 
   <!-- 질문 미리 등록 -->
   <div class="card">
-    <h2>질문 준비 — [실행]을 누르면 시작됩니다</h2>
+    <h2 class="card-title-row">
+      <span>질문 준비 — [실행]을 누르면 시작됩니다</span>
+      <span class="title-actions">
+        <button class="expand-btn" onclick="exportPresets()">내보내기</button>
+        <button class="expand-btn" onclick="document.getElementById('preset-file').click()">불러오기</button>
+      </span>
+    </h2>
+    <p class="note" style="margin-bottom: 10px;">배포·재시작하면 등록한 질문이 사라질 수 있습니다. 준비가 끝나면 [내보내기]로 파일을 받아 두세요.</p>
+    <input type="file" id="preset-file" accept="application/json,.json" style="display:none" onchange="importPresets(this)">
+    <button class="btn btn-secondary" id="preset-restore-btn" style="display:none; margin: 0 0 10px;" onclick="restoreLocalPresets()"></button>
     <div class="preset-list" id="preset-list">
       <div class="empty-hint">등록된 질문이 없습니다</div>
     </div>
@@ -677,6 +687,7 @@
   socket.on('presets', (list) => {
     // 서버가 유일한 소스. 빈 목록이면 그대로 비운다(삭제가 되살아나지 않도록 로컬 복원 안 함).
     presets = Array.isArray(list) ? list : [];
+    backupPresetsLocally();
     renderPresets();
   });
 
@@ -1201,6 +1212,72 @@
   // 프리셋은 서버가 단일 소스(파일 저장). 로컬 백업을 쓰면 삭제가 되살아나므로 쓰지 않는다.
   function savePresets() {
     socket.emit('admin:setPresets', presets);
+    backupPresetsLocally();
+  }
+
+  // ── 프리셋 백업 ──
+  // 서버 파일은 재배포 때 초기화되므로, 이 브라우저에 마지막 목록을 보관해 두고
+  // 서버 목록이 비어 있을 때 [복원] 버튼으로 직접 되살린다(자동 복원은 삭제가 되살아나는 문제로 하지 않음).
+  const PRESET_BACKUP_KEY = 'presetBackup';
+  function backupPresetsLocally() {
+    if (presets.length) {
+      try { localStorage.setItem(PRESET_BACKUP_KEY, JSON.stringify({ savedAt: Date.now(), list: presets })); } catch {}
+    }
+    updateRestoreButton();
+  }
+  function readLocalBackup() {
+    try {
+      const b = JSON.parse(localStorage.getItem(PRESET_BACKUP_KEY) || 'null');
+      return b && Array.isArray(b.list) && b.list.length ? b : null;
+    } catch { return null; }
+  }
+  function updateRestoreButton() {
+    const btn = document.getElementById('preset-restore-btn');
+    const b = presets.length === 0 ? readLocalBackup() : null;
+    btn.style.display = b ? 'block' : 'none';
+    if (b) {
+      const when = new Date(b.savedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      btn.textContent = `이 브라우저에 저장된 질문 ${b.list.length}개 복원 (${when})`;
+    }
+  }
+  function restoreLocalPresets() {
+    const b = readLocalBackup();
+    if (!b) return;
+    presets = b.list.slice();
+    savePresets();
+    renderPresets();
+  }
+
+  // 파일로 내보내기/불러오기 — 다른 PC로 옮기거나 재배포 대비 보관용
+  function exportPresets() {
+    if (!presets.length) { alert('내보낼 질문이 없습니다'); return; }
+    const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), presets }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    a.href = URL.createObjectURL(blob);
+    a.download = `질문프리셋-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function importPresets(inputEl) {
+    const file = inputEl.files && inputEl.files[0];
+    inputEl.value = ''; // 같은 파일을 다시 고를 수 있게
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let list;
+      try {
+        const data = JSON.parse(reader.result);
+        list = Array.isArray(data) ? data : data && data.presets;
+      } catch { list = null; }
+      if (!Array.isArray(list) || !list.length) { alert('질문 프리셋 파일이 아니거나 비어 있습니다'); return; }
+      if (presets.length && !confirm(`지금 목록(${presets.length}개)을 파일의 질문 ${list.length}개로 바꿉니다. 계속할까요?`)) return;
+      presets = list.filter(p => p && typeof p.text === 'string'); // 서버도 형식을 한 번 더 검증한다
+      savePresets();
+      renderPresets();
+    };
+    reader.readAsText(file);
   }
 
   renderPresets();

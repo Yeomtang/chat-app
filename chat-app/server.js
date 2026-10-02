@@ -11,45 +11,10 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// ── 닉네임 풀 (테마별 25 × 25 = 625개) ──
-// chat.html의 THEMES와 같은 단어를 써야 한다. 닉네임은 클라이언트가 로컬에서 즉시 고르지만,
-// 동시 접속자와 겹치면 서버가 교체해주는데 이때 테마가 다르면 엉뚱한 닉네임이 내려간다.
-const NICKNAME_THEMES = {
-  office: {
-    prefixes: [
-      '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
-      '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
-      '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
-      '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
-      '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
-    ],
-    suffixes: [
-      '사원', '대리', '과장', '차장', '부장',
-      '팀장', '인턴', '계약직', '신입', '3년차',
-      '5년차', '10년차', '직장인', '사무직', '영업사원',
-      '기획자', '디자이너', '개발자', '마케터', '경리',
-      '총무', '프리랜서', '워커', '비서', '실장',
-    ],
-  },
-  concert: {
-    // 무료·공개 공연 기준. 티켓팅/굿즈/투어(첫공·막공·올콘)/응원봉·플카 같은
-    // 유료 공연·아이돌 팬덤 전제 표현은 쓰지 않는다 (어떤 행사에서든 재사용 가능하도록).
-    prefixes: [
-      '소문듣고온', '앞자리사수한', '광대승천한', '앙코르기다리는', '목풀고온',
-      '앞사람머리피하는', '친구따라온', '퇴근하고달려온', '지방에서온', '리허설부터온',
-      '심장뛰는', '눈물참는', '소리지르는', '박수치는', '세트리스트외운',
-      '오늘밤설레는', '두손모은', '무대만보는', '줄서서기다린', '숨죽인',
-      '인트로부터운', '노래따라하는', '발끝세운', '조명바라보는', '한곡도못참는',
-    ],
-    suffixes: [
-      '관객', '팬', '덕후', '직관러', '떼창러',
-      '관람객', '리스너', '애청자', '1열관객', '2층관객',
-      '뒷줄관객', '첫관람객', '감상러', '입장객', '박수러',
-      '늦덕', '입덕러', '고인물', '뉴비', '단골',
-      '동행인', '혼콘러', '최애러', '응원러', '목청러',
-    ],
-  },
-};
+// ── 닉네임 풀 (테마별 앞말 50 × 뒷말 40 = 2,000개) ──
+// 단어 목록은 관객 화면(chat.html)과 같은 파일(public/nickname-themes.js)을 함께 쓴다.
+// 닉네임은 클라이언트가 로컬에서 즉시 고르지만, 동시 접속자와 겹치면 서버가 같은 테마에서 교체해준다.
+const NICKNAME_THEMES = require('./public/nickname-themes.js');
 const DEFAULT_THEME = 'office';
 
 function shuffle(arr) {
@@ -70,7 +35,7 @@ for (const [key, t] of Object.entries(NICKNAME_THEMES)) {
 function assignNickname(theme) {
   const pool = nicknamePools[theme] || nicknamePools[DEFAULT_THEME];
   if (pool.index >= pool.list.length) {
-    // 모두 소진되면 재셔플 (실질적으로 500명 이하에서는 발생 안 함)
+    // 모두 소진되면 재셔플 (테마당 2,000개라 1000명 규모에선 발생 안 함)
     pool.list = shuffle(pool.list);
     pool.index = 0;
   }
@@ -587,16 +552,19 @@ io.on('connection', (socket) => {
   socket.emit('history', recentMessages);
 
   // 채팅 메시지 (채팅 모드일 때만 허용)
-  on('chat', (data) => {
-    if (appState.mode !== 'chat') return;
+  // ack(선택): 보낸 사람에게 결과를 알려준다 — { ok: true } 또는 { ok: false, reason: 'mode'|'rate'|'empty' }
+  // (예전 화면은 ack 없이 보내므로 함수일 때만 호출)
+  on('chat', (data, ack) => {
+    const reply = (r) => { if (typeof ack === 'function') ack(r); };
+    if (appState.mode !== 'chat') return reply({ ok: false, reason: 'mode' });
     const d = asObj(data);
     const raw = cleanStr(d.text, MAX_CHAT_LENGTH);
-    if (!raw) return;
+    if (!raw) return reply({ ok: false, reason: 'empty' });
     // 도배 제한 (운영진 제외): 5초에 5건 — 정상 입력 속도로는 걸리지 않는 수준
     if (!socket.isOperator) {
       const now = Date.now();
       socket._chatTimes = (socket._chatTimes || []).filter(t => now - t < 5000);
-      if (socket._chatTimes.length >= 5) return;
+      if (socket._chatTimes.length >= 5) return reply({ ok: false, reason: 'rate' });
       socket._chatTimes.push(now);
     }
     const text = maskProfanity(raw); // 비속어 * 처리
@@ -615,6 +583,7 @@ io.on('connection', (socket) => {
     recentMessages.push(message);
     if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
     broadcastChat(message);
+    reply({ ok: true });
   });
 
   // 리액션 (하트/붐업/붐따) — LED 화면에 떠오르는 이모지 효과

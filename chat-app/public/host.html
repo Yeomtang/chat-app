@@ -614,6 +614,28 @@
     #char-counter.visible { display: block; }
     #char-counter.limit { color: var(--warn); font-weight: 700; }
 
+    /* ── 안내 띠 (연결 상태·전송 안내) ── 입력창 바로 위. 연결 끊김은 계속, 전송 안내는 잠깐 표시 */
+    .notice-bar {
+      display: none;
+      margin: 0 12px 8px;
+      padding: 8px 14px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: var(--surface);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      text-align: center;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      flex-shrink: 0;
+    }
+    .notice-bar.visible {
+      display: block;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+    .notice-bar.warn { background: var(--warn); }
+
     #send-btn {
       width: 34px;
       height: 34px;
@@ -663,6 +685,8 @@
     </div>
 
     <div id="messages"></div>
+
+    <div class="notice-bar" id="notice-bar" role="status" aria-live="polite"></div>
 
     <div id="input-area">
       <button class="react-btn" id="react-heart" onclick="sendReaction('heart')">❤️</button>
@@ -850,6 +874,10 @@
     if (!nickSocket) {
       nickSocket = io({ auth: (cb) => cb({ key: staffKey, clientId }) });
       nickSocket.on('authError', () => askStaffKey(nickSocket));
+
+      // 연결 상태 안내 — 끊기면 입력창 위에 계속 표시, 다시 연결되면 숨김
+      nickSocket.on('disconnect', () => showNotice('연결이 끊겼어요. 다시 연결하는 중…', { sticky: true }));
+      nickSocket.on('connect', hideNotice);
       nickSocket.on('connect', () => {
         nickSocket.emit('identify', clientId);
         nickSocket.emit('registerOperator'); // 이 소켓의 채팅은 운영자로 표시
@@ -1242,12 +1270,49 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
+  // ── 안내 띠 ── 연결 끊김(sticky)은 다시 연결될 때까지 유지, 전송 안내는 3초 뒤 사라짐
+  let noticeTimer = null;
+  function showNotice(text, { warn = false, sticky = false } = {}) {
+    const bar = document.getElementById('notice-bar');
+    if (!sticky && bar.dataset.sticky === '1') return; // 연결 끊김 안내가 우선
+    clearTimeout(noticeTimer);
+    bar.textContent = text;
+    bar.classList.toggle('warn', warn);
+    bar.dataset.sticky = sticky ? '1' : '';
+    bar.classList.remove('visible');
+    void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
+    bar.classList.add('visible');
+    if (!sticky) noticeTimer = setTimeout(hideNotice, 3000);
+  }
+  function hideNotice() {
+    const bar = document.getElementById('notice-bar');
+    clearTimeout(noticeTimer);
+    bar.classList.remove('visible');
+    bar.dataset.sticky = '';
+  }
+
   function sendMessage() {
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text || !socket) return;
 
-    socket.emit('chat', { nickname: currentNickname, text: text.slice(0, 100) });
+    // 연결이 끊긴 동안엔 보내지 않고 입력 내용을 그대로 둔다(안내 띠가 이미 떠 있음)
+    if (!socket.connected) {
+      showNotice('연결이 끊겨 보내지 못했어요. 연결되면 다시 보내주세요.', { warn: true });
+      return;
+    }
+    const sent = text.slice(0, 100);
+    // 서버가 결과를 알려준다 — 거절되면 이유를 안내하고 보내려던 내용을 되살린다
+    socket.timeout(5000).emit('chat', { nickname: currentNickname, text: sent }, (err, res) => {
+      if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
+      if (!res || res.ok || res.reason === 'empty') return;
+      if (res.reason === 'rate') showNotice('너무 빨리 보내고 있어요. 잠시 후 다시 보내주세요.', { warn: true });
+      else if (res.reason === 'mode') showNotice('지금은 질문에 답하는 시간이라 채팅을 보낼 수 없어요.', { warn: true });
+      if (!input.value) { // 그 사이 새로 입력하지 않았다면 되살리기
+        input.value = sent;
+        input.dispatchEvent(new Event('input'));
+      }
+    });
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('send-btn').disabled = true;
