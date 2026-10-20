@@ -211,6 +211,31 @@
       color: #fff;
       font-size: 18px;
       font-weight: 700;
+      transition: background 0.4s, color 0.4s;
+    }
+
+    /* 타이머 마지막 5초: 경고색 + 은은한 맥박(LED 화면과 동일 패턴) */
+    #voting-timer-phone.hot {
+      background: var(--warn);
+      color: #fff;
+      animation: timerPulse 1s ease-in-out infinite;
+    }
+    @keyframes timerPulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50%      { transform: translate(-50%, -50%) scale(1.12); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #voting-timer-phone.hot { animation: none; } /* 색만 바뀌고 맥박은 생략 */
+    }
+
+    /* 투표 피드백: 버튼에서 위로 날아올라 사라지는 작은 공 (WAAPI로 움직이고 끝나면 제거) */
+    .vote-fly {
+      position: fixed;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 60;
     }
 
     #voting-question-phone {
@@ -517,12 +542,18 @@
       max-width: 80%;
       word-break: keep-all;
       overflow-wrap: break-word;
+      transition: background 0.6s ease, color 0.6s ease, box-shadow 0.6s ease;
     }
 
     /* 운영자 메시지 — 네이비 배경으로 구분 */
     .msg-bubble.operator { background: var(--ink); }
     .msg-bubble.operator .msg-nickname { color: rgba(255, 255, 255, 0.7); }
     .msg-bubble.operator .msg-text { color: #fff; }
+
+    /* 내 채팅이 LED에 고정됨 — 말풍선이 잠시 주황으로 물들며 은은하게 빛남 */
+    .msg-bubble.pinned { background: var(--orange); color: #fff; box-shadow: 0 0 0 6px rgba(251, 126, 85, 0.25), 0 6px 18px rgba(30, 30, 66, 0.12); }
+    .msg-bubble.pinned .msg-nickname { color: rgba(255, 255, 255, 0.85); }
+    .msg-bubble.pinned .msg-text { color: #fff; }
 
     .msg-nickname {
       font-size: 12px;
@@ -624,6 +655,46 @@
     }
     .notice-bar.warn { background: var(--warn); }
 
+    /* ── "내 채팅이 고정됐어요" 배너 ── 채팅 화면 위쪽에서 슬라이드 다운, 작성자 폰에만 뜸 */
+    .pin-banner {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 12px;
+      background: var(--ink);
+      color: var(--surface);
+      border-radius: 14px;
+      padding: 12px 14px;
+      text-align: center;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.4;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      transform: translateY(-140%);
+      transition: transform 0.55s cubic-bezier(0.22, 0.75, 0.25, 1);
+      z-index: 40;
+      box-shadow: var(--shadow-lg);
+    }
+    .pin-banner small {
+      display: block;
+      font-weight: 600;
+      opacity: 0.8;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .pin-banner.show { transform: translateY(0); }
+
+    /* 색종이 조각 (WAAPI로 날리고 끝나면 제거) */
+    .pin-confetti {
+      position: absolute;
+      width: 7px;
+      height: 4px;
+      border-radius: 1px;
+      pointer-events: none;
+      z-index: 39;
+    }
+
     #send-btn {
       width: 34px;
       height: 34px;
@@ -668,6 +739,11 @@
 
 <!-- 채팅 화면 -->
 <div id="chatroom">
+  <!-- 내 채팅이 LED에 고정됐을 때만 작성자 폰에 뜨는 배너 (색종이는 JS가 동적 추가) -->
+  <div class="pin-banner" id="pin-banner" role="status" aria-live="polite">
+    내 채팅이 LED에 고정됐어요!<small>지금 무대 화면을 봐 주세요</small>
+  </div>
+
   <div id="chat-content">
     <div id="chat-header">
       <div class="avatar" id="header-avatar">?</div>
@@ -862,6 +938,8 @@
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
+      // 관리자가 "내 채팅"을 LED에 고정했을 때만 작성자 본인에게 옴 (다른 사람 폰에는 안 옴)
+      nickSocket.on('chatPinnedYou', ({ id }) => showPinnedYou(id));
     } else {
       // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
       nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
@@ -962,7 +1040,8 @@
     const resultReact = document.getElementById('result-react');
     const subjectiveWrap = document.getElementById('subjective-wrap');
 
-    if (state.mode === 'chat') {
+    // chat·idle(대기 화면)·ending(엔딩 슬라이드) — 세 모드 모두 채팅이 열려 있어야 함(서버 CHAT_MODES와 동일)
+    if (state.mode === 'chat' || state.mode === 'idle' || state.mode === 'ending') {
       overlay.classList.remove('active');
       chatContent.classList.remove('blurred');
       resultReact.classList.remove('active');
@@ -995,6 +1074,14 @@
     // 공통: 질문은 항상 표시 (결과에서도 유지)
     questionEl.style.display = 'block';
     questionEl.textContent = state.question || '';
+
+    // 함성 측정 모드는 투표 카드를 그대로 재사용해 안내문만 바꿔 보여준다 (화면은 함성 레벨을 안 받으므로 안내문만)
+    if (state.mode === 'applause') {
+      questionEl.textContent = '지금 박수와 함성을 보내 주세요!';
+    } else if (state.mode === 'applauseResult') {
+      const peak = (state.applause && state.applause.peak) || 0;
+      questionEl.textContent = `함성 지수 ${Math.round(peak * 100)}`;
+    }
 
     // 모드별 요소 표시
     const isVote = state.mode === 'voting' || state.mode === 'result';
@@ -1042,6 +1129,10 @@
     } else if (state.mode === 'emoji') {
       timerEl.style.display = 'none';
       resultReact.classList.remove('active'); // 이모지 모드는 자체 버튼만
+      stopPhoneTimer();
+    } else if (state.mode === 'applause' || state.mode === 'applauseResult') {
+      timerEl.style.display = 'none'; // 화면 쪽 타이머/함성 레벨은 LED에만 보임
+      resultReact.classList.remove('active');
       stopPhoneTimer();
     }
 
@@ -1116,12 +1207,16 @@
   function stopPhoneTimer() {
     if (phoneTimerInterval) clearInterval(phoneTimerInterval);
     phoneTimerInterval = null;
+    document.getElementById('voting-timer-phone').classList.remove('hot');
   }
 
   function updatePhoneTimerDisplay() {
     if (!phoneVotingEndTime) return;
     const remain = Math.max(0, Math.ceil((phoneVotingEndTime - Date.now()) / 1000));
-    document.getElementById('voting-timer-phone').textContent = remain;
+    const timerEl = document.getElementById('voting-timer-phone');
+    timerEl.textContent = remain;
+    // 마지막 5초만 경고색 + 맥박 (0에서는 멈춤)
+    timerEl.classList.toggle('hot', remain > 0 && remain <= 5);
   }
 
   // ── 리액션 (하트/붐업/붐따) ──
@@ -1145,6 +1240,34 @@
     myVote = choice; // 보기 인덱스
     updateVoteUI();
     nickSocket.emit('vote', { choice });
+    flyVoteBall(choice); // 비율은 숨기고, 날아가는 공 + 토스트로만 "반영됨"을 알림
+  }
+
+  // 투표 피드백: 탭한 버튼에서 공이 날아올라 화면 위쪽에서 사라진 뒤 토스트 표시 (표 바꾸면 매번 반복)
+  function flyVoteBall(choice) {
+    const btn = document.querySelectorAll('#voting-buttons .vote-btn')[choice];
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const styles = voteStyles(voteTypeCur);
+    const color = (styles[choice % styles.length] || {}).strong || 'var(--ink)';
+    const ball = document.createElement('div');
+    ball.className = 'vote-fly';
+    ball.style.background = color;
+    ball.style.left = (rect.left + rect.width / 2 - 8) + 'px';
+    ball.style.top = (rect.top + rect.height / 2 - 8) + 'px';
+    document.body.appendChild(ball);
+
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const riseBy = rect.top + rect.height / 2 - 40; // 화면 위쪽 근처까지
+    ball.animate(
+      [
+        { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+        { transform: `translate(0, ${-riseBy}px) scale(0.5)`, opacity: 0 },
+      ],
+      { duration: reduce ? 1 : 750, easing: 'cubic-bezier(0.3, 0.7, 0.3, 1)' }
+    ).onfinish = () => ball.remove();
+
+    showNotice('내 표가 LED에 반영됐어요', { duration: 2000 });
   }
 
   // 이모지 반응 질문: 이모지 선택 → LED에 떠오름 (여러 번 탭 가능, 250ms 연타 제한)
@@ -1206,9 +1329,53 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
+  // ── "내 채팅이 고정됐어요" 알림 ── 배너+색종이는 항상, 말풍선 물들임은 목록에 남아있을 때만
+  let pinBannerTimer = null;
+  function showPinnedYou(id) {
+    const banner = document.getElementById('pin-banner');
+    banner.classList.add('show');
+    clearTimeout(pinBannerTimer);
+    pinBannerTimer = setTimeout(() => banner.classList.remove('show'), 4000);
+    spawnPinConfetti();
+
+    // data-id로 해당 말풍선을 찾아 잠시 물들인다 (특수문자 섞인 id도 안전하게 매칭)
+    const group = document.querySelector('#messages [data-id="' + CSS.escape(String(id)) + '"]');
+    const bubble = group && group.querySelector('.msg-bubble');
+    if (bubble) {
+      bubble.classList.add('pinned');
+      clearTimeout(bubble._pinTimer);
+      bubble._pinTimer = setTimeout(() => bubble.classList.remove('pinned'), 6000);
+    }
+  }
+
+  function spawnPinConfetti() {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return; // 장식용 모션은 생략
+    const root = document.getElementById('chatroom');
+    const colors = OPTION_STYLES.map((s) => s.strong);
+    const COUNT = 26;
+    for (let i = 0; i < COUNT; i++) {
+      const piece = document.createElement('div');
+      piece.className = 'pin-confetti';
+      piece.style.background = colors[i % colors.length];
+      piece.style.left = (40 + Math.random() * 20) + '%';
+      piece.style.top = '14%';
+      root.appendChild(piece);
+      const dx = (Math.random() - 0.5) * 220;
+      const dy = 160 + Math.random() * 180;
+      const rot = (Math.random() - 0.5) * 720;
+      piece.animate(
+        [
+          { transform: 'translate(0, 0) rotate(0deg)', opacity: 1 },
+          { transform: `translate(${dx}px, ${dy}px) rotate(${rot}deg)`, opacity: 0 },
+        ],
+        { duration: 1300 + Math.random() * 500, easing: 'cubic-bezier(0.2, 0.6, 0.3, 1)' }
+      ).onfinish = () => piece.remove();
+    }
+  }
+
   // ── 안내 띠 ── 연결 끊김(sticky)은 다시 연결될 때까지 유지, 전송 안내는 3초 뒤 사라짐
   let noticeTimer = null;
-  function showNotice(text, { warn = false, sticky = false } = {}) {
+  function showNotice(text, { warn = false, sticky = false, duration = 3000 } = {}) {
     const bar = document.getElementById('notice-bar');
     if (!sticky && bar.dataset.sticky === '1') return; // 연결 끊김 안내가 우선
     clearTimeout(noticeTimer);
@@ -1218,7 +1385,7 @@
     bar.classList.remove('visible');
     void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
     bar.classList.add('visible');
-    if (!sticky) noticeTimer = setTimeout(hideNotice, 3000);
+    if (!sticky) noticeTimer = setTimeout(hideNotice, duration);
   }
   function hideNotice() {
     const bar = document.getElementById('notice-bar');
