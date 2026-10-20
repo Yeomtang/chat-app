@@ -102,6 +102,10 @@
     .mode-subjective { background: #cce5ff; color: #004085; }
     .mode-subjectiveResult { background: #e2d9f3; color: #4b2e83; }
     .mode-emoji { background: #ffe6f0; color: #a01050; }
+    .mode-idle { background: #e9e9eb; color: #636366; }
+    .mode-applause { background: #ffe8cc; color: #c1620a; }
+    .mode-applauseResult { background: #ffd9a6; color: #8a4b00; }
+    .mode-ending { background: #d9d9fb; color: #4b3f91; }
 
     label {
       display: block;
@@ -142,6 +146,22 @@
     .btn-primary { background: #1c1c1e; color: #fff; }
     .btn-danger { background: #ff3b30; color: #fff; }
     .btn-secondary { background: #e9e9eb; color: #1c1c1e; }
+
+    /* 함성 미터 레벨 바 — 진행 제어 카드류 공용 톤(연한 회색 배경 + 포인트 색 채움) */
+    .meter-bar {
+      width: 100%;
+      height: 14px;
+      background: #f2f2f7;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: #ff9f0a;
+      transition: width 0.1s linear;
+    }
 
     /* 채팅 카드 하단 액션 — 좁은 화면에선 세로로 쌓임 */
     .chat-actions {
@@ -596,6 +616,47 @@
     <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>선택형 투표 종료</button>
     <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
     <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
+    <button class="btn btn-secondary" id="idle-btn" onclick="showIdleNow()">대기 화면 띄우기</button>
+  </div>
+
+  <!-- 함성 미터 -->
+  <div class="card">
+    <h2>함성 미터</h2>
+    <label>측정 시간 (초, 5~30)</label>
+    <input type="number" id="applause-seconds" value="10" min="5" max="30">
+    <button class="btn btn-primary" id="applause-start-btn" onclick="startApplauseNow()">함성 미터 시작</button>
+    <div class="meter-bar"><div class="meter-fill" id="applause-bar-fill"></div></div>
+    <div class="status-row">
+      <span class="status-label">최고 함성</span>
+      <span class="status-value" id="applause-peak">0%</span>
+    </div>
+    <p class="note" style="margin: 10px 0 0;">LED 중 한 대를 /led?mic=1 로 열고 마이크를 허용해야 측정됩니다.</p>
+  </div>
+
+  <!-- 엔딩 · 오늘의 결과 -->
+  <div class="card">
+    <h2>엔딩 · 오늘의 결과</h2>
+    <button class="btn btn-primary" id="ending-start-btn" onclick="startEndingNow()">엔딩 시작</button>
+    <div class="status-row">
+      <span class="status-label">진행</span>
+      <span class="status-value" id="ending-progress">0 / 0</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">현재 슬라이드</span>
+      <span class="status-value" id="ending-slide-title">-</span>
+    </div>
+    <div class="chat-actions">
+      <button class="btn btn-secondary" id="ending-prev-btn" onclick="endingGoPrev()" disabled>← 이전</button>
+      <button class="btn btn-secondary" id="ending-next-btn" onclick="endingGoNext()" disabled>다음 →</button>
+    </div>
+    <button class="btn btn-danger" id="clear-results-btn" onclick="clearResultsNow()">결과 기록 비우기</button>
+    <p class="note" style="margin: 10px 0 0;">기록된 결과: <span id="results-count">0</span>개</p>
+  </div>
+
+  <!-- 연출 설정 -->
+  <div class="card">
+    <h2>연출 설정</h2>
+    <button class="btn btn-secondary" id="effects-heartburst-btn" onclick="toggleHeartBurst()">하트 폭발 연출 끄기</button>
   </div>
 
   </div><!-- /admin-col 왼쪽 -->
@@ -721,17 +782,38 @@
     }
   });
 
+  // 함성 레벨 실시간 중계 — 최대 초당 10회 정도 들어오므로 전체 재렌더 없이 바·최고치만 갱신
+  let applauseLiveLevel = 0;
+  socket.on('applauseLevel', (data) => {
+    if (!data) return;
+    applauseLiveLevel = data.level;
+    if (currentState) currentState.applause.peak = data.peak;
+    document.getElementById('applause-bar-fill').style.width = Math.round((data.level || 0) * 100) + '%';
+    document.getElementById('applause-peak').textContent = Math.round((data.peak || 0) * 100) + '%';
+  });
+
+  // 연출(하트 폭발 등) 설정 변경 — 전체 재렌더 없이 토글 버튼만 갱신
+  socket.on('effectsChange', (data) => {
+    if (currentState && data && data.effects) currentState.effects = data.effects;
+    renderEffects();
+  });
+
   function renderAudience(a) {
     if (!a) return;
     document.getElementById('status-audience-current').textContent = (a.current || 0) + '명';
     document.getElementById('status-audience-peak').textContent = (a.peak || 0) + '명';
   }
 
+  // 새 모드(대기·함성·엔딩)는 한글 라벨, 나머지는 기존처럼 영문 대문자 그대로
+  const MODE_LABELS = {
+    idle: '대기 화면', applause: '함성 측정 중', applauseResult: '함성 결과', ending: '엔딩',
+  };
+
   function renderState() {
     if (!currentState) return;
     renderAudience(currentState.audience);
     const badge = document.getElementById('mode-badge');
-    badge.textContent = currentState.mode.toUpperCase();
+    badge.textContent = MODE_LABELS[currentState.mode] || currentState.mode.toUpperCase();
     badge.className = 'mode-badge mode-' + currentState.mode;
 
     document.getElementById('status-question').textContent = currentState.question || '-';
@@ -740,13 +822,18 @@
     pinnedChatMsg = currentState.pinnedChat || null;
     renderPinStatus();
     renderChatFeed();
+    renderApplause();
+    renderEnding();
+    renderEffects();
 
     const endBtn = document.getElementById('end-btn');
     const subjEndBtn = document.getElementById('subj-end-btn');
     const returnBtn = document.getElementById('return-btn');
+    const idleBtn = document.getElementById('idle-btn');
     endBtn.disabled = currentState.mode !== 'voting';
     subjEndBtn.disabled = currentState.mode !== 'subjective';
     returnBtn.disabled = currentState.mode === 'chat';
+    idleBtn.disabled = currentState.mode === 'idle';
 
     if (timerInterval) clearInterval(timerInterval);
     if (currentState.mode === 'voting' && currentState.votingEndTime) {
@@ -766,6 +853,104 @@
     }
     document.getElementById('status-counts').textContent = txt;
     document.getElementById('status-answers').textContent = currentState.answerCount || 0;
+  }
+
+  // ── 함성 미터 ──
+  let prevApplauseMode = null; // applause로 막 전환된 시점을 잡아 바를 0으로 되돌리기 위함
+  function renderApplause() {
+    const mode = currentState ? currentState.mode : null;
+    if (mode === 'applause' && prevApplauseMode !== 'applause') {
+      applauseLiveLevel = 0;
+      document.getElementById('applause-bar-fill').style.width = '0%';
+    }
+    prevApplauseMode = mode;
+    const a = (currentState && currentState.applause) || { peak: 0 };
+    document.getElementById('applause-peak').textContent = Math.round((a.peak || 0) * 100) + '%';
+    if (mode === 'applauseResult') {
+      document.getElementById('applause-bar-fill').style.width = Math.round((a.peak || 0) * 100) + '%';
+    } else if (mode !== 'applause') {
+      document.getElementById('applause-bar-fill').style.width = '0%';
+    }
+    document.getElementById('applause-start-btn').disabled = mode === 'applause';
+  }
+
+  function startApplauseNow() {
+    const n = parseInt(document.getElementById('applause-seconds').value, 10);
+    const seconds = Number.isFinite(n) ? n : 10;
+    socket.emit('admin:startApplause', { seconds });
+  }
+
+  // ── 엔딩 · 오늘의 결과 ──
+  function slideTitle(slide) {
+    if (!slide) return '-';
+    if (slide.kind === 'title') return '표지';
+    if (slide.kind === 'thanks') return '감사 인사';
+    if (slide.kind === 'vote' || slide.kind === 'subjective') return slide.question || '-';
+    return '-';
+  }
+
+  function renderEnding() {
+    const e = (currentState && currentState.ending) || { index: 0, slides: [] };
+    const total = e.slides.length;
+    const idx = e.index;
+    document.getElementById('ending-progress').textContent = total ? `${idx + 1} / ${total}` : '0 / 0';
+    document.getElementById('ending-slide-title').textContent = slideTitle(e.slides[idx]);
+    document.getElementById('results-count').textContent = (currentState && currentState.resultsCount) || 0;
+    const inEnding = !!(currentState && currentState.mode === 'ending');
+    document.getElementById('ending-start-btn').disabled = inEnding;
+    document.getElementById('ending-prev-btn').disabled = !inEnding || idx <= 0;
+    document.getElementById('ending-next-btn').disabled = !inEnding || idx >= total - 1;
+  }
+
+  function startEndingNow() {
+    socket.emit('admin:startEnding');
+  }
+
+  function endingGoPrev() {
+    if (!currentState || !currentState.ending) return;
+    socket.emit('admin:endingGo', { index: currentState.ending.index - 1 });
+  }
+
+  function endingGoNext() {
+    if (!currentState || !currentState.ending) return;
+    socket.emit('admin:endingGo', { index: currentState.ending.index + 1 });
+  }
+
+  // 결과 기록 비우기 — 되돌릴 수 없으므로 confirm() 대신 버튼을 눌러 다시 확인(2클릭)
+  let clearResultsConfirming = false;
+  let clearResultsTimer = null;
+  function clearResultsNow() {
+    const btn = document.getElementById('clear-results-btn');
+    if (!clearResultsConfirming) {
+      clearResultsConfirming = true;
+      btn.textContent = '한 번 더 누르면 비워집니다';
+      clearResultsTimer = setTimeout(() => {
+        clearResultsConfirming = false;
+        btn.textContent = '결과 기록 비우기';
+      }, 3000);
+      return;
+    }
+    clearTimeout(clearResultsTimer);
+    clearResultsConfirming = false;
+    btn.textContent = '결과 기록 비우기';
+    socket.emit('admin:clearResults');
+  }
+
+  // ── 연출 설정 ──
+  function renderEffects() {
+    const on = (currentState && currentState.effects) ? !!currentState.effects.heartBurst : true;
+    const btn = document.getElementById('effects-heartburst-btn');
+    btn.textContent = on ? '하트 폭발 연출 끄기' : '하트 폭발 연출 켜기';
+    btn.className = 'btn ' + (on ? 'btn-secondary' : 'btn-primary');
+  }
+
+  function toggleHeartBurst() {
+    const on = (currentState && currentState.effects) ? !!currentState.effects.heartBurst : true;
+    socket.emit('admin:setEffects', { heartBurst: !on });
+  }
+
+  function showIdleNow() {
+    socket.emit('admin:showIdle');
   }
 
   // ── 주관식 답변 목록 / 픽 ──
