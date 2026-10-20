@@ -1387,6 +1387,7 @@
   // ── 대기 화면: 큰 입장 QR + 최근 채팅이 옆(세로형은 아래)에서 천천히 위로 흐름 + 느린 배경 번짐 ──
   const IDLE = {
     POOL_MAX: 30,    // 피드에 돌려 보여줄 최근 채팅 수
+    SEEN_MAX: 300,   // 이미 받은 채팅 id 기억 수 (페이지 버퍼 MAX_BUFFER와 같게) — 다시 그리기로 온 채팅을 새것으로 착각하지 않게
     QUEUE_MAX: 8,    // 아직 안 나온 새 채팅 대기열 (몰리면 최신 것만)
     SPEED: 20,       // 위로 흐르는 속도(논리 px/초, 화면 배율 곱함) — 시안 26초에 한 바퀴와 비슷
     GAP: 14,         // 말풍선 간격(논리 px)
@@ -1441,6 +1442,7 @@
     let cursorY = 0; // 다음 말풍선이 놓일 y
     let raf = null, last = 0, active = false;
     let anims = [];
+    const seen = new Set(); // 받은 채팅 id (오래된 것부터 지움 — Set은 넣은 순서를 유지)
 
     function drawCode() {
       const w = qrBox.clientWidth;
@@ -1510,6 +1512,8 @@
       offset += IDLE.SPEED * scale() * dt / 1000;
       // 위로 다 빠진 말풍선 정리
       while (items.length && items[0].y + items[0].h < offset) { items[0].el.remove(); items.shift(); }
+      // 비었으면 좌표를 0으로 되돌림 (오래 켜 둬도 값이 끝없이 커지지 않게)
+      if (!items.length) { offset = 0; cursorY = 0; }
       // 아래가 비면 다음 채팅을 피드 아래 끝에서 들여보냄
       if (cursorY - offset < H) {
         const rec = nextRec();
@@ -1542,7 +1546,13 @@
       anims = [];
     }
 
-    const findRec = (id) => (id == null ? null : pool.find((r) => r.m.id === id));
+    const idOf = (rec) => rec.m.id;
+    // id가 같은 것을 모두 걷어냄 (풀·대기열·화면)
+    function dropWhere(test) {
+      pool = pool.filter((r) => !test(idOf(r)));
+      queue = queue.filter((r) => !test(idOf(r)));
+      items = items.filter((it) => { if (!test(idOf(it.rec))) return true; it.el.remove(); return false; });
+    }
 
     return {
       show() {
@@ -1562,7 +1572,11 @@
       // 채팅 화면에 그려지는 메시지마다 호출 (대기 화면이 꺼져 있어도 최근 목록은 유지)
       push(m) {
         if (!m || typeof m.text !== 'string') return;
-        if (m.id != null && findRec(m.id)) return; // 다시 그리기(일시정지 해제 등)로 온 같은 메시지
+        if (m.id != null) {
+          if (seen.has(m.id)) return; // 다시 그리기(일시정지 해제·재접속 history)로 온 같은 메시지
+          seen.add(m.id);
+          if (seen.size > IDLE.SEEN_MAX) seen.delete(seen.values().next().value);
+        }
         const rec = { m, shown: 0 };
         pool.push(rec);
         if (pool.length > IDLE.POOL_MAX) pool.shift();
@@ -1571,22 +1585,19 @@
         queue.push(rec);
         if (queue.length > IDLE.QUEUE_MAX) queue.shift();
       },
-      // 재접속 history: 목록을 서버 기준으로 다시 맞춤 (끊긴 사이 지워진 채팅은 피드에서도 뺌)
-      reset(list) {
-        const keep = new Set((list || []).map((m) => m.id));
-        pool = pool.filter((r) => keep.has(r.m.id));
-        (list || []).slice(-IDLE.POOL_MAX).forEach((m) => { if (!findRec(m.id)) pool.push({ m, shown: 0 }); });
-        if (pool.length > IDLE.POOL_MAX) pool = pool.slice(-IDLE.POOL_MAX);
-        items = items.filter((it) => { if (pool.includes(it.rec)) return true; it.el.remove(); return false; });
+      // 재접속 history(서버 전체 기록): 끊긴 사이 지워진 채팅만 id로 골라 뺀다 — 남은 말풍선은 그대로 흐름
+      // (새로 온 채팅은 push가 처리. 기록에 없는 id = 삭제됐거나 서버 기록에서 밀려난 아주 오래된 것)
+      reset(history) {
+        if (!Array.isArray(history)) return;
+        const keep = new Set(history.map((m) => m && m.id));
+        dropWhere((id) => id != null && !keep.has(id));
       },
       remove(id) {
-        const rec = findRec(id);
-        if (!rec) return;
-        pool = pool.filter((r) => r !== rec);
-        queue = queue.filter((r) => r !== rec);
-        items = items.filter((it) => { if (it.rec !== rec) return true; it.el.remove(); return false; });
+        if (id == null) return;
+        dropWhere((x) => x === id);
       },
       clearFeed() {
+        seen.clear();
         pool = []; queue = []; items = [];
         track.innerHTML = '';
         offset = 0; cursorY = 0;
@@ -1599,6 +1610,8 @@
         prefill();
       },
       isActive: () => active,
+      // 점검용: 최근 목록·대기열·화면 말풍선의 채팅 id
+      stats: () => ({ pool: pool.map(idOf), queue: queue.map(idOf), items: items.map((it) => idOf(it.rec)) }),
       qrCanvas,
     };
   }
@@ -1690,7 +1703,13 @@
       slides.forEach((s, i) => {
         s.classList.toggle('on', i === n);
         s.classList.toggle('off', i < n);
-        if (i !== n || barAnim) s.querySelectorAll('.fx-end-fil').forEach((f) => { f.style.width = '0'; });
+      });
+      // 들어오는 장의 막대만 0으로 (전환 없이 바로) — 나가는 장은 막대를 유지한 채 사라짐
+      if (barAnim) slides[n].querySelectorAll('.fx-end-fil').forEach((f) => {
+        f.style.transition = 'none';
+        f.style.width = '0';
+        void f.offsetWidth;
+        f.style.transition = '';
       });
       dots.forEach((d, i) => d.classList.toggle('on', i === n));
       index = n;
@@ -1910,16 +1929,24 @@
     let stream = null, ctx = null, analyser = null, buf = null, source = null;
     let timer = null, running = false, run = 0, key = null;
     let baseline = null, samples = [], t0 = 0;
+    let warnKind = null, tapArmed = false;
 
-    function warn(msg) {
+    // kind: 'denied'(권한·장치 — 다음 측정 전까지 유지) | 'suspended'(탭 안내 — 측정이 끝나면 지움)
+    function warn(msg, kind) {
+      warnKind = msg ? kind || null : null;
       warnEl.textContent = msg || '';
       warnEl.classList.toggle('active', !!msg);
     }
 
-    // 소리가 멈춰 있으면(자동재생 정책) 화면을 한 번 누르면 재개
+    // 소리가 멈춰 있으면(자동재생 정책) 화면을 한 번 누르면 재개 — 리스너는 한 번만 걸어 둔다
     function resumeOnTap() {
-      const h = () => { if (ctx) ctx.resume().then(() => { if (ctx.state === 'running') warn(''); }); };
-      document.addEventListener('pointerdown', h, { once: true });
+      if (tapArmed) return;
+      tapArmed = true;
+      document.addEventListener('pointerdown', () => {
+        tapArmed = false;
+        if (!ctx || !running) return; // 측정이 끝난 뒤 누르면 다시 켜지 않음
+        ctx.resume().then(() => { if (ctx.state === 'running' && warnKind === 'suspended') warn(''); }).catch(() => {});
+      }, { once: true });
     }
 
     async function ensure() {
@@ -1979,14 +2006,14 @@
         baseline = null; samples = [];
         ensure().then(() => {
           if (my !== run || !running) return;
-          if (ctx.state !== 'running') { warn('마이크 소리가 멈춰 있어요 — 화면을 한 번 눌러 주세요'); resumeOnTap(); }
+          if (ctx.state !== 'running') { warn('마이크 소리가 멈춰 있어요 — 화면을 한 번 눌러 주세요', 'suspended'); resumeOnTap(); }
           else warn('');
           t0 = performance.now();
           timer = setInterval(tick, MIC.SEND_MS);
         }).catch((e) => {
           if (my !== run) return;
           running = false;
-          warn(e && e.name === 'NotAllowedError' ? '마이크 권한이 거부되어 함성을 잴 수 없어요' : '마이크를 쓸 수 없어 함성을 잴 수 없어요');
+          warn(e && e.name === 'NotAllowedError' ? '마이크 권한이 거부되어 함성을 잴 수 없어요' : '마이크를 쓸 수 없어 함성을 잴 수 없어요', 'denied');
         });
       },
       // 측정 끝(모드 전환): 분석만 멈춤 — 스트림은 다음 측정을 위해 유지
@@ -1996,6 +2023,7 @@
         run++;
         key = null;
         stopTimer();
+        if (warnKind === 'suspended') warn(''); // 탭 안내는 측정 중에만 의미 (권한 거부 안내는 남김)
         if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
       },
       gain,

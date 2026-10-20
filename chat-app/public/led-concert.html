@@ -583,7 +583,7 @@
     container.innerHTML = '';
     const recent = history.slice(-MAX_VISIBLE);
     recent.forEach(addMessage);
-    if (!chatPaused) idleFx.reset(recent); // 대기 화면 피드도 서버 기준으로 (끊긴 사이 지워진 채팅 제외)
+    idleFx.reset(history); // 대기 화면 피드: 끊긴 사이 지워진 채팅만 id로 뺌 (남은 말풍선은 그대로)
     pinFx.reconcile(); // 다시 그린 말풍선 중 핀으로 떠오른 것은 다시 숨김
   });
 
