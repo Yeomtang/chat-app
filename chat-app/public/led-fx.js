@@ -629,6 +629,7 @@
     let key = null, data = [];
     let box = null, words = new Map(), max = 1;
     let flights = [], timers = [], raf = null, flying = false;
+    let relayoutTimer = null;
 
     const later = (fn, ms) => timers.push(setTimeout(fn, ms));
 
@@ -872,6 +873,7 @@
 
     // cloud: 서버의 상위 40개(빈도 내림차순). live: 접수 중 화면에서 실시간으로 마감된 경우만 true
     function show(cloud, o) {
+      if (relayoutTimer) { clearTimeout(relayoutTimer); relayoutTimer = null; } // 새 결과가 오면 대기 중인 재배치는 버림
       cloud = Array.isArray(cloud) ? cloud : [];
       const k = JSON.stringify(cloud);
       if (k === key && wrap.classList.contains('active')) return; // 같은 결과 재전송 — 진행 중 연출 유지
@@ -893,61 +895,118 @@
     return {
       show,
       clear,
-      // 창 크기가 바뀌면 자리 계산이 어긋나므로 최종 모습으로 다시 배치
+      // 창 크기가 바뀌면 자리 계산이 어긋나므로 최종 모습으로 다시 배치.
+      // 창 크기를 바꾸는 동안 resize가 연달아 오므로 멈춘 뒤 150ms에 한 번만 (매번 섞이며 깜빡이지 않게)
       relayout() {
-        if (key === null) return;
-        const cloud = data;
-        clear();
-        show(cloud, { live: false });
+        if (relayoutTimer) clearTimeout(relayoutTimer);
+        relayoutTimer = setTimeout(() => {
+          relayoutTimer = null;
+          if (key === null) return;
+          const cloud = data;
+          clear();
+          show(cloud, { live: false });
+        }, 150);
       },
       isActive: () => key !== null,
     };
   }
 
-  // ── 제작진 픽 스포트라이트 (시안 10): 흐르던 답변이 남색으로 물든 뒤 가운데 카드로 늘어남 ──
-  const PICK = {
-    LIFT_MS: 1450,
-    TINT: 0.24,      // 제자리에서 물드는 구간(전체 대비)
-    COVER_AT: 0.25,  // 배경 가림막이 깔리기 시작하는 시점
-    OUT_MS: 500,     // 교체: 기존 카드가 위로 빠짐
-    HIDE_MS: 700,    // 자동 해제: 작아지며 사라짐
+  // ══════════════════════════════════
+  //  들어올리기 (시안 8 채팅 핀 · 시안 10 제작진 픽 공용)
+  //  화면의 말풍선이 제자리에서 카드 색으로 물든 뒤(0~24%), 한 번의 미끄러짐으로
+  //  상자는 최종 카드 자리·크기로, 글자는 카드의 줄바꿈 그대로 커지며 제자리로 → 똑같은 카드로 바꿔 끼움
+  // ══════════════════════════════════
+  const LIFT = {
+    MS: 1450,
+    TINT: 0.24,       // 제자리에서 물드는 구간(전체 대비)
+    OUT_MS: 500,      // 교체: 기존 카드가 위로 빠짐
+    HIDE_MS: 700,     // 해제: 작아지며 사라짐
+    POP_COVER_MS: 400,
   };
   const TINT_EASE = 'cubic-bezier(.4,0,.2,1)';
   const GLIDE_EASE = 'cubic-bezier(.22,.75,.25,1)';
 
-  // opts: { layer: 스포트라이트 레이어(가운데 정렬 flex), cardClass, stream, duration, scale }
-  function createPickSpotlight(opts) {
-    const layer = opts.layer, stream = opts.stream;
-    const cardClass = opts.cardClass || 'spotlight-card';
-    const duration = opts.duration || 8000;
+  // el 안의 글자 노드(공백뿐인 것 제외) — 문서 순서
+  function textNodes(el) {
+    const out = [];
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (n.textContent.trim()) out.push(n);
+    return out;
+  }
+
+  // 글자 노드의 화면상 사각형 (줄이 여럿이면 전체를 감싸는 사각형)
+  function inkRect(node) {
+    const r = document.createRange();
+    r.selectNodeContents(node);
+    return r.getBoundingClientRect();
+  }
+
+  // 글자 노드를 지금 화면에 보이는 줄 단위 문자열로 나눈다 (글자마다 위치를 재서 줄이 바뀌는 곳을 찾음)
+  function splitLines(node) {
+    const s = node.textContent;
+    const r = document.createRange();
+    const lines = [];
+    let start = 0, top = null;
+    for (let i = 0; i < s.length;) {
+      const len = s.codePointAt(i) > 0xffff ? 2 : 1; // 이모지(서로게이트 쌍)는 한 글자로
+      if (s[i].trim()) {
+        r.setStart(node, i);
+        r.setEnd(node, i + len);
+        const q = r.getClientRects()[0];
+        if (q) {
+          if (top === null) top = q.top;
+          else if (q.top - top > q.height * 0.5) { lines.push(s.slice(start, i)); start = i; top = q.top; }
+        }
+      }
+      i += len;
+    }
+    lines.push(s.slice(start));
+    return lines.map((t) => t.trim()).filter(Boolean);
+  }
+
+  function stripIds(el) {
+    el.removeAttribute('id');
+    el.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+  }
+
+  // opts: { layer: 카드 레이어(가운데 정렬 flex, .active로 표시), scale: () => --u,
+  //         coverAt: 가림막이 깔리기 시작하는 시점(전체 대비), coverMs: 가림막 페이드 시간, popClass }
+  // 카드는 show마다 새 요소로 받는다 (교체할 때 이전 카드와 함께 보이므로)
+  function createLift(opts) {
+    const layer = opts.layer;
     const scale = opts.scale || (() => 1);
-    let cover = null, card = null, lift = null, hideTimer = null, offTimer = null;
+    const coverAt = opts.coverAt != null ? opts.coverAt : 0.25;
+    const coverMs = opts.coverMs || LIFT.MS * (1 - coverAt);
+    const popClass = opts.popClass || 'pop';
+    let cover = null, card = null, src = null, lift = null, offTimer = null;
 
     function fadeCover(to, ms, delay) {
       if (!cover) {
         cover = document.createElement('div');
-        cover.className = 'fx-pick-cover';
+        cover.className = 'fx-lift-cover';
         layer.prepend(cover);
       }
-      const from = getComputedStyle(cover).opacity;
-      cover.getAnimations().forEach((a) => a.cancel());
-      cover.style.opacity = from;
-      const a = cover.animate([{ opacity: from }, { opacity: to }], { duration: ms, delay: delay || 0, fill: 'forwards', easing: 'ease' });
-      a.onfinish = () => { cover.style.opacity = String(to); a.cancel(); };
+      // clear()가 cover를 비운 뒤 끝나도 오류 나지 않게 이 요소를 붙잡아 둔다
+      const el = cover;
+      const from = getComputedStyle(el).opacity;
+      el.getAnimations().forEach((a) => a.cancel());
+      el.style.opacity = from;
+      const a = el.animate([{ opacity: from }, { opacity: to }], { duration: ms, delay: delay || 0, fill: 'forwards', easing: 'ease' });
+      a.onfinish = () => { el.style.opacity = String(to); a.cancel(); };
     }
 
-    // 텍스트 노드의 화면상 사각형 (줄이 여럿이면 전체를 감싸는 사각형)
-    function textRect(el) {
-      const r = document.createRange();
-      r.selectNodeContents(el);
-      return r.getBoundingClientRect();
+    // 화면 말풍선을 원래대로 (교체·해제·정리 때)
+    function releaseSrc() {
+      if (src && src.release) src.release();
+      src = null;
     }
 
     // 사라지는 카드는 지금 자리에 고정해 흐름에서 뺀다 (새 카드가 가운데 자리를 바로 차지하도록)
     function pinInPlace(c) {
       const lr = layer.getBoundingClientRect();
       const r = c.getBoundingClientRect();
-      c.classList.remove('pop');
+      c.classList.remove(popClass);
+      c.removeAttribute('id');
       Object.assign(c.style, { position: 'absolute', left: (r.left - lr.left) + 'px', top: (r.top - lr.top) + 'px', width: r.width + 'px', margin: '0' });
     }
 
@@ -955,79 +1014,153 @@
       pinInPlace(c);
       if (prefersReduced()) { c.remove(); return; }
       c.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${-60 * scale()}px)` }],
-        { duration: PICK.OUT_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
+        { duration: LIFT.OUT_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
     }
 
-    // 말풍선 → 카드: 물들기(0~24%) 후 상자가 카드 위치·크기·여백·글자 크기로 변하고,
-    // 글자는 카드와 같은 정렬·줄 간격·굵기로 끝까지 보인 채 이동 → 다 커진 순간 똑같은 카드로 바꿔 끼움
-    function liftFrom(src, c) {
+    // 말풍선(s.el) → 카드(c). 레이아웃은 모두 처음에 한 번 재고, 움직이는 동안엔 transform·상자 크기만 바뀐다.
+    //  - 상자: 말풍선 자리 → (물들며) 카드 글자를 담을 만큼 → 카드 자리·크기·모서리·그림자
+    //  - 물드는 동안 글자: 원래 말풍선 줄바꿈 그대로 고정, 색·굵기만 카드 값으로
+    //  - 미끄러지는 동안 글자: 최종 카드와 똑같이 줄바꿈된 복제본을 말풍선 글자 크기로 줄여 원래 글자 자리에 맞춘 뒤
+    //    배율 1·제자리(=카드 글자 위치)로 → 끝에서 카드와 픽셀 단위로 같다
+    function morph(s, c) {
       const lr = layer.getBoundingClientRect();
-      const b = stream.take(src);
-      const g = b.el;
-      const bcs = getComputedStyle(g);
-      const fs0 = parseFloat(bcs.fontSize);
-      const py0 = parseFloat(bcs.paddingTop), px0 = parseFloat(bcs.paddingLeft);
-      const bg0 = bcs.backgroundColor, color0 = bcs.color, shadow0 = bcs.boxShadow;
-      const radius0 = parseFloat(bcs.borderTopLeftRadius);
-      const bx = b.rect.left - lr.left + b.rect.width / 2, by = b.rect.top - lr.top + b.rect.height / 2;
-
-      // 최종 카드 (숨긴 채 자리 잡기)
-      c.style.opacity = '0';
+      const L = (r) => ({ left: r.left - lr.left, top: r.top - lr.top, right: r.right - lr.left, bottom: r.bottom - lr.top, width: r.width, height: r.height });
+      const se = s.el;
+      const sNodes = textNodes(se);
+      c.style.opacity = '0'; // 최종 카드: 숨긴 채 자리 잡기
+      const cNodes = textNodes(c);
+      if (!sNodes.length || !cNodes.length) return null;
+      const sr = L(s.rect || se.getBoundingClientRect());
+      const scs = getComputedStyle(se);
       const ccs = getComputedStyle(c);
-      const cr = c.getBoundingClientRect();
-      const fs1 = parseFloat(ccs.fontSize);
-      const lh = parseFloat(ccs.lineHeight) / fs1; // 줄 간격 비율
-      const py1 = parseFloat(ccs.paddingTop), px1 = parseFloat(ccs.paddingLeft);
-      const tr = textRect(c);
-      const lines = Math.max(1, Math.round(tr.height / (lh * fs1)));
-      const emW = (tr.width + 1) / fs1; // 글자 폭(em) — 글자 크기에 비례해 줄바꿈이 중간에 바뀌지 않음
+      const cr = L(c.getBoundingClientRect());
 
-      // 고스트: 흐르던 말풍선 그대로 스포트라이트 레이어로 옮김
-      g.textContent = '';
-      const span = document.createElement('span');
-      span.textContent = b.text;
-      span.style.width = emW + 'em';
-      g.appendChild(span);
-      g.className = 'answer-float fx-pick-ghost';
-      Object.assign(g.style, { transform: 'none', opacity: '1', lineHeight: String(lh), fontWeight: ccs.fontWeight, textAlign: 'center' });
-      layer.appendChild(g);
+      // 줄 단위 짝: 끝(본문)부터 맞춤 — 말풍선 [닉네임, 본문] ↔ 카드 [닉네임, 본문]
+      const leafOf = (n) => n.parentElement;
+      const pairs = cNodes.map((cn, j) => {
+        const i = Math.max(0, sNodes.length - cNodes.length + j);
+        return { si: i, cn, sn: sNodes[i] };
+      });
 
-      const w0 = emW * fs0 + px0 * 2, h0 = lines * lh * fs0 + py0 * 2; // 굵기만 카드에 맞춘 원래 크기
-      const start = { left: (bx - w0 / 2) + 'px', top: (by - h0 / 2) + 'px', width: w0 + 'px', height: h0 + 'px', padding: `${py0}px ${px0}px`, fontSize: fs0 + 'px', borderRadius: Math.min(radius0, h0 / 2) + 'px' };
-      const end = { left: (cr.left - lr.left) + 'px', top: (cr.top - lr.top) + 'px', width: cr.width + 'px', height: cr.height + 'px', padding: `${py1}px ${px1}px`, fontSize: fs1 + 'px', borderRadius: ccs.borderTopLeftRadius };
-      const o = { duration: PICK.LIFT_MS, easing: 'linear', fill: 'forwards' };
-      const box = g.animate([
-        { ...start, backgroundColor: bg0, boxShadow: shadow0, easing: TINT_EASE },
-        { ...start, backgroundColor: ccs.backgroundColor, boxShadow: shadow0, offset: PICK.TINT, easing: GLIDE_EASE },
-        { ...end, backgroundColor: ccs.backgroundColor, boxShadow: ccs.boxShadow },
+      // 물드는 동안의 글자: 말풍선 복제본, 지금 보이는 줄바꿈대로 줄마다 고정 (굵어져도 줄이 다시 나뉘지 않음)
+      const from = se.cloneNode(true);
+      stripIds(from);
+      const fNodes = textNodes(from);
+      const fLeaves = fNodes.map(leafOf);
+      sNodes.forEach((n, i) => {
+        const frag = document.createDocumentFragment();
+        splitLines(n).forEach((t, k) => {
+          if (k) frag.appendChild(document.createElement('br'));
+          frag.appendChild(document.createTextNode(t));
+        });
+        fNodes[i].replaceWith(frag);
+      });
+      from.classList.add('fx-lift-from');
+      Object.assign(from.style, {
+        position: 'absolute', left: sr.left + 'px', top: sr.top + 'px', right: 'auto', bottom: 'auto', margin: '0',
+        width: 'auto', height: 'auto', maxWidth: 'none', transform: 'none', animation: 'none', transition: 'none',
+        background: 'transparent', boxShadow: 'none', whiteSpace: 'nowrap', opacity: '1', visibility: 'visible',
+      });
+
+      // 미끄러지는 동안의 글자: 최종 카드 복제본 (같은 폭·같은 글꼴 → 같은 줄바꿈)
+      const to = c.cloneNode(true);
+      stripIds(to);
+      to.classList.remove(popClass);
+      to.classList.add('fx-lift-to');
+      Object.assign(to.style, {
+        position: 'absolute', left: cr.left + 'px', top: cr.top + 'px', width: cr.width + 'px', height: cr.height + 'px',
+        margin: '0', maxWidth: 'none', background: 'transparent', boxShadow: 'none', animation: 'none', transform: 'none', opacity: '0',
+      });
+      const tNodes = textNodes(to);
+
+      const box = document.createElement('div');
+      box.className = 'fx-lift-box';
+      layer.append(box, from, to);
+
+      // 물든 뒤(카드 굵기) 말풍선 글자가 차지하는 폭 — 상자를 그만큼 넓혀 둠
+      const tintMap = new Map();
+      pairs.forEach((p) => { if (!tintMap.has(fLeaves[p.si])) tintMap.set(fLeaves[p.si], getComputedStyle(leafOf(p.cn))); });
+      const tint = [...tintMap].map(([el, cs]) => ({ el, cs }));
+      const w0 = tint.map((t) => t.el.style.fontWeight);
+      tint.forEach((t) => { t.el.style.fontWeight = t.cs.fontWeight; });
+      let boldRight = sr.left;
+      textNodes(from).forEach((n) => { boldRight = Math.max(boldRight, L(inkRect(n)).right); });
+      tint.forEach((t, k) => { t.el.style.fontWeight = w0[k]; });
+
+      // 카드 글자 줄마다: 말풍선 글자 크기로 줄여 원래 글자 왼쪽 위에 맞추는 transform
+      const padR = parseFloat(scs.paddingRight) || 0, padB = parseFloat(scs.paddingBottom) || 0;
+      let right = Math.max(sr.right, boldRight + padR), bottom = sr.bottom;
+      const moves = pairs.map((p, j) => {
+        const leaf = leafOf(p.cn);
+        const k = parseFloat(getComputedStyle(leafOf(p.sn)).fontSize) / parseFloat(getComputedStyle(leaf).fontSize) || 1;
+        const o = L(leaf.getBoundingClientRect()); // transform 기준점(줄 상자 왼쪽 위)
+        const ci = L(inkRect(p.cn));
+        const si = L(inkRect(p.sn));
+        const dx = si.left - o.left - k * (ci.left - o.left);
+        const dy = si.top - o.top - k * (ci.top - o.top);
+        right = Math.max(right, si.left + ci.width * k + padR);
+        bottom = Math.max(bottom, si.top + ci.height * k + padB);
+        const el = leafOf(tNodes[j]);
+        el.style.transformOrigin = '0 0';
+        return { el, t0: `translate(${dx}px, ${dy}px) scale(${k})` };
+      });
+
+      const r0 = parseFloat(scs.borderTopLeftRadius) || 0;
+      const rect = (r, rad) => ({ left: r.left + 'px', top: r.top + 'px', width: (r.right - r.left) + 'px', height: (r.bottom - r.top) + 'px', borderRadius: rad });
+      const mid = { left: sr.left, top: sr.top, right, bottom };
+      const T = LIFT.TINT;
+      const o = { duration: LIFT.MS, easing: 'linear', fill: 'forwards' };
+      const anims = [];
+      const boxA = box.animate([
+        { ...rect(sr, Math.min(r0, sr.height / 2) + 'px'), backgroundColor: scs.backgroundColor, boxShadow: scs.boxShadow, easing: TINT_EASE },
+        { ...rect(mid, Math.min(r0, (bottom - sr.top) / 2) + 'px'), backgroundColor: ccs.backgroundColor, boxShadow: scs.boxShadow, offset: T, easing: GLIDE_EASE },
+        { ...rect(cr, ccs.borderTopLeftRadius), backgroundColor: ccs.backgroundColor, boxShadow: ccs.boxShadow },
       ], o);
-      // 글자: 선택 순간 카드 글자색으로 바뀐 뒤 끝까지 그대로 (사라지거나 겹치지 않음)
-      const ink = g.animate([{ color: color0, easing: TINT_EASE }, { color: ccs.color, offset: PICK.TINT }, { color: ccs.color }], o);
-      fadeCover(1, PICK.LIFT_MS * (1 - PICK.COVER_AT), PICK.LIFT_MS * PICK.COVER_AT);
+      anims.push(boxA);
+      // 물들기: 글자색·굵기를 카드 값으로 (줄은 고정돼 있어 다시 나뉘지 않음)
+      tint.forEach((t) => {
+        const cs0 = getComputedStyle(t.el);
+        anims.push(t.el.animate([
+          { color: cs0.color, fontWeight: cs0.fontWeight, easing: TINT_EASE },
+          { color: t.cs.color, fontWeight: t.cs.fontWeight, offset: T },
+          { color: t.cs.color, fontWeight: t.cs.fontWeight },
+        ], o));
+      });
+      // 물들기가 끝나는 순간 카드 줄바꿈의 글자로 바꿔 끼움 (상자가 움직이기 시작하는 바로 그 순간, 겹침·페이드 없음)
+      anims.push(from.animate([{ opacity: 1 }, { opacity: 1, offset: T }, { opacity: 0, offset: T }, { opacity: 0 }], o));
+      anims.push(to.animate([{ opacity: 0 }, { opacity: 0, offset: T }, { opacity: 1, offset: T }, { opacity: 1 }], o));
+      moves.forEach((m) => {
+        anims.push(m.el.animate([
+          { transform: m.t0 },
+          { transform: m.t0, offset: T, easing: GLIDE_EASE },
+          { transform: 'translate(0px, 0px) scale(1)' },
+        ], o));
+      });
+      fadeCover(1, coverMs, LIFT.MS * coverAt);
+
       const l = { done: false };
       const swap = () => {
         if (l.done) return;
         l.done = true;
         c.style.opacity = ''; // 다 커진 순간 모양이 똑같은 카드로 바꿔 끼움
-        box.cancel();
-        ink.cancel();
-        g.remove();
+        anims.forEach((a) => a.cancel());
+        box.remove(); from.remove(); to.remove();
         if (lift === l) lift = null;
       };
-      box.onfinish = swap;
-      // 들어올리는 중에 다음 픽·해제가 오면 그 자리에서 바로 카드 상태로 (onfinish는 비동기라 직접 바꿈)
-      l.finish = () => { box.onfinish = null; swap(); };
-      lift = l;
+      boxA.onfinish = swap;
+      // 들어올리는 중에 다음 핀·해제가 오면 그 자리에서 바로 카드 상태로 (onfinish는 비동기라 직접 바꿈)
+      l.finish = () => { boxA.onfinish = null; swap(); };
+      return l;
     }
 
     function popIn(c) {
-      if (!prefersReduced()) c.classList.add('pop');
-      fadeCover(1, prefersReduced() ? 1 : 400, 0);
+      if (!prefersReduced()) c.classList.add(popClass);
+      fadeCover(1, prefersReduced() ? 1 : LIFT.POP_COVER_MS, 0);
     }
 
     function hide() {
-      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
       if (lift) lift.finish();
+      releaseSrc();
       const c = card;
       card = null;
       if (!c) return;
@@ -1036,40 +1169,154 @@
       else {
         pinInPlace(c);
         c.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.94)' }],
-          { duration: PICK.HIDE_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
+          { duration: LIFT.HIDE_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
       }
-      fadeCover(0, reduce ? 1 : PICK.HIDE_MS, 0);
-      offTimer = setTimeout(() => { offTimer = null; if (!card) layer.classList.remove('active'); }, reduce ? 0 : PICK.HIDE_MS + 50);
+      fadeCover(0, reduce ? 1 : LIFT.HIDE_MS, 0);
+      if (offTimer) clearTimeout(offTimer);
+      offTimer = setTimeout(() => { offTimer = null; if (!card) layer.classList.remove('active'); }, reduce ? 0 : LIFT.HIDE_MS + 50);
     }
 
     return {
-      // data: answerPicked { id, text }
-      pick(data) {
-        if (!data || typeof data.text !== 'string') return;
+      // c: 새 카드 요소(아직 레이어 밖), s: { el: 화면 말풍선, rect?, hide?(), release?() } 또는 null(팝인)
+      show(c, s) {
         if (offTimer) { clearTimeout(offTimer); offTimer = null; }
         if (lift) lift.finish(); // 들어올리던 중이면 바로 카드 상태로
         if (card) releaseUp(card); // 교체: 기존 카드는 위로 빠지며 사라짐
+        releaseSrc();
         layer.classList.add('active');
-        const c = document.createElement('div');
-        c.className = cardClass;
-        c.textContent = data.text;
         layer.appendChild(c);
         card = c;
-        const src = !prefersReduced() && stream ? stream.find(data.id, data.text) : null;
-        if (src) liftFrom(src, c); else popIn(c);
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(hide, duration);
+        const l = s && !prefersReduced() ? morph(s, c) : null;
+        if (l) {
+          lift = l;
+          src = s;
+          if (s.hide) s.hide();
+        } else {
+          c.style.opacity = '';
+          popIn(c);
+        }
+        return !!l;
       },
       hide,
+      // 즉시 정리 (모드 전환) — 진행 중인 애니메이션과 만든 요소를 모두 걷어냄
       clear() {
-        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
         if (offTimer) { clearTimeout(offTimer); offTimer = null; }
+        if (lift) lift.finish();
+        releaseSrc();
+        if (cover) cover.getAnimations().forEach((a) => a.cancel());
         lift = null;
         card = null;
         cover = null;
         layer.innerHTML = '';
         layer.classList.remove('active');
       },
+      // 창 크기가 바뀌면 진행 중인 들어올리기를 바로 카드 상태로 (잰 좌표가 어긋나므로)
+      settle() { if (lift) lift.finish(); },
+      current: () => card,
+    };
+  }
+
+  // ── 제작진 픽 스포트라이트 (시안 10): 흐르던 답변이 남색으로 물든 뒤 가운데 카드로 늘어남 ──
+  const PICK = {
+    COVER_AT: 0.25,  // 배경 가림막이 깔리기 시작하는 시점
+  };
+
+  // opts: { layer: 스포트라이트 레이어(가운데 정렬 flex), cardClass, stream, duration, scale }
+  function createPickSpotlight(opts) {
+    const stream = opts.stream;
+    const cardClass = opts.cardClass || 'spotlight-card';
+    const duration = opts.duration || 8000;
+    const lift = createLift({ layer: opts.layer, scale: opts.scale, coverAt: PICK.COVER_AT });
+    let hideTimer = null;
+
+    function hide() {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      lift.hide();
+    }
+
+    return {
+      // data: answerPicked { id, text }
+      pick(data) {
+        if (!data || typeof data.text !== 'string') return;
+        lift.settle(); // 들어올리던 중이면 먼저 카드 상태로 (흐르던 답변을 새로 찾기 전에)
+        const c = document.createElement('div');
+        c.className = cardClass;
+        c.textContent = data.text;
+        const it = !prefersReduced() && stream ? stream.find(data.id, data.text) : null;
+        const b = it ? stream.take(it) : null;
+        lift.show(c, b ? { el: b.el, rect: b.rect } : null);
+        if (b) b.el.remove(); // 흐르던 말풍선은 복제본이 이어받았으므로 치움
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(hide, duration);
+      },
+      hide,
+      clear() {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        lift.clear();
+      },
+      settle: lift.settle,
+    };
+  }
+
+  // ── 채팅 핀 (시안 8): 채팅 흐름의 말풍선이 핀 카드 색(세로형 주황·가로형 흰색)으로 물든 뒤 가운데 카드로 떠오름 ──
+  const PIN = {
+    COVER_AT: 0.28,  // 배경(반투명 블러시)이 깔리기 시작하는 시점
+    COVER_MS: 700,
+  };
+
+  // opts: { layer: #chat-pin, feed: 채팅 목록(보이는 영역), findBubble(id) → 말풍선 요소|null,
+  //         canLift() → 지금 말풍선에서 들어올려도 되는지(일시정지면 false),
+  //         cardClass, nickClass, textClass, scale }
+  function createChatPin(opts) {
+    const lift = createLift({ layer: opts.layer, scale: opts.scale, coverAt: PIN.COVER_AT, coverMs: PIN.COVER_MS });
+    let key = null; // 지금 보이는 핀 (같은 핀이 다시 오면 그대로 둠)
+
+    function makeCard(m) {
+      const c = document.createElement('div');
+      c.className = opts.cardClass;
+      const nick = document.createElement('div');
+      nick.className = opts.nickClass;
+      nick.textContent = m.nickname || '';
+      const text = document.createElement('div');
+      text.className = opts.textClass;
+      text.textContent = m.text || '';
+      c.append(nick, text);
+      return c;
+    }
+
+    // 말풍선이 채팅 영역 안에 통째로 보일 때만 (스크롤로 잘렸거나 일시정지면 팝인)
+    function visibleBubble(id) {
+      if (id == null || (opts.canLift && !opts.canLift())) return null;
+      const el = opts.findBubble(id);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const v = opts.feed.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.top >= v.top && r.bottom <= v.bottom && r.left >= v.left && r.right <= v.right ? el : null;
+    }
+
+    function hide() {
+      key = null;
+      lift.hide();
+    }
+
+    return {
+      // message: { id, nickname, text } | null. live: 관리자가 방금 고정함(chatPinned) — 말풍선이 보이면 들어올림.
+      // 접속·채팅 복귀 때 받는 상태(live=false)는 팝인.
+      show(message, live) {
+        if (!message) { if (key !== null || lift.current()) hide(); return; }
+        const k = JSON.stringify([message.id, message.nickname, message.text]);
+        if (k === key && lift.current()) return; // 같은 핀 재전송 — 진행 중 연출 유지
+        key = k;
+        const el = live ? visibleBubble(message.id) : null;
+        lift.show(makeCard(message), el ? {
+          el,
+          hide: () => { el.style.visibility = 'hidden'; },   // 떠오른 말풍선 자리는 비워 둠 (시안처럼)
+          release: () => { el.style.visibility = ''; },      // 교체·해제되면 다시 보임
+        } : null);
+      },
+      hide,
+      clear() { key = null; lift.clear(); },
+      settle: lift.settle,
     };
   }
 
@@ -1083,6 +1330,8 @@
     result: { summarize, createReveal, createBarRace, REVEAL, RACE_MS },
     answers: { create: createAnswerStream, normalize: normText, STREAM },
     cloud: { create: createCloud, size: cloudSize, CLOUD },
+    lift: { create: createLift, LIFT },
     spotlight: { create: createPickSpotlight, PICK },
+    pin: { create: createChatPin, PIN },
   };
 })();

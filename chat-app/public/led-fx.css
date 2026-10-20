@@ -210,30 +210,28 @@
 
 .fx-cloud-count.on { opacity: 1; }
 
-/* ── 제작진 픽 (LedFx.spotlight) ── */
-/* 카드 뒤 배경을 은은하게 가림 (배경색 60%) */
-.fx-pick-cover {
+/* ── 들어올리기 (LedFx.lift — 채팅 핀·제작진 픽 공용) ── */
+/* 카드 뒤 배경을 은은하게 가림 (배경색 60%, 레이어가 --fx-cover로 비율 지정 가능) */
+.fx-lift-cover {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  background: color-mix(in srgb, var(--bg) var(--fx-cover, 60%), transparent);
   opacity: 0;
   pointer-events: none;
 }
 
-/* 말풍선 → 카드로 변하는 동안의 상자 (글자는 em 폭 블록이라 커져도 줄바꿈이 바뀌지 않음) */
-.fx-pick-ghost {
-  margin: 0;
-  overflow: visible;
+/* 말풍선 → 카드로 변하는 동안의 상자와 글자 (자리·크기는 JS가 잰 값으로 지정) */
+.fx-lift-box {
+  position: absolute;
   z-index: 1;
+  pointer-events: none;
   will-change: left, top, width, height;
 }
 
-.fx-pick-ghost > span {
-  display: block;
-  margin: 0 auto;
-  white-space: normal;
-  word-break: keep-all;
-  overflow-wrap: break-word;
+.fx-lift-from,
+.fx-lift-to {
+  z-index: 1;
+  pointer-events: none;
 }
 
 /* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */

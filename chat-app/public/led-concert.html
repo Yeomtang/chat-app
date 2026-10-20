@@ -211,7 +211,7 @@
       justify-content: center;
     }
 
-    /* ── 채팅 핀 팝업 ── */
+    /* ── 채팅 핀 (카드는 핀마다 새로 만든다 — 교체 시 이전 카드가 위로 빠지는 동안 둘이 함께 보임, LedFx.pin) ── */
     #chat-pin {
       display: none;
       position: absolute;
@@ -220,13 +220,14 @@
       justify-content: center;
       padding: 0 calc(32px * var(--u));
       z-index: 15; /* 채팅 위, 투표(20)/리액션(25) 아래 */
-      background: rgba(239, 220, 213, 0.62); /* 반투명 — 뒤에서 채팅이 계속 흐르는 게 보임 */
+      --fx-cover: 62%; /* 배경 가림막(.fx-lift-cover) 반투명 비율 — 뒤에서 채팅이 계속 흐르는 게 보임 */
       pointer-events: none;
     }
 
     #chat-pin.active { display: flex; }
 
-    #chat-pin-card {
+    .chat-pin-card {
+      position: relative; /* 배경 가림막(.fx-lift-cover) 위에 */
       max-width: 72%;        /* 일반적 길이 문장이 2줄로 감김 (짧으면 내용만큼만) */
       background: var(--surface); /* 흰 카드 + 검은 글씨로 가독성 확보 */
       border-radius: calc(20px * var(--u));
@@ -237,18 +238,19 @@
       overflow-wrap: break-word;
     }
 
-    #chat-pin.active #chat-pin-card {
+    /* 말풍선이 채팅 화면에 보이지 않을 때(일시정지·스크롤 밖·재접속)만 팝인 — 보이면 말풍선이 카드로 떠오름 */
+    .chat-pin-card.pop {
       animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
-    #chat-pin-nick {
+    .chat-pin-nick {
       font-size: calc(16px * var(--u));
       font-weight: 700;
       color: var(--ink-soft);
       margin-bottom: calc(6px * var(--u));
     }
 
-    #chat-pin-text {
+    .chat-pin-text {
       font-size: calc(30px * var(--u));
       font-weight: 700;
       color: var(--ink);
@@ -446,7 +448,7 @@
 
     /* 카드는 픽마다 새로 만든다 (교체 시 이전 카드가 위로 빠지는 동안 둘이 함께 보임) */
     .spotlight-card {
-      position: relative; /* 배경 가림막(.fx-pick-cover) 위에 */
+      position: relative; /* 배경 가림막(.fx-lift-cover) 위에 */
       max-width: 86%;
       background: var(--ink);
       color: #fff;
@@ -528,12 +530,7 @@
   </div>
 
   <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
-  <div id="chat-pin">
-    <div id="chat-pin-card">
-      <div id="chat-pin-nick"></div>
-      <div id="chat-pin-text"></div>
-    </div>
-  </div>
+  <div id="chat-pin"></div>
 
   <!-- 리액션 레이어 (하트/붐업 이모지 떠오르는 효과) -->
   <div id="reaction-layer"></div>
@@ -756,6 +753,7 @@
     // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
     if (reveal) { reveal = null; resultBanner.classList.add('active'); }
     cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
+    pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
   });
 
   function initBallState(n) {
@@ -1133,12 +1131,12 @@
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
       LedFx.timer.reset(votingTimer);
-      showChatPin(state.pinnedChat || null); // 재접속 시 핀 상태 복원
+      pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
       return;
     }
 
     // 질문 모드 공통 (voting/result/subjective/subjectiveResult)
-    document.getElementById('chat-pin').classList.remove('active'); // 질문 모드에선 핀 숨김
+    pinFx.clear(); // 질문 모드에선 핀 숨김 (들어올리던 중이어도 바로 정리)
     chatLayer.classList.add('blurred');
     votingLayer.classList.add('active');
     // 채팅 등 다른 화면에서 질문이 새로 시작될 때만 어절 단위 등장 (투표→결과·재접속 땐 그대로)
@@ -1190,6 +1188,7 @@
       votingTimer.style.display = 'none';
       resultBanner.classList.remove('active');
       cloudFx.clear();
+      if (prevMode !== 'subjective') pickFx.clear(); // 새 주관식 질문: 이전 질문의 픽 카드가 남아 있지 않게
       answerFx.start();
     } else if (state.mode === 'subjectiveResult') {
       // 마감: 접수 화면에서 실시간으로 넘어오면 흐르던 답변이 단어 자리로 모이고,
@@ -1302,25 +1301,21 @@
     if (data && data.chatPaused) pauseChat(); else resumeChat();
   });
 
-  // ── 채팅 핀 팝업 (관리자가 특정 채팅을 클릭해 고정) ──
-  const chatPin = document.getElementById('chat-pin');
-  const chatPinNick = document.getElementById('chat-pin-nick');
-  const chatPinText = document.getElementById('chat-pin-text');
-
-  function showChatPin(message) {
-    if (!message) {
-      chatPin.classList.remove('active');
-      return;
-    }
-    chatPinNick.textContent = message.nickname || '';
-    chatPinText.textContent = message.text || '';
-    chatPin.classList.remove('active');
-    void chatPin.offsetWidth; // 교체 시 팝인 애니메이션 재시작
-    chatPin.classList.add('active');
-  }
+  // ── 채팅 핀 (관리자가 특정 채팅을 클릭해 고정) ──
+  // 채팅 화면에 보이는 말풍선이면 카드 색으로 물든 뒤 가운데 카드로 떠오르고, 아니면 카드가 팝인 (LedFx.pin)
+  const pinFx = LedFx.pin.create({
+    layer: document.getElementById('chat-pin'),
+    feed: container,
+    findBubble: (id) => container.querySelector('.led-msg-group[data-id="' + CSS.escape(String(id)) + '"] .led-bubble'),
+    canLift: () => !chatPaused, // 일시정지 중엔 화면이 멈춰 있어 말풍선 대신 팝인
+    cardClass: 'chat-pin-card',
+    nickClass: 'chat-pin-nick',
+    textClass: 'chat-pin-text',
+    scale: () => uScale,
+  });
 
   socket.on('chatPinned', (data) => {
-    showChatPin(data && data.message);
+    pinFx.show(data && data.message, true);
   });
 
   // 접속(재접속 포함)할 때마다 상태를 다시 받고 화면 전용 이벤트를 구독한다
