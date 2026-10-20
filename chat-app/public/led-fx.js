@@ -471,6 +471,608 @@
     return { show, clear, isActive: () => container.classList.contains('active') };
   }
 
+  // ══════════════════════════════════
+  //  주관식: 답변 흘려보내기 · 워드클라우드 · 제작진 픽
+  // ══════════════════════════════════
+  // 서버 computeCloud와 같은 정규화(공백만 정리) — 흘러가는 답변과 클라우드 단어를 맞춰 보기 위해
+  const normText = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+
+  // ── 답변 흘려보내기: 대기열 + 가로 레인 (폭주해도 버리지 않고 고른 밀도로 배출) ──
+  const STREAM = {
+    MAX_QUEUE: 200,     // 대기열 상한 (초과 시 오래된 것부터 포기)
+    LANES: 8,           // 가로 레인 수
+    LANE_COOLDOWN: 3500, // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
+  };
+
+  // opts: { el: 흘려보내기 레이어, scale: () => 화면 배율(--u) }
+  function createAnswerStream(opts) {
+    const el = opts.el;
+    const scale = opts.scale || (() => 1);
+    const queue = [];
+    const laneBusy = new Array(STREAM.LANES).fill(0);
+    let items = []; // 화면에 떠 있는 답변 { el, id, text, anim }
+    let spawnTimer = null;
+    let running = false;
+
+    const laneTop = (lane) => 14 + lane * (68 / (STREAM.LANES - 1)); // 14%~82% 균등 분할
+
+    function pickLane() {
+      const now = performance.now();
+      const free = [];
+      for (let i = 0; i < STREAM.LANES; i++) if (laneBusy[i] <= now) free.push(i);
+      // 모두 사용 중이면 가장 먼저 비는 레인
+      const lane = free.length ? free[Math.floor(Math.random() * free.length)] : laneBusy.indexOf(Math.min(...laneBusy));
+      laneBusy[lane] = now + STREAM.LANE_COOLDOWN;
+      return lane;
+    }
+
+    // 말풍선 하나 (워드클라우드로 모일 때 오른쪽에서 들어오는 답변도 같은 모양)
+    function makeBubble(text, lane) {
+      const b = document.createElement('div');
+      b.className = 'answer-float';
+      b.textContent = text;
+      b.style.fontSize = Math.round((18 + Math.random() * 12) * scale()) + 'px';
+      b.style.top = laneTop(lane == null ? pickLane() : lane) + '%';
+      el.appendChild(b);
+      return b;
+    }
+
+    function spawn(a) {
+      const b = makeBubble(a.text);
+      const w = b.offsetWidth;
+      const sw = el.clientWidth;
+      b.style.left = sw + 'px'; // 오른쪽 밖에서 시작
+      const it = { el: b, id: a.id, text: normText(a.text) };
+      it.anim = b.animate([
+        { transform: 'translateX(0)' },
+        { transform: `translateX(${-(sw + w + 60 * scale())}px)` },
+      ], { duration: 9000 + Math.random() * 5000, easing: 'linear' }); // 9~14초에 걸쳐 통과
+      it.anim.onfinish = () => { b.remove(); items = items.filter((x) => x !== it); };
+      items.push(it);
+    }
+
+    function schedule() {
+      if (spawnTimer || !running) return;
+      const tick = () => {
+        if (!running || !queue.length) { spawnTimer = null; return; }
+        spawn(queue.shift());
+        // 밀린 답변이 많을수록 배출 간격을 자동으로 줄임
+        const delay = queue.length > 60 ? 150 : queue.length > 25 ? 250 : 420;
+        spawnTimer = setTimeout(tick, delay);
+      };
+      spawnTimer = setTimeout(tick, 50);
+    }
+
+    function stop() {
+      running = false;
+      queue.length = 0;
+      if (spawnTimer) { clearTimeout(spawnTimer); spawnTimer = null; }
+    }
+
+    // 흐르던 답변을 지금 보이는 자리에 멈춰 세우고 넘겨준다 (레이어 기준 좌상단 x,y)
+    function detach(it) {
+      const sr = el.getBoundingClientRect();
+      const r = it.el.getBoundingClientRect();
+      it.anim.onfinish = null;
+      it.anim.cancel();
+      it.el.style.left = (r.left - sr.left) + 'px';
+      it.el.style.top = (r.top - sr.top) + 'px';
+      items = items.filter((x) => x !== it);
+      return { el: it.el, id: it.id, text: it.text, x: r.left - sr.left, y: r.top - sr.top, w: r.width, h: r.height, rect: r };
+    }
+
+    return {
+      el,
+      makeBubble,
+      laneTop,
+      // 답변 접수 중: 대기열 배출 시작 (이미 떠 있는 답변은 그대로)
+      start() { el.classList.add('active'); running = true; schedule(); },
+      push(a) {
+        if (!a || typeof a.text !== 'string') return;
+        queue.push({ id: a.id, text: a.text });
+        if (queue.length > STREAM.MAX_QUEUE) queue.shift();
+        schedule();
+      },
+      stop,
+      clear() {
+        stop();
+        items.forEach((it) => { it.anim.onfinish = null; it.anim.cancel(); });
+        items = [];
+        el.innerHTML = '';
+        el.classList.remove('active');
+        el.style.zIndex = '';
+      },
+      // 마감: 배출을 멈추고 화면의 답변을 모두 넘겨받음
+      takeAll() { stop(); return items.slice().map(detach); },
+      // 픽된 답변이 지금 화면에 보이는 말풍선인지 — id 우선, 없으면 같은 글 중 가운데에 가장 가까운 것
+      find(id, text) {
+        const sr = el.getBoundingClientRect();
+        const visible = items.filter((it) => {
+          const r = it.el.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          return r.width > 0 && cx > sr.left && cx < sr.right;
+        });
+        const byId = id != null ? visible.find((it) => it.id === id) : null;
+        if (byId) return byId;
+        const t = normText(text);
+        const mx = sr.left + sr.width / 2, my = sr.top + sr.height / 2;
+        let best = null, bestD = Infinity;
+        visible.forEach((it) => {
+          if (it.text !== t) return;
+          const r = it.el.getBoundingClientRect();
+          const d = Math.hypot(r.left + r.width / 2 - mx, r.top + r.height / 2 - my);
+          if (d < bestD) { bestD = d; best = it; }
+        });
+        return best;
+      },
+      take: detach,
+    };
+  }
+
+  // ── 워드클라우드 (시안 7 "추천"): 흐르던 답변이 자기 단어 자리로 모이며 커짐 → 1등 비추기 → 둥실 ──
+  const CLOUD = {
+    FLY_MS: 1100,      // 답변 하나가 날아가는 시간
+    STAGGER: 70,       // 출발 간격(ms)
+    SPREAD_MAX: 2800,  // 출발 간격 총합 상한 — 답변이 많아도 모이는 시간이 너무 길어지지 않게
+    MAX_FLY: 60,       // 날아가는 말풍선 상한 (나머지 수는 마지막 도착 때 한 번에 반영)
+    SPOT_DELAY: 400,   // 다 모인 뒤 1등 비추기까지
+    SPOT_MS: 2800,     // 1등 비추는 시간
+    TOP_SCALE: 1.25,
+  };
+  // 빈도 비례 18~92px — 지수(^1.6)로 상위 단어가 확실히 크게 (기존 LED 공식)
+  const cloudSize = (count, max) => 18 + 74 * Math.pow(max > 1 ? (count - 1) / (max - 1) : 0.5, 1.6);
+
+  // opts: { wrap: 클라우드 영역, stream: createAnswerStream 결과, colors: CLOUD_COLORS, scale: () => --u }
+  function createCloud(opts) {
+    const wrap = opts.wrap, stream = opts.stream, colors = opts.colors;
+    const scale = opts.scale || (() => 1);
+    let key = null, data = [];
+    let box = null, words = new Map(), max = 1;
+    let flights = [], timers = [], raf = null, flying = false;
+
+    const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+
+    function stopTimers() {
+      timers.forEach(clearTimeout); timers = [];
+      if (raf) cancelAnimationFrame(raf);
+      raf = null;
+      flights = [];
+    }
+
+    // 최종 배치를 flex로 한 번 잡아 단어별 중심을 잰 뒤, 그 자리에 절대 위치로 고정한다
+    // (단어가 커지는 동안 다른 단어가 밀리지 않게)
+    function build(cloud) {
+      wrap.innerHTML = '';
+      words = new Map();
+      box = document.createElement('div');
+      box.className = 'fx-cloud';
+      if (!cloud.length) {
+        const empty = document.createElement('div');
+        empty.className = 'cloud-empty';
+        empty.textContent = '접수된 답변이 없습니다';
+        box.appendChild(empty);
+        wrap.appendChild(box);
+        return;
+      }
+      const u = scale();
+      max = cloud[0].count; // 서버가 빈도순 정렬해서 보냄
+      // 큰 단어가 한쪽에 몰리지 않게 섞되, 1등은 가운데 쪽
+      const rest = cloud.slice(1);
+      for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+      rest.splice(Math.floor(rest.length / 2), 0, cloud[0]);
+      const recs = rest.map((entry, i) => {
+        const s = document.createElement('span');
+        s.className = 'fx-cloud-word';
+        s.textContent = entry.word;
+        s.style.fontSize = Math.round(cloudSize(entry.count, max) * u) + 'px';
+        s.style.color = colors[i % colors.length]; // 표시 순서대로 팔레트 순환 — 이웃끼리 다른 색
+        box.appendChild(s);
+        return { el: s, word: normText(entry.word), count: entry.count, shown: 0 };
+      });
+      wrap.appendChild(box);
+      // offset*은 정수로 반올림돼 폭을 그대로 쓰면 줄이 바뀔 수 있어 실제 사각형으로 잰다
+      // (영역 팝인 배율이 걸려 있을 수 있어 그 배율로 나눔)
+      const bb = box.getBoundingClientRect();
+      const k = bb.width / (box.offsetWidth || 1) || 1;
+      const m = recs.map((r) => { const q = r.el.getBoundingClientRect(); return { x: (q.left - bb.left + q.width / 2) / k, y: (q.top - bb.top + q.height / 2) / k, w: q.width / k, h: q.height / k }; });
+      box.style.width = box.offsetWidth + 'px';
+      box.style.height = box.offsetHeight + 'px';
+      box.classList.add('placed');
+      recs.forEach((r, i) => {
+        // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼 (1등은 똑바로)
+        // 폭은 시안 7과 같게(±10·±15) — 이전 ±45는 고정 자리에서 이웃 단어와 겹침
+        const isFirst = r.word === normText(cloud[0].word);
+        r.cx = m[i].x + Math.round(Math.random() * 20 - 10) * u;
+        r.cy = m[i].y + (isFirst ? 0 : Math.round(Math.random() * 30 - 15) * u);
+        r.h = m[i].h;
+        r.el.style.left = r.cx + 'px';
+        r.el.style.top = r.cy + 'px';
+        r.el.style.width = (Math.ceil(m[i].w) + 2) + 'px'; // 최종 크기 기준 줄바꿈 고정 (반올림 여유 2px, 가운데 정렬이라 티 안 남)
+        r.el.style.setProperty('--rot', (isFirst ? 0 : (Math.random() * 10 - 5).toFixed(1)) + 'deg');
+        if (!words.has(r.word)) words.set(r.word, r);
+      });
+    }
+
+    function setShown(r, n) {
+      r.shown = n;
+      r.el.style.fontSize = Math.round(cloudSize(n, max) * scale()) + 'px';
+    }
+
+    function startBob() {
+      if (prefersReduced()) return;
+      words.forEach((r) => {
+        r.el.classList.remove('pop', 'bump');
+        const d = 4 + Math.random() * 3; // 4~7초 주기, 단어마다 다른 위상
+        r.el.style.setProperty('--bd', d.toFixed(2) + 's');
+        r.el.style.setProperty('--bdl', (-Math.random() * d).toFixed(2) + 's');
+        r.el.classList.add('bob');
+      });
+    }
+
+    // 1등 비추기: 나머지는 흐리게, 1등(동률이면 모두)은 1.25배 + "N명이 같은 답"
+    function spotlightTop(done) {
+      const tops = [...words.values()].filter((r) => r.count === max);
+      if (max <= 1 || !tops.length) { done(); return; } // 전부 1명씩이면 생략
+      const pills = [];
+      words.forEach((r) => {
+        r.el.classList.remove('pop', 'bump');
+        if (r.count === max) r.el.style.setProperty('--s', String(CLOUD.TOP_SCALE));
+        else r.el.classList.add('dim');
+      });
+      tops.forEach((r) => {
+        const p = document.createElement('div');
+        p.className = 'fx-cloud-count';
+        p.textContent = `${max}명이 같은 답`;
+        p.style.left = r.cx + 'px';
+        p.style.top = (r.cy + r.h * 0.75) + 'px';
+        box.appendChild(p);
+        pills.push(p);
+      });
+      requestAnimationFrame(() => requestAnimationFrame(() => pills.forEach((p) => p.classList.add('on'))));
+      later(() => {
+        words.forEach((r) => { r.el.classList.remove('dim'); r.el.style.setProperty('--s', '1'); });
+        pills.forEach((p) => p.classList.remove('on'));
+        later(() => pills.forEach((p) => p.remove()), 600);
+        done();
+      }, CLOUD.SPOT_MS);
+    }
+
+    // 도착: 처음이면 팝인으로 등장, 이후엔 한 단계씩 커지며 통통 (마지막 도착이면 최종 크기로)
+    function arrive(r, last) {
+      const first = r.shown === 0;
+      setShown(r, last ? r.count : Math.min(r.count, r.shown + 1));
+      r.el.classList.remove('pop', 'bump');
+      void r.el.offsetWidth; // 연속 도착 시 애니메이션 재시작
+      r.el.classList.add('in', first ? 'pop' : 'bump');
+    }
+
+    function frame(now) {
+      const u = scale();
+      flights.forEach((f) => {
+        if (f.done || now < f.t0) return;
+        const p = Math.min(1, (now - f.t0) / CLOUD.FLY_MS);
+        const e = 1 - Math.pow(1 - p, 3);
+        if (f.el) {
+          const x = f.sx + (f.tx - f.sx) * e;
+          const y = f.sy + (f.ty - f.sy) * e - Math.sin(p * Math.PI) * 40 * u; // 살짝 포물선
+          f.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${1 - 0.5 * e})`;
+          f.el.style.opacity = String(1 - Math.max(0, (p - 0.6) / 0.4));
+        }
+        if (p >= 1) {
+          f.done = true;
+          if (f.el) f.el.remove();
+          arrive(f.word, f.last);
+        }
+      });
+      if (flights.every((f) => f.done)) { raf = null; landed(); return; }
+      raf = requestAnimationFrame(frame);
+    }
+
+    function finalState(bob) {
+      words.forEach((r) => { setShown(r, r.count); r.el.classList.add('in'); });
+      if (bob) startBob();
+    }
+
+    // 실시간 마감: 흐르던 답변 → 자기 단어로 / 모자란 수는 오른쪽에서 빠르게 들어옴
+    function fly() {
+      const taken = stream.takeAll();
+      const sr = stream.el.getBoundingClientRect();
+      const br = box.getBoundingClientRect();
+      // 단어 중심(클라우드 영역) → 흘려보내기 레이어 좌표
+      const target = (r) => ({ x: br.left - sr.left + r.cx, y: br.top - sr.top + r.cy });
+      const planned = new Map();
+      const n = (r) => planned.get(r) || 0;
+      const plan = [];
+      const fade = (el) => {
+        el.style.transition = 'opacity 0.5s ease';
+        el.style.opacity = '0';
+        later(() => el.remove(), 550);
+      };
+      taken.sort((a, b) => a.x - b.x).forEach((t) => {
+        const r = words.get(t.text);
+        if (r && n(r) < r.count && plan.length < CLOUD.MAX_FLY) { plan.push({ src: t, word: r }); planned.set(r, n(r) + 1); }
+        else fade(t.el); // 상위 40개 밖이거나 상한 초과 → 그냥 사라짐 (수는 도착 때 반영)
+      });
+      // 남은 수: 아직 한 번도 안 온 단어부터, 이후엔 돌아가며 하나씩 — 날아가는 말풍선은 상한까지만
+      const list = [...words.values()];
+      const extra = [];
+      const give = (r) => { extra.push({ src: null, word: r }); planned.set(r, n(r) + 1); };
+      list.forEach((r) => { if (plan.length + extra.length < CLOUD.MAX_FLY && n(r) === 0 && r.count > 0) give(r); });
+      let more = true;
+      while (more && plan.length + extra.length < CLOUD.MAX_FLY) {
+        more = false;
+        for (const r of list) {
+          if (plan.length + extra.length >= CLOUD.MAX_FLY) break;
+          if (n(r) < r.count) { give(r); more = true; }
+        }
+      }
+      for (let i = extra.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [extra[i], extra[j]] = [extra[j], extra[i]]; }
+      // 상한 때문에 하나도 못 받은 단어는 말풍선 없이 제자리에서 등장
+      const silent = list.filter((r) => n(r) === 0).map((r) => ({ src: null, word: r, silent: true }));
+      const all = plan.concat(extra, silent);
+      const lastIdx = new Map();
+      all.forEach((p, i) => lastIdx.set(p.word, i));
+
+      const stagger = Math.min(CLOUD.STAGGER, CLOUD.SPREAD_MAX / Math.max(1, all.length));
+      const now = performance.now();
+      const u = scale();
+      const sw = stream.el.clientWidth;
+      stream.el.style.zIndex = '2'; // 모이는 말풍선이 클라우드 위로 지나가게
+      // 단어는 첫 도착 크기에서 시작 (최종 크기에서 줄어드는 전환이 보이지 않게 전환 없이)
+      words.forEach((r) => {
+        r.el.style.transition = 'none';
+        setShown(r, 1);
+        r.shown = 0;
+        void r.el.offsetWidth;
+        r.el.style.transition = '';
+      });
+      flights = all.map((p, k) => {
+        const t = target(p.word);
+        const f = { word: p.word, last: lastIdx.get(p.word) === k, t0: now + k * stagger, tx: t.x, ty: t.y, el: null };
+        if (p.src) {
+          f.el = p.src.el;
+          f.sx = p.src.x + p.src.w / 2; f.sy = p.src.y + p.src.h / 2;
+          Object.assign(f.el.style, { left: '0px', top: '0px', transform: `translate(${f.sx}px, ${f.sy}px) translate(-50%, -50%)` });
+        } else if (!p.silent) {
+          // 아직 접수 중이던 답변: 출발 시각에 오른쪽 끝 밖에서 만들어져 들어옴
+          f.t0 = Infinity;
+          later(() => {
+            const el = stream.makeBubble(p.word.word);
+            const top = el.offsetTop, w = el.offsetWidth, h = el.offsetHeight;
+            f.sx = sw + w / 2 + (k % 6) * 40 * u; f.sy = top + h / 2;
+            Object.assign(el.style, { left: '0px', top: '0px', transform: `translate(${f.sx}px, ${f.sy}px) translate(-50%, -50%)` });
+            f.el = el;
+            f.t0 = performance.now();
+          }, k * stagger);
+        }
+        return f;
+      });
+      raf = requestAnimationFrame(frame);
+    }
+
+    // 모두 도착 → 흘려보내기 정리 → 1등 비추기 → 둥실
+    function landed() {
+      flying = false;
+      stream.clear();
+      later(() => spotlightTop(startBob), CLOUD.SPOT_DELAY);
+    }
+
+    function clear() {
+      stopTimers();
+      if (flying) stream.clear();
+      flying = false;
+      key = null;
+      data = [];
+      box = null;
+      words = new Map();
+      wrap.innerHTML = '';
+      wrap.classList.remove('active');
+      wrap.style.animation = '';
+    }
+
+    // cloud: 서버의 상위 40개(빈도 내림차순). live: 접수 중 화면에서 실시간으로 마감된 경우만 true
+    function show(cloud, o) {
+      cloud = Array.isArray(cloud) ? cloud : [];
+      const k = JSON.stringify(cloud);
+      if (k === key && wrap.classList.contains('active')) return; // 같은 결과 재전송 — 진행 중 연출 유지
+      const live = !!(o && o.live) && !prefersReduced();
+      clear();
+      key = k; data = cloud;
+      wrap.classList.add('active');
+      if (live) wrap.style.animation = 'none'; // 자리 계산이 팝인 배율에 흔들리지 않게 (등장은 단어별로)
+      build(cloud);
+      if (!live || !words.size) {
+        stream.clear();
+        finalState(true);
+        return;
+      }
+      flying = true;
+      fly();
+    }
+
+    return {
+      show,
+      clear,
+      // 창 크기가 바뀌면 자리 계산이 어긋나므로 최종 모습으로 다시 배치
+      relayout() {
+        if (key === null) return;
+        const cloud = data;
+        clear();
+        show(cloud, { live: false });
+      },
+      isActive: () => key !== null,
+    };
+  }
+
+  // ── 제작진 픽 스포트라이트 (시안 10): 흐르던 답변이 남색으로 물든 뒤 가운데 카드로 늘어남 ──
+  const PICK = {
+    LIFT_MS: 1450,
+    TINT: 0.24,      // 제자리에서 물드는 구간(전체 대비)
+    COVER_AT: 0.25,  // 배경 가림막이 깔리기 시작하는 시점
+    OUT_MS: 500,     // 교체: 기존 카드가 위로 빠짐
+    HIDE_MS: 700,    // 자동 해제: 작아지며 사라짐
+  };
+  const TINT_EASE = 'cubic-bezier(.4,0,.2,1)';
+  const GLIDE_EASE = 'cubic-bezier(.22,.75,.25,1)';
+
+  // opts: { layer: 스포트라이트 레이어(가운데 정렬 flex), cardClass, stream, duration, scale }
+  function createPickSpotlight(opts) {
+    const layer = opts.layer, stream = opts.stream;
+    const cardClass = opts.cardClass || 'spotlight-card';
+    const duration = opts.duration || 8000;
+    const scale = opts.scale || (() => 1);
+    let cover = null, card = null, lift = null, hideTimer = null, offTimer = null;
+
+    function fadeCover(to, ms, delay) {
+      if (!cover) {
+        cover = document.createElement('div');
+        cover.className = 'fx-pick-cover';
+        layer.prepend(cover);
+      }
+      const from = getComputedStyle(cover).opacity;
+      cover.getAnimations().forEach((a) => a.cancel());
+      cover.style.opacity = from;
+      const a = cover.animate([{ opacity: from }, { opacity: to }], { duration: ms, delay: delay || 0, fill: 'forwards', easing: 'ease' });
+      a.onfinish = () => { cover.style.opacity = String(to); a.cancel(); };
+    }
+
+    // 텍스트 노드의 화면상 사각형 (줄이 여럿이면 전체를 감싸는 사각형)
+    function textRect(el) {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      return r.getBoundingClientRect();
+    }
+
+    // 사라지는 카드는 지금 자리에 고정해 흐름에서 뺀다 (새 카드가 가운데 자리를 바로 차지하도록)
+    function pinInPlace(c) {
+      const lr = layer.getBoundingClientRect();
+      const r = c.getBoundingClientRect();
+      c.classList.remove('pop');
+      Object.assign(c.style, { position: 'absolute', left: (r.left - lr.left) + 'px', top: (r.top - lr.top) + 'px', width: r.width + 'px', margin: '0' });
+    }
+
+    function releaseUp(c) {
+      pinInPlace(c);
+      if (prefersReduced()) { c.remove(); return; }
+      c.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${-60 * scale()}px)` }],
+        { duration: PICK.OUT_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
+    }
+
+    // 말풍선 → 카드: 물들기(0~24%) 후 상자가 카드 위치·크기·여백·글자 크기로 변하고,
+    // 글자는 카드와 같은 정렬·줄 간격·굵기로 끝까지 보인 채 이동 → 다 커진 순간 똑같은 카드로 바꿔 끼움
+    function liftFrom(src, c) {
+      const lr = layer.getBoundingClientRect();
+      const b = stream.take(src);
+      const g = b.el;
+      const bcs = getComputedStyle(g);
+      const fs0 = parseFloat(bcs.fontSize);
+      const py0 = parseFloat(bcs.paddingTop), px0 = parseFloat(bcs.paddingLeft);
+      const bg0 = bcs.backgroundColor, color0 = bcs.color, shadow0 = bcs.boxShadow;
+      const radius0 = parseFloat(bcs.borderTopLeftRadius);
+      const bx = b.rect.left - lr.left + b.rect.width / 2, by = b.rect.top - lr.top + b.rect.height / 2;
+
+      // 최종 카드 (숨긴 채 자리 잡기)
+      c.style.opacity = '0';
+      const ccs = getComputedStyle(c);
+      const cr = c.getBoundingClientRect();
+      const fs1 = parseFloat(ccs.fontSize);
+      const lh = parseFloat(ccs.lineHeight) / fs1; // 줄 간격 비율
+      const py1 = parseFloat(ccs.paddingTop), px1 = parseFloat(ccs.paddingLeft);
+      const tr = textRect(c);
+      const lines = Math.max(1, Math.round(tr.height / (lh * fs1)));
+      const emW = (tr.width + 1) / fs1; // 글자 폭(em) — 글자 크기에 비례해 줄바꿈이 중간에 바뀌지 않음
+
+      // 고스트: 흐르던 말풍선 그대로 스포트라이트 레이어로 옮김
+      g.textContent = '';
+      const span = document.createElement('span');
+      span.textContent = b.text;
+      span.style.width = emW + 'em';
+      g.appendChild(span);
+      g.className = 'answer-float fx-pick-ghost';
+      Object.assign(g.style, { transform: 'none', opacity: '1', lineHeight: String(lh), fontWeight: ccs.fontWeight, textAlign: 'center' });
+      layer.appendChild(g);
+
+      const w0 = emW * fs0 + px0 * 2, h0 = lines * lh * fs0 + py0 * 2; // 굵기만 카드에 맞춘 원래 크기
+      const start = { left: (bx - w0 / 2) + 'px', top: (by - h0 / 2) + 'px', width: w0 + 'px', height: h0 + 'px', padding: `${py0}px ${px0}px`, fontSize: fs0 + 'px', borderRadius: Math.min(radius0, h0 / 2) + 'px' };
+      const end = { left: (cr.left - lr.left) + 'px', top: (cr.top - lr.top) + 'px', width: cr.width + 'px', height: cr.height + 'px', padding: `${py1}px ${px1}px`, fontSize: fs1 + 'px', borderRadius: ccs.borderTopLeftRadius };
+      const o = { duration: PICK.LIFT_MS, easing: 'linear', fill: 'forwards' };
+      const box = g.animate([
+        { ...start, backgroundColor: bg0, boxShadow: shadow0, easing: TINT_EASE },
+        { ...start, backgroundColor: ccs.backgroundColor, boxShadow: shadow0, offset: PICK.TINT, easing: GLIDE_EASE },
+        { ...end, backgroundColor: ccs.backgroundColor, boxShadow: ccs.boxShadow },
+      ], o);
+      // 글자: 선택 순간 카드 글자색으로 바뀐 뒤 끝까지 그대로 (사라지거나 겹치지 않음)
+      const ink = g.animate([{ color: color0, easing: TINT_EASE }, { color: ccs.color, offset: PICK.TINT }, { color: ccs.color }], o);
+      fadeCover(1, PICK.LIFT_MS * (1 - PICK.COVER_AT), PICK.LIFT_MS * PICK.COVER_AT);
+      const l = { done: false };
+      const swap = () => {
+        if (l.done) return;
+        l.done = true;
+        c.style.opacity = ''; // 다 커진 순간 모양이 똑같은 카드로 바꿔 끼움
+        box.cancel();
+        ink.cancel();
+        g.remove();
+        if (lift === l) lift = null;
+      };
+      box.onfinish = swap;
+      // 들어올리는 중에 다음 픽·해제가 오면 그 자리에서 바로 카드 상태로 (onfinish는 비동기라 직접 바꿈)
+      l.finish = () => { box.onfinish = null; swap(); };
+      lift = l;
+    }
+
+    function popIn(c) {
+      if (!prefersReduced()) c.classList.add('pop');
+      fadeCover(1, prefersReduced() ? 1 : 400, 0);
+    }
+
+    function hide() {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      if (lift) lift.finish();
+      const c = card;
+      card = null;
+      if (!c) return;
+      const reduce = prefersReduced();
+      if (reduce) c.remove();
+      else {
+        pinInPlace(c);
+        c.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.94)' }],
+          { duration: PICK.HIDE_MS, fill: 'forwards', easing: TINT_EASE }).onfinish = () => c.remove();
+      }
+      fadeCover(0, reduce ? 1 : PICK.HIDE_MS, 0);
+      offTimer = setTimeout(() => { offTimer = null; if (!card) layer.classList.remove('active'); }, reduce ? 0 : PICK.HIDE_MS + 50);
+    }
+
+    return {
+      // data: answerPicked { id, text }
+      pick(data) {
+        if (!data || typeof data.text !== 'string') return;
+        if (offTimer) { clearTimeout(offTimer); offTimer = null; }
+        if (lift) lift.finish(); // 들어올리던 중이면 바로 카드 상태로
+        if (card) releaseUp(card); // 교체: 기존 카드는 위로 빠지며 사라짐
+        layer.classList.add('active');
+        const c = document.createElement('div');
+        c.className = cardClass;
+        c.textContent = data.text;
+        layer.appendChild(c);
+        card = c;
+        const src = !prefersReduced() && stream ? stream.find(data.id, data.text) : null;
+        if (src) liftFrom(src, c); else popIn(c);
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(hide, duration);
+      },
+      hide,
+      clear() {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        if (offTimer) { clearTimeout(offTimer); offTimer = null; }
+        lift = null;
+        card = null;
+        cover = null;
+        layer.innerHTML = '';
+        layer.classList.remove('active');
+      },
+    };
+  }
+
   window.LedFx = {
     prefersReduced,
     easeBack,
@@ -479,5 +1081,8 @@
     balls,
     hearts: { create: createHeartBurst, enabledFrom: heartBurstEnabled, MODES: HEART_MODES },
     result: { summarize, createReveal, createBarRace, REVEAL, RACE_MS },
+    answers: { create: createAnswerStream, normalize: normText, STREAM },
+    cloud: { create: createCloud, size: cloudSize, CLOUD },
+    spotlight: { create: createPickSpotlight, PICK },
   };
 })();

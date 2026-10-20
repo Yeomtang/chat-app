@@ -422,45 +422,7 @@
       animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
-    #cloud {
-      display: flex;
-      flex-wrap: wrap;
-      gap: calc(14px * var(--u)) calc(20px * var(--u));
-      justify-content: center;
-      align-items: center;
-      max-width: 100%;
-    }
-
-    .cloud-word {
-      font-weight: 700; /* 800은 한글 시스템 폰트에 없어 가짜 굵기(획 뭉개짐)가 생김 */
-      line-height: 1.2;
-      word-break: keep-all;
-      overflow-wrap: break-word; /* 20자 답변이 큰 글씨로 커졌을 때 화면 밖으로 나가지 않게 */
-      max-width: 100%;
-      opacity: 0;
-      /* 답변마다 랜덤 오프셋/기울기(JS에서 --dx/--dy/--rot 지정) —
-         한 줄로 이어져 한 사람 답변처럼 보이는 것 방지 */
-      --dx: calc(0px * var(--u));
-      --dy: calc(0px * var(--u));
-      --rot: 0deg;
-      animation: wordIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }
-
-    @keyframes wordIn {
-      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
-      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
-    }
-
-    /* 1등 단어: 마지막에 크게 튕기며 등장 */
-    .cloud-word.top {
-      animation: wordInTop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }
-
-    @keyframes wordInTop {
-      0%   { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0); }
-      60%  { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1.3); }
-      100% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); }
-    }
+    /* 단어·도착·둥실 스타일은 led-fx.css (.fx-cloud*) */
 
     .cloud-empty {
       font-size: calc(17px * var(--u));
@@ -482,7 +444,9 @@
 
     #spotlight.active { display: flex; }
 
-    #spotlight-card {
+    /* 카드는 픽마다 새로 만든다 (교체 시 이전 카드가 위로 빠지는 동안 둘이 함께 보임) */
+    .spotlight-card {
+      position: relative; /* 배경 가림막(.fx-pick-cover) 위에 */
       max-width: 86%;
       background: var(--ink);
       color: #fff;
@@ -497,7 +461,8 @@
       overflow-wrap: break-word;
     }
 
-    #spotlight.active #spotlight-card {
+    /* 픽한 답변이 화면에 흐르고 있지 않을 때만 팝인 (흐르던 답변은 카드로 늘어남 — LedFx.spotlight) */
+    .spotlight-card.pop {
       animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
@@ -591,9 +556,7 @@
     <!-- 주관식: 마감 후 워드클라우드 -->
     <div id="cloud-wrap"></div>
     <!-- 제작진 픽 → 스포트라이트 카드 -->
-    <div id="spotlight">
-      <div id="spotlight-card"></div>
-    </div>
+    <div id="spotlight"></div>
     <div id="result-banner">
       <div class="result-line" id="result-line">YES 00% · NO 00%</div>
     </div>
@@ -792,6 +755,7 @@
     applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
     // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
     if (reveal) { reveal = null; resultBanner.classList.add('active'); }
+    cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
   });
 
   function initBallState(n) {
@@ -1163,11 +1127,9 @@
       chatLayer.classList.remove('blurred');
       votingLayer.classList.remove('active');
       resultBanner.classList.remove('active');
-      answerStream.classList.remove('active');
-      clearAnswerStream();
-      clearSpotlight();
-      cloudWrap.classList.remove('active');
-      cloudWrap.innerHTML = '';
+      answerFx.clear();
+      pickFx.clear();
+      cloudFx.clear();
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
       LedFx.timer.reset(votingTimer);
@@ -1190,11 +1152,9 @@
     const isVote = state.mode === 'voting' || state.mode === 'result';
     if (isVote) {
       // 선택형(YES/NO·N지선다): 공 클러스터 렌더
-      answerStream.classList.remove('active');
-      clearAnswerStream();
-      clearSpotlight();
-      cloudWrap.classList.remove('active');
-      cloudWrap.innerHTML = '';
+      answerFx.clear();
+      pickFx.clear();
+      cloudFx.clear();
       voteOptions = state.voteOptions || [];
       voteType = state.voteType || 'yesno';
       optCount = voteOptions.length;
@@ -1229,187 +1189,56 @@
       if (timerInterval) clearInterval(timerInterval);
       votingTimer.style.display = 'none';
       resultBanner.classList.remove('active');
-      cloudWrap.classList.remove('active');
-      cloudWrap.innerHTML = '';
-      answerStream.classList.add('active');
+      cloudFx.clear();
+      answerFx.start();
     } else if (state.mode === 'subjectiveResult') {
-      // 마감: 흘려보내기 정리 후 워드클라우드
+      // 마감: 접수 화면에서 실시간으로 넘어오면 흐르던 답변이 단어 자리로 모이고,
+      // 재접속(state)이면 최종 워드클라우드를 바로 보여줌
       if (timerInterval) clearInterval(timerInterval);
       votingTimer.style.display = 'none';
       resultBanner.classList.remove('active');
-      answerStream.classList.remove('active');
-      clearAnswerStream();
-      renderCloud(state.cloud || []);
-      cloudWrap.classList.add('active');
+      cloudFx.show(state.cloud || [], { live: !isSnapshot && prevMode === 'subjective' });
     } else if (state.mode === 'emoji') {
       // 이모지 반응: 타이머/배너/공 없음. 이모지는 reaction-layer로 떠오름(emojiFloat)
       if (timerInterval) clearInterval(timerInterval);
       votingTimer.style.display = 'none';
       resultBanner.classList.remove('active');
-      answerStream.classList.remove('active');
-      clearAnswerStream();
-      cloudWrap.classList.remove('active');
-      cloudWrap.innerHTML = '';
+      answerFx.clear();
+      pickFx.clear();
+      cloudFx.clear();
     }
   }
 
-  // ── 주관식: 답변 흘려보내기 (대기열 + 레인 방식) ──
-  // 폭주 시에도 답변을 버리지 않고 줄 세워 고른 밀도로 배출하고,
-  // 가로 레인에 배정해 겹침을 방지한다.
-  const answerQueue = [];
-  const MAX_QUEUE = 200;        // 대기열 상한 (초과 시 오래된 것부터 포기)
-  const LANE_COUNT = 8;         // 가로 레인 수
-  const LANE_COOLDOWN = 3500;   // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
-  const laneBusyUntil = new Array(LANE_COUNT).fill(0);
-  let spawnTimer = null;
+  // ── 주관식: 답변 흘려보내기 · 워드클라우드 · 제작진 픽 ──
+  // 움직임·판단은 LedFx(공용)에서, 여기서는 화면 요소와 설정만 넘긴다
+  const answerFx = LedFx.answers.create({ el: answerStream, scale: () => uScale });
 
-  socket.on('subjectiveAnswer', (data) => {
-    if (currentMode !== 'subjective') return;
-    if (!data || typeof data.text !== 'string') return;
-    answerQueue.push(data.text);
-    if (answerQueue.length > MAX_QUEUE) answerQueue.shift();
-    scheduleSpawn();
-  });
-
-  function scheduleSpawn() {
-    if (spawnTimer) return;
-    const tick = () => {
-      if (currentMode !== 'subjective' || answerQueue.length === 0) {
-        spawnTimer = null;
-        return;
-      }
-      spawnAnswerFloat(answerQueue.shift());
-      // 밀린 답변이 많을수록 배출 간격을 자동으로 줄임
-      const delay = answerQueue.length > 60 ? 150
-                  : answerQueue.length > 25 ? 250
-                  : 420;
-      spawnTimer = setTimeout(tick, delay);
-    };
-    spawnTimer = setTimeout(tick, 50);
-  }
-
-  function clearAnswerStream() {
-    answerQueue.length = 0;
-    if (spawnTimer) { clearTimeout(spawnTimer); spawnTimer = null; }
-    answerStream.innerHTML = '';
-  }
-
-  function pickLane() {
-    const now = performance.now();
-    const free = [];
-    for (let i = 0; i < LANE_COUNT; i++) {
-      if (laneBusyUntil[i] <= now) free.push(i);
-    }
-    let lane;
-    if (free.length > 0) {
-      lane = free[Math.floor(Math.random() * free.length)];
-    } else {
-      // 모두 사용 중이면 가장 먼저 비는 레인
-      lane = laneBusyUntil.indexOf(Math.min(...laneBusyUntil));
-    }
-    laneBusyUntil[lane] = now + LANE_COOLDOWN;
-    return lane;
-  }
-
-  function spawnAnswerFloat(text) {
-    const el = document.createElement('div');
-    el.className = 'answer-float';
-    el.textContent = text;
-    el.style.fontSize = Math.round(18 + Math.random() * 12) + 'px';
-    // 레인 배치: 14%~82% 사이를 균등 분할
-    const lane = pickLane();
-    el.style.top = (14 + lane * (68 / (LANE_COUNT - 1))) + '%';
-    answerStream.appendChild(el);
-
-    const w = el.offsetWidth;
-    const sw = answerStream.clientWidth;
-    el.style.left = sw + 'px'; // 오른쪽 밖에서 시작
-    el.animate([
-      { transform: 'translateX(0)' },
-      { transform: `translateX(${-(sw + w + 60)}px)` },
-    ], {
-      duration: 9000 + Math.random() * 5000, // 9~14초에 걸쳐 통과
-      easing: 'linear',
-    }).onfinish = () => el.remove();
-  }
-
-  // ── 제작진 픽 → 스포트라이트 카드 ──
-  const spotlight = document.getElementById('spotlight');
-  const spotlightCard = document.getElementById('spotlight-card');
-  let spotlightTimer = null;
-  const SPOTLIGHT_DURATION = 8000; // 표시 유지 시간(ms)
-
-  socket.on('answerPicked', (data) => {
-    if (currentMode !== 'subjective' && currentMode !== 'subjectiveResult') return;
-    if (!data || typeof data.text !== 'string') return;
-    spotlightCard.textContent = data.text;
-    spotlight.classList.remove('active');
-    void spotlight.offsetWidth; // 연속 픽 시 애니메이션 재시작
-    spotlight.classList.add('active');
-    if (spotlightTimer) clearTimeout(spotlightTimer);
-    spotlightTimer = setTimeout(() => spotlight.classList.remove('active'), SPOTLIGHT_DURATION);
-  });
-
-  function clearSpotlight() {
-    if (spotlightTimer) { clearTimeout(spotlightTimer); spotlightTimer = null; }
-    spotlight.classList.remove('active');
-  }
-
-  // ── 주관식: 워드클라우드 렌더 ──
   // 인접한 답변이 같은 색이 되지 않도록 팔레트를 순환 배정 (랜덤 X)
   const CLOUD_COLORS = [
     '#1e1e42', '#fb7e55', '#5b5cc4', '#2fb3a3', '#e3557f',
     '#f2a03d', '#4a4a7a', '#c2544a', '#7b6cf0', '#1f8f83',
   ];
+  const cloudFx = LedFx.cloud.create({ wrap: cloudWrap, stream: answerFx, colors: CLOUD_COLORS, scale: () => uScale });
 
-  function renderCloud(cloud) {
-    cloudWrap.innerHTML = '';
-    const inner = document.createElement('div');
-    inner.id = 'cloud';
+  const SPOTLIGHT_DURATION = 8000; // 픽 카드 표시 유지 시간(ms)
+  const pickFx = LedFx.spotlight.create({
+    layer: document.getElementById('spotlight'),
+    cardClass: 'spotlight-card',
+    stream: answerFx,
+    duration: SPOTLIGHT_DURATION,
+    scale: () => uScale,
+  });
 
-    if (!cloud.length) {
-      const empty = document.createElement('div');
-      empty.className = 'cloud-empty';
-      empty.textContent = '접수된 답변이 없습니다';
-      inner.appendChild(empty);
-    } else {
-      const maxCount = cloud[0].count; // 서버가 빈도순 정렬해서 보냄
-      const topEntry = cloud[0];       // 1등 단어 (마지막에 크게 등장)
-      // 큰 단어가 한쪽에 몰리지 않게 표시 순서는 섞음
-      const shuffled = [...cloud];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
+  socket.on('subjectiveAnswer', (data) => {
+    if (currentMode !== 'subjective') return;
+    answerFx.push(data);
+  });
 
-      // 등장 순서: 빈도 낮은 것부터 하나씩 → 1등은 잠깐 뜸 들인 뒤 마지막에 등장
-      const revealOrder = [...cloud].reverse(); // 빈도 오름차순
-      const step = Math.max(80, Math.min(250, Math.round(4000 / cloud.length)));
-      const delayByWord = new Map();
-      revealOrder.forEach((entry, i) => delayByWord.set(entry, i * step));
-      delayByWord.set(topEntry, (cloud.length - 1) * step + 600); // 1등만 추가 딜레이
-
-      shuffled.forEach((entry, i) => {
-        const { word, count } = entry;
-        const span = document.createElement('span');
-        const isTop = entry === topEntry;
-        span.className = 'cloud-word' + (isTop ? ' top' : '');
-        // 빈도 비례 18~92px — 지수(^1.6)를 줘서 상위 단어가 확실히 크게
-        const scale = maxCount > 1 ? (count - 1) / (maxCount - 1) : 0.5;
-        span.style.fontSize = Math.round(18 + 74 * Math.pow(scale, 1.6)) + 'px';
-        // 표시 순서대로 팔레트 순환 — 이웃 답변끼리 항상 다른 색
-        span.style.color = CLOUD_COLORS[i % CLOUD_COLORS.length];
-        // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼
-        span.style.setProperty('--dx', Math.round(Math.random() * 30 - 15) + 'px');
-        span.style.setProperty('--dy', Math.round(Math.random() * 90 - 45) + 'px');
-        span.style.setProperty('--rot', (isTop ? 0 : (Math.random() * 10 - 5).toFixed(1)) + 'deg');
-        span.style.animationDelay = delayByWord.get(entry) + 'ms';
-        span.textContent = word;
-        inner.appendChild(span);
-      });
-    }
-    cloudWrap.appendChild(inner);
-  }
+  // 제작진 픽 → 흐르던 답변이면 카드로 늘어나고, 아니면 카드 팝인 (접수 중/마감 후 모두)
+  socket.on('answerPicked', (data) => {
+    if (currentMode !== 'subjective' && currentMode !== 'subjectiveResult') return;
+    pickFx.pick(data);
+  });
 
   socket.on('state', (s) => applyState(s, true));
   socket.on('modeChange', (s) => applyState(s, false));

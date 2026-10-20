@@ -131,10 +131,120 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── 주관식 워드클라우드 (LedFx.cloud) ──
+   처음엔 flex로 최종 배치를 잡고(.fx-cloud), 잰 자리에 절대 위치로 고정(.placed)한 뒤
+   답변이 도착할 때마다 글자 크기만 커진다 → 다른 단어가 밀리지 않음 */
+.fx-cloud {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(14px * var(--u)) calc(20px * var(--u));
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+}
+
+.fx-cloud.placed {
+  display: block;
+  flex: none;
+}
+
+.fx-cloud-word {
+  font-weight: 700; /* 800은 한글 시스템 폰트에 없어 가짜 굵기(획 뭉개짐)가 생김 */
+  line-height: 1.2;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: break-word; /* 20자 답변이 큰 글씨로 커졌을 때 화면 밖으로 나가지 않게 */
+  max-width: 100%;
+  opacity: 0;
+}
+
+.fx-cloud.placed .fx-cloud-word {
+  position: absolute;
+  max-width: none;
+  transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(var(--s, 1));
+  transition: opacity 0.6s ease, font-size 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fx-cloud-word.in { opacity: 1; }
+.fx-cloud-word.in.dim { opacity: 0.22; } /* 1등 비추는 동안 나머지 */
+
+/* 첫 도착 = 공용 popIn 모양 / 이후 도착 = 한 번 통통 / 다 모이면 은은하게 둥실 (scale·translate 개별 속성이라 기울기·배율과 겹치지 않음) */
+.fx-cloud-word.pop { animation: fxCloudPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.fx-cloud-word.bump { animation: fxCloudBump 0.45s ease; }
+.fx-cloud-word.bob { animation: fxCloudBob var(--bd, 5s) ease-in-out var(--bdl, 0s) infinite; }
+
+@keyframes fxCloudPop {
+  0%   { opacity: 0; scale: 0.4; }
+  60%  { opacity: 1; scale: 1.05; }
+  100% { opacity: 1; scale: 1; }
+}
+
+@keyframes fxCloudBump {
+  0%   { scale: 1; }
+  40%  { scale: 1.18; }
+  100% { scale: 1; }
+}
+
+@keyframes fxCloudBob {
+  0%, 100% { translate: 0 0; }
+  50%      { translate: 0 calc(-6px * var(--u)); }
+}
+
+/* 1등 아래 "N명이 같은 답" */
+.fx-cloud-count {
+  position: absolute;
+  transform: translate(-50%, 0);
+  white-space: nowrap;
+  font-size: calc(22px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--surface);
+  border-radius: calc(999px * var(--u));
+  padding: calc(4px * var(--u)) calc(16px * var(--u));
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  z-index: 1;
+}
+
+.fx-cloud-count.on { opacity: 1; }
+
+/* ── 제작진 픽 (LedFx.spotlight) ── */
+/* 카드 뒤 배경을 은은하게 가림 (배경색 60%) */
+.fx-pick-cover {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 말풍선 → 카드로 변하는 동안의 상자 (글자는 em 폭 블록이라 커져도 줄바꿈이 바뀌지 않음) */
+.fx-pick-ghost {
+  margin: 0;
+  overflow: visible;
+  z-index: 1;
+  will-change: left, top, width, height;
+}
+
+.fx-pick-ghost > span {
+  display: block;
+  margin: 0 auto;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
 /* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */
 @media (prefers-reduced-motion: reduce) {
   .fx-word.in { animation: none; opacity: 1; }
   .fx-hidden,
   .fx-bars,
-  .fx-bar-row { transition: none; }
+  .fx-bar-row,
+  .fx-cloud.placed .fx-cloud-word,
+  .fx-cloud-count { transition: none; }
+  .fx-cloud-word.pop,
+  .fx-cloud-word.bump,
+  .fx-cloud-word.bob { animation: none; }
 }
