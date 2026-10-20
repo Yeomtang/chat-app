@@ -637,6 +637,45 @@
     }
     .notice-bar.warn { background: var(--warn); }
 
+    /* ── 키 없음/틀림 안내 ── 입장·채팅 화면 어디서든 보이도록 상단 고정, 인증될 때까지 유지 */
+    .auth-notice {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 200;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px 10px 16px;
+      border-radius: 14px;
+      background: var(--warn);
+      color: var(--surface);
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.4;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      box-shadow: 0 6px 18px rgba(30, 30, 66, 0.16);
+    }
+    .auth-notice.visible {
+      display: flex;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+    .auth-notice span { flex: 1; min-width: 0; }
+    .auth-notice button {
+      flex-shrink: 0;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: var(--surface);
+      color: var(--warn);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
     #send-btn {
       width: 34px;
       height: 34px;
@@ -659,6 +698,11 @@
 <body>
 
 <!-- 입장 화면 (운영자) -->
+<div class="auth-notice" id="auth-notice" role="alert">
+  <span>운영진 키가 필요합니다. 키를 넣기 전까지 운영자 표시·삭제가 되지 않습니다.</span>
+  <button onclick="if (nickSocket) askStaffKey(nickSocket)">키 입력</button>
+</div>
+
 <div id="entrance">
   <h1>운영자 채팅</h1>
   <p>진행자·제작진용 채팅입니다.<br>화면에 표시될 이름을 입력하세요.</p>
@@ -864,7 +908,7 @@
   let staffKey = loadStaffKey();
   function askStaffKey(sock) {
     const k = prompt('운영진 키가 필요합니다. 키를 입력해주세요.');
-    if (!k) return;
+    if (!k) return; // 취소해도 상단 안내의 [키 입력]으로 다시 물을 수 있다
     staffKey = k.trim();
     try { localStorage.setItem(STAFF_KEY_STORE, staffKey); } catch {}
     sock.disconnect().connect(); // 새 키로 재접속 (auth는 접속할 때마다 staffKey를 읽음)
@@ -874,14 +918,24 @@
   function requestNickname() {
     if (!nickSocket) {
       nickSocket = io({ auth: (cb) => cb({ key: staffKey, clientId }) });
-      nickSocket.on('authError', () => askStaffKey(nickSocket));
+      // 서버는 소켓당 authError를 1번만 보내므로, 인증될 때까지 상단 안내를 계속 띄워 둔다.
+      // 접속 때 registerOperator → identify 순서로 보내므로, state가 올 때까지 authError가 없었으면 인증된 것이다.
+      let authErrorSinceConnect = false;
+      const setAuthNeeded = (need) => document.getElementById('auth-notice').classList.toggle('visible', need);
+      nickSocket.on('authError', () => {
+        authErrorSinceConnect = true;
+        setAuthNeeded(true);
+        askStaffKey(nickSocket);
+      });
+      nickSocket.on('state', () => { if (!authErrorSinceConnect) setAuthNeeded(false); });
 
       // 연결 상태 안내 — 끊기면 입력창 위에 계속 표시, 다시 연결되면 숨김
       nickSocket.on('disconnect', () => showNotice('연결이 끊겼어요. 다시 연결하는 중…', { sticky: true }));
       nickSocket.on('connect', hideNotice);
       nickSocket.on('connect', () => {
+        authErrorSinceConnect = false;
+        nickSocket.emit('registerOperator'); // 이 소켓의 채팅은 운영자로 표시 (키가 틀리면 여기서 authError)
         nickSocket.emit('identify', clientId);
-        nickSocket.emit('registerOperator'); // 이 소켓의 채팅은 운영자로 표시
       });
       // 이전 메시지 수신
       nickSocket.on('history', (messages) => {
