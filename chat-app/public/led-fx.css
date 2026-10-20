@@ -677,6 +677,9 @@
 /* 마이크 화면(?mic=1)만: 권한 거부 등 작은 안내 */
 .fx-mic-warn {
   display: none;
+  white-space: pre-line; /* 키 안내와 탭 안내가 함께면 두 줄로 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
   position: absolute;
   left: 50%;
   bottom: calc(16px * var(--u));

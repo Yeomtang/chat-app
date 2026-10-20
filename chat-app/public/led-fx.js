@@ -1938,12 +1938,18 @@
     let timer = null, running = false, run = 0, key = null;
     let baseline = null, samples = [], t0 = 0;
     let warnKind = null, tapArmed = false;
+    let authMsg = '', statusMsg = '';
 
-    // kind: 'denied'(권한·장치 — 다음 측정 전까지 유지) | 'suspended'(탭 안내 — 측정이 끝나면 지움) | 'auth'(운영진 키 — 계속 유지)
+    // 안내 두 칸을 따로 둔다 — 운영진 키 안내(auth)는 측정 상태 안내가 나오고 사라져도 지워지지 않게.
+    // 상태 kind: 'denied'(권한·장치 — 다음 측정 전까지 유지) | 'suspended'(탭 안내 — 측정이 끝나면 지움)
+    function render() {
+      warnEl.textContent = [authMsg, statusMsg].filter(Boolean).join('\n'); // 둘 다면 위아래로 (CSS pre-line)
+      warnEl.classList.toggle('active', !!(authMsg || statusMsg));
+    }
     function warn(msg, kind) {
       warnKind = msg ? kind || null : null;
-      warnEl.textContent = msg || '';
-      warnEl.classList.toggle('active', !!msg);
+      statusMsg = msg || '';
+      render();
     }
 
     // 소리가 멈춰 있으면(자동재생 정책) 화면을 한 번 누르면 재개 — 리스너는 한 번만 걸어 둔다
@@ -2015,7 +2021,7 @@
         ensure().then(() => {
           if (my !== run || !running) return;
           if (ctx.state !== 'running') { warn('마이크 소리가 멈춰 있어요 — 화면을 한 번 눌러 주세요', 'suspended'); resumeOnTap(); }
-          else if (warnKind !== 'auth') warn(''); // 키 안내는 측정을 다시 시작해도 남김
+          else warn(''); // 지난 상태 안내만 지움 (키 안내는 따로라 그대로 남음)
           t0 = performance.now();
           timer = setInterval(tick, MIC.SEND_MS);
         }).catch((e) => {
@@ -2035,7 +2041,7 @@
         if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
       },
       // 서버가 이 화면의 레벨을 받지 않을 때(운영진 키 없음·틀림) — 측정 시작과 무관하게 계속 띄움
-      authWarn(msg) { warn(msg || '', msg ? 'auth' : null); },
+      authWarn(msg) { authMsg = msg || ''; render(); },
       gain,
     };
   }
