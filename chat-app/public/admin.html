@@ -783,10 +783,8 @@
   });
 
   // 함성 레벨 실시간 중계 — 최대 초당 10회 정도 들어오므로 전체 재렌더 없이 바·최고치만 갱신
-  let applauseLiveLevel = 0;
   socket.on('applauseLevel', (data) => {
     if (!data) return;
-    applauseLiveLevel = data.level;
     if (currentState) currentState.applause.peak = data.peak;
     document.getElementById('applause-bar-fill').style.width = Math.round((data.level || 0) * 100) + '%';
     document.getElementById('applause-peak').textContent = Math.round((data.peak || 0) * 100) + '%';
@@ -860,7 +858,6 @@
   function renderApplause() {
     const mode = currentState ? currentState.mode : null;
     if (mode === 'applause' && prevApplauseMode !== 'applause') {
-      applauseLiveLevel = 0;
       document.getElementById('applause-bar-fill').style.width = '0%';
     }
     prevApplauseMode = mode;
