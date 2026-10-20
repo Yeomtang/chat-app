@@ -510,9 +510,9 @@
       flex-direction: column;
       background: var(--surface);
       color: var(--ink);
-      padding: 8px 14px 10px;
+      align-self: flex-start; /* 글 길이에 맞춘 말풍선 (넓은 화면에서 가로로 늘어나지 않게) */
+      padding: 8px 16px 10px;
       border-radius: 18px;
-      border-bottom-left-radius: 4px;
       box-shadow: 0 3px 12px rgba(30, 30, 66, 0.07);
       font-size: 15px;
       line-height: 1.4;
@@ -537,9 +537,9 @@
     .host-del:active { background: var(--warn); color: #fff; }
 
     .msg-nickname {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--ink-soft);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--orange-deep); /* 닉네임 강조 — LED 화면과 같은 색 */
       margin-bottom: 2px;
     }
 

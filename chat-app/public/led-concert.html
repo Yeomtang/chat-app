@@ -129,8 +129,7 @@
       flex-direction: column;
       background: var(--surface);
       padding: calc(10px * var(--u)) calc(16px * var(--u)) calc(13px * var(--u));
-      border-radius: calc(20px * var(--u));
-      border-bottom-left-radius: calc(5px * var(--u));
+      border-radius: calc(20px * var(--u)); /* 네 모서리 균일 — 관객 화면 말풍선과 같은 모양 */
       box-shadow: 0 calc(4px * var(--u)) calc(14px * var(--u)) rgba(30, 30, 66, 0.07);
       /* 가로형: 말풍선이 화면 폭 전체로 늘어나지 않도록 제한 */
       max-width: 62%;
@@ -145,8 +144,8 @@
 
     .led-nickname {
       font-size: calc(14px * var(--u));
-      font-weight: 600;
-      color: var(--ink-faint);
+      font-weight: 700;
+      color: var(--orange-deep); /* 닉네임 강조 — 관객 화면과 같은 색 */
       margin-bottom: calc(3px * var(--u));
       letter-spacing: calc(0.2px * var(--u));
     }
