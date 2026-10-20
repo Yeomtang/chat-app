@@ -171,6 +171,8 @@
       flex-wrap: wrap;
     }
     .chat-actions .btn { flex: 1 1 160px; min-width: 0; }
+    /* 버튼 줄 바로 아래 목록(엔딩 카드의 결과 목록) — 다른 카드처럼 버튼과 띄움 */
+    .chat-actions + .preset-list { margin-top: 12px; }
 
     .preset-list {
       display: flex;
@@ -223,6 +225,44 @@
       color: #ff3b30;
       font-size: 16px;
       padding: 4px 6px;
+    }
+    /* 삭제 2클릭 확인 상태 — 짧은 문구로 줄 폭을 거의 바꾸지 않는다 */
+    .preset-item .remove-btn.confirming {
+      background: #ff3b30;
+      color: #fff;
+      font-size: 12px;
+      padding: 6px 10px;
+      white-space: nowrap;
+    }
+
+    /* 키 없음/틀림 안내 — 인증될 때까지 계속 보인다 */
+    .auth-notice {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: #ffe1de;
+      color: #ff3b30;
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 700;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    .auth-notice.visible { display: flex; }
+    .auth-notice span { flex: 1; min-width: 0; }
+    .auth-notice button {
+      flex-shrink: 0;
+      background: #ff3b30;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
     }
 
     .empty-hint {
@@ -516,6 +556,10 @@
 <div class="wrap">
   <h1>제작진 관리 화면 (임시)</h1>
   <p class="note">정식 관리자 화면이 만들어지기 전까지 사용하는 테스트용 컨트롤 패널입니다.</p>
+  <div class="auth-notice" id="auth-notice" role="alert">
+    <span>관리자 키가 필요합니다. 키를 넣기 전까지 조작이 반영되지 않습니다.</span>
+    <button onclick="askStaffKey(socket)">키 입력</button>
+  </div>
 
   <div class="admin-grid">
   <!-- ── 왼쪽 열: 운영/제어 ── -->
@@ -730,13 +774,18 @@
   let staffKey = loadStaffKey();
   function askStaffKey(sock) {
     const k = prompt('관리자 키가 필요합니다. 키를 입력해주세요.');
-    if (!k) return;
+    if (!k) return; // 취소해도 화면 위 안내의 [키 입력]으로 다시 물을 수 있다
     staffKey = k.trim();
     try { localStorage.setItem(STAFF_KEY_STORE, staffKey); } catch {}
     sock.disconnect().connect(); // 새 키로 재접속 (auth는 접속할 때마다 staffKey를 읽음)
   }
   const socket = io({ auth: (cb) => cb({ key: staffKey }) });
-  socket.on('authError', () => askStaffKey(socket));
+  // 서버는 소켓당 authError를 1번만 보내므로, 인증될 때까지 안내를 계속 띄워 둔다.
+  // state는 관리자 키로 접속한 소켓만 받으므로(admin:getState 응답) 받으면 인증된 것으로 본다.
+  function setAuthNeeded(need) {
+    document.getElementById('auth-notice').classList.toggle('visible', need);
+  }
+  socket.on('authError', () => { setAuthNeeded(true); askStaffKey(socket); });
   // 질문 사전 등록 목록 — 서버에서 받아 모든 관리자 PC가 공유 (아래 socket.on('presets'))
   let presets = [];
   let currentState = null;
@@ -764,6 +813,7 @@
   });
 
   socket.on('state', (state) => {
+    setAuthNeeded(false);
     currentState = state;
     renderState();
   });
@@ -897,10 +947,37 @@
     return '-';
   }
 
+  // 이전/다음을 서버 응답 전에 연달아 눌러도 누른 만큼 넘어가도록, 보낸 목표 위치를 따로 들고 있는다.
+  // 서버가 그 위치를 알려 오면(또는 엔딩이 끝나거나 2초가 지나면) 서버 값으로 돌아간다.
+  let endingTarget = null;
+  let endingTargetTimer = null;
+  function clearEndingTarget() {
+    endingTarget = null;
+    clearTimeout(endingTargetTimer);
+  }
+  function syncEndingTarget() {
+    if (endingTarget === null) return;
+    const inEnding = currentState && currentState.mode === 'ending' && currentState.ending;
+    if (!inEnding || currentState.ending.index === endingTarget) clearEndingTarget();
+  }
+  function endingGoBy(step) {
+    if (!currentState || currentState.mode !== 'ending' || !currentState.ending) return;
+    const total = currentState.ending.slides.length;
+    const base = endingTarget !== null ? endingTarget : currentState.ending.index;
+    const target = Math.min(total - 1, Math.max(0, base + step));
+    if (target === base) return;
+    endingTarget = target;
+    clearTimeout(endingTargetTimer);
+    endingTargetTimer = setTimeout(() => { clearEndingTarget(); renderEnding(); }, 2000); // 응답이 엇갈려도 서버 값으로 복귀
+    socket.emit('admin:endingGo', { index: target });
+    renderEnding();
+  }
+
   function renderEnding() {
+    syncEndingTarget();
     const e = (currentState && currentState.ending) || { index: 0, slides: [] };
     const total = e.slides.length;
-    const idx = e.index;
+    const idx = endingTarget !== null ? endingTarget : e.index;
     document.getElementById('ending-progress').textContent = total ? `${idx + 1} / ${total}` : '0 / 0';
     document.getElementById('ending-slide-title').textContent = slideTitle(e.slides[idx]);
     document.getElementById('results-count').textContent = (currentState && currentState.resultsCount) || 0;
@@ -914,9 +991,18 @@
     socket.emit('admin:startEnding');
   }
 
+  // 삭제 확인 대기 중인 결과 id — 목록이 다시 그려져도(다른 관리자의 변경 등) 그 항목이 남아 있으면 유지
+  let pendingRemoveId = null;
+  let pendingRemoveTimer = null;
+  function clearPendingRemove() {
+    pendingRemoveId = null;
+    clearTimeout(pendingRemoveTimer);
+  }
+
   // 오늘의 결과 목록 — 엔딩 슬라이드 순서와 같게(오래된 순), 한 건만 삭제 가능
   function renderResults() {
     const list = document.getElementById('results-list');
+    if (pendingRemoveId !== null && !resultsList.some(r => r.id === pendingRemoveId)) clearPendingRemove();
     if (resultsList.length === 0) {
       list.innerHTML = '<div class="empty-hint">기록된 결과가 없습니다</div>';
       return;
@@ -938,23 +1024,20 @@
       main.append(el('span', `preset-tag ${t[0]}`, t[1]), el('span', 'preset-q', `질문 ${i + 1}. ${r.question}`));
       main.append(el('span', 'preset-detail', r.summary));
       const actions = el('div', 'preset-actions');
-      const removeBtn = el('button', 'remove-btn', '✕');
-      // 결과 기록 비우기와 같은 2클릭 확인 패턴(버튼별로 독립된 상태)
-      let confirming = false;
-      let timer = null;
+      // 결과 기록 비우기와 같은 2클릭 확인 패턴 — 위치가 아닌 서버가 붙인 id로 지운다
+      const confirming = pendingRemoveId === r.id;
+      const removeBtn = el('button', confirming ? 'remove-btn confirming' : 'remove-btn', confirming ? '삭제?' : '✕');
       removeBtn.addEventListener('click', () => {
-        if (!confirming) {
-          confirming = true;
-          removeBtn.textContent = '한 번 더 누르면 삭제';
-          timer = setTimeout(() => {
-            confirming = false;
-            removeBtn.textContent = '✕';
-          }, 3000);
+        if (pendingRemoveId !== r.id) {
+          clearPendingRemove();
+          pendingRemoveId = r.id;
+          pendingRemoveTimer = setTimeout(() => { clearPendingRemove(); renderResults(); }, 3000);
+          renderResults();
           return;
         }
-        clearTimeout(timer);
-        confirming = false;
-        socket.emit('admin:removeResult', { index: i });
+        clearPendingRemove();
+        socket.emit('admin:removeResult', { id: r.id });
+        renderResults();
       });
       actions.append(removeBtn);
       item.append(main, actions);
@@ -962,15 +1045,8 @@
     });
   }
 
-  function endingGoPrev() {
-    if (!currentState || !currentState.ending) return;
-    socket.emit('admin:endingGo', { index: currentState.ending.index - 1 });
-  }
-
-  function endingGoNext() {
-    if (!currentState || !currentState.ending) return;
-    socket.emit('admin:endingGo', { index: currentState.ending.index + 1 });
-  }
+  function endingGoPrev() { endingGoBy(-1); }
+  function endingGoNext() { endingGoBy(1); }
 
   // 결과 기록 비우기 — 되돌릴 수 없으므로 confirm() 대신 버튼을 눌러 다시 확인(2클릭)
   let clearResultsConfirming = false;
