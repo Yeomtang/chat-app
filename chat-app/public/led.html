@@ -268,6 +268,37 @@
       filter: drop-shadow(0 calc(2px * var(--u)) calc(6px * var(--u)) rgba(0, 0, 0, 0.15));
     }
 
+    /* ── 하트 폭발 (LedFx.hearts) — 화면 가운데 큰 하트 + 링 파티클 ── */
+    .fx-burst {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+
+    .fx-burst-heart,
+    .fx-burst-dot {
+      position: absolute;
+      left: 0;
+      top: 0;
+      will-change: transform, opacity;
+    }
+
+    .fx-burst-heart {
+      line-height: 1;
+      filter: drop-shadow(0 calc(6px * var(--u)) calc(16px * var(--u)) rgba(30, 30, 66, 0.18));
+    }
+
+    .fx-burst-dot { border-radius: 50%; }
+
+    /* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */
+    @media (prefers-reduced-motion: reduce) {
+      .fx-word.in { animation: none; opacity: 1; }
+      #voting-timer.hot { animation: none; }
+    }
+
     /* ── 투표 오버레이 레이어 ── */
     #voting-layer {
       position: absolute;
@@ -329,6 +360,20 @@
       color: #fff;
       font-size: calc(20px * var(--u));
       font-weight: 700;
+      transition: background-color 0.4s ease, color 0.4s ease;
+    }
+
+    /* 마지막 5초: 경고색 + 1초 맥박 (LedFx.timer가 .hot 토글).
+       transform이 위치 잡기(translate)에 쓰이므로 맥박 키프레임에도 함께 적는다 */
+    #voting-timer.hot {
+      background: var(--warn);
+      color: var(--surface);
+      animation: timerPulse 1s ease-in-out infinite;
+    }
+
+    @keyframes timerPulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50%      { transform: translate(-50%, -50%) scale(1.12); }
     }
 
     #voting-question {
@@ -338,6 +383,17 @@
       line-height: 1.4;
       word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
       overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
+    }
+
+    /* 질문 등장: 어절마다 공용 popIn을 140ms 간격으로 (LedFx.question이 지연 시간 지정) */
+    .fx-word {
+      display: inline-block;
+      max-width: 100%;
+      opacity: 0;
+    }
+
+    .fx-word.in {
+      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
     /* 공 상자 영역: 위로는 질문 카드, 아래로는 결과 배너와 겹치지 않도록 여백 확보 */
@@ -575,6 +631,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="/led-fx.js"></script>
 <script>
   const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
   const MAX_BUFFER = 300; // 일시정지 중에도 누적되는 메시지 버퍼 상한(메모리 보호용)
@@ -695,7 +752,6 @@
   // 그 값을 모든 보기에 똑같이 적용한다(보기마다 크기가 다르면 양 비교가 왜곡됨).
   const BALL_MIN_R = 2.5;
   const BALL_MAX_R = 15;  // 표가 적을 땐 이 크기를 유지해 차오르는 과정이 보이게
-  const POP_DURATION = 450; // 새 공 등장 시 팝 애니메이션(ms)
 
   // ── 보기 상자 ── 시안대로 컬러 헤더 + 흰 본문, 공이 그 안에 담김
   const BOX = { headerH: 46, pad: 16, radius: 18, gap: 22, minW: 120, marginRatio: 0.11 };
@@ -708,7 +764,7 @@
   }
   const BOX_FONT = "'Pretendard Variable', Pretendard, -apple-system, sans-serif";
 
-  // 보기별 공 목록: ballState[i] = { balls: [{ x, y, tx, ty, phase, bornAt }] }
+  // 보기별 공 목록: ballState[i] = { balls: [{ x, y, tx, ty, phase, drop }] } (drop = 낙하 중 정보, LedFx.balls)
   let ballState = [];
   let ballR = BALL_MAX_R;    // 목표 공 반지름
   let curBallR = BALL_MAX_R; // 실제 렌더 반지름 (목표값으로 부드럽게 수렴)
@@ -851,12 +907,6 @@
     ctx.restore();
   }
 
-  function easeOutBack(t) {
-    const c1 = 1.70158;
-    const c3 = c1 + 1;
-    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-  }
-
   // ── 벌집 쌓기 ── 상자 바닥부터 한 줄씩 채워 올린다. 쌓인 높이가 곧 표 수.
   const BALL_GAP = 1.1;   // 공 사이 간격 배율 (1이면 딱 붙어 겹쳐 보임)
   const HEADROOM = 1.12;  // 1등 보기가 천장에 닿지 않도록 남기는 여유
@@ -918,14 +968,22 @@
     });
   }
 
-  // 표 개수에 맞춰 공 배열 길이 조정. 새 공은 상자 바닥 가운데에서 생겨나 제자리로 날아간다.
-  function syncBalls(i, desired) {
+  // 표 개수에 맞춰 공 배열 길이 조정. 새 공은 헤더 바로 아래, 자기 자리 바로 위에서 떨어진다.
+  // snap=true(모드 진입·재접속)면 낙하 없이 제자리에 바로 놓는다.
+  function syncBalls(i, desired, snap) {
     const arr = ballState[i].balls;
-    const box = boxRect(i);
-    const sx = box.x + box.w / 2;
-    const sy = box.y + box.h - BOX.pad;
-    while (arr.length < desired) {
-      arr.push({ x: sx, y: sy, tx: sx, ty: sy, phase: Math.random() * Math.PI * 2, bornAt: performance.now() });
+    if (arr.length < desired) {
+      const box = boxRect(i);
+      const pos = hexPositions(box, curBallR, desired);
+      const fromY = box.y + BOX.headerH + curBallR;
+      const now = performance.now();
+      let order = 0;
+      while (arr.length < desired) {
+        const slot = pos[arr.length];
+        const ball = { x: slot.x, y: slot.y, tx: slot.x, ty: slot.y, phase: Math.random() * Math.PI * 2, drop: null };
+        if (!snap) LedFx.balls.startDrop(ball, fromY, order++, now);
+        arr.push(ball);
+      }
     }
     while (arr.length > desired) arr.pop();
   }
@@ -939,7 +997,7 @@
     if (snap) curBallR = ballR;
     for (let i = 0; i < optCount; i++) {
       if (!ballState[i]) continue;
-      syncBalls(i, (perOption && perOption[i]) || 0);
+      syncBalls(i, (perOption && perOption[i]) || 0, snap);
       repackSide(i);
     }
   }
@@ -947,16 +1005,20 @@
   function drawBalls(balls, radius, color, time) {
     const jitter = radius * 0.07; // 흔들림도 공 크기에 비례 (겹쳐 보이지 않을 만큼만)
     ctx.fillStyle = color;
+    const now = performance.now();
     balls.forEach((p) => {
-      p.x += (p.tx - p.x) * 0.12;
-      p.y += (p.ty - p.y) * 0.12;
-      const t = Math.min(1, (performance.now() - p.bornAt) / POP_DURATION);
-      const scale = Math.max(0, t >= 1 ? 1 : easeOutBack(t));
+      // 낙하 중엔 시간 기반 낙하(LedFx.balls), 끝나면 목표 위치로 부드럽게 수렴(반지름 축소 재배치 포함)
+      const st = LedFx.balls.step(p, now);
+      if (!st.dropping) {
+        p.x += (p.tx - p.x) * 0.12;
+        p.y += (p.ty - p.y) * 0.12;
+      }
+      if (!st.visible) return; // 시차를 두고 떨어질 공은 차례가 올 때까지 숨김
       ctx.beginPath();
       ctx.arc(
         p.x + Math.sin(time / 600 + p.phase) * jitter,
         p.y + Math.cos(time / 700 + p.phase) * jitter,
-        radius * scale, 0, Math.PI * 2
+        radius, 0, Math.PI * 2
       );
       ctx.fill();
     });
@@ -1005,6 +1067,7 @@
     if (!votingEndTime) return;
     const remain = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000));
     votingTimer.textContent = remain;
+    LedFx.timer.update(votingTimer, remain); // 마지막 5초 경고색·맥박, 0이면 멈춤
   }
 
   function updateResultLine(counts) {
@@ -1025,8 +1088,11 @@
   const answerStream = document.getElementById('answer-stream');
   const cloudWrap = document.getElementById('cloud-wrap');
 
-  function applyState(state) {
+  // isSnapshot: 접속(재접속) 때 받는 'state' — 질문 등장 연출을 다시 재생하지 않는다
+  function applyState(state, isSnapshot) {
+    const prevMode = currentMode;
     currentMode = state.mode;
+    if (state.effects) heartBurst.setEnabled(LedFx.hearts.enabledFrom(state.effects));
 
     // 채팅 일시정지 상태는 모드와 별개로 항상 서버 값을 따른다(관리자 화면에서 제어)
     if (state.chatPaused) pauseChat(); else resumeChat();
@@ -1042,6 +1108,7 @@
       cloudWrap.innerHTML = '';
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
+      LedFx.timer.reset(votingTimer);
       showChatPin(state.pinnedChat || null); // 재접속 시 핀 상태 복원
       return;
     }
@@ -1050,9 +1117,13 @@
     document.getElementById('chat-pin').classList.remove('active'); // 질문 모드에선 핀 숨김
     chatLayer.classList.add('blurred');
     votingLayer.classList.add('active');
-    votingQuestion.textContent = state.question || '';
+    // 채팅 등 다른 화면에서 질문이 새로 시작될 때만 어절 단위 등장 (투표→결과·재접속 땐 그대로)
+    LedFx.question.render(votingQuestion, state.question, LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
     votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
     layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
+
+    // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음)
+    if (state.mode !== 'voting') LedFx.timer.reset(votingTimer);
 
     const isVote = state.mode === 'voting' || state.mode === 'result';
     if (isVote) {
@@ -1278,8 +1349,13 @@
     cloudWrap.appendChild(inner);
   }
 
-  socket.on('state', applyState);
-  socket.on('modeChange', applyState);
+  socket.on('state', (s) => applyState(s, true));
+  socket.on('modeChange', (s) => applyState(s, false));
+
+  // 관리자가 연출 설정(하트 폭발 on/off)을 바꾸면 화면에 바로 반영
+  socket.on('effectsChange', (data) => {
+    heartBurst.setEnabled(LedFx.hearts.enabledFrom(data && data.effects));
+  });
 
   socket.on('voteUpdate', (data) => {
     if (currentMode !== 'voting') return;
@@ -1291,6 +1367,9 @@
   const MAX_REACTIONS = 80; // 동시 표시 상한 (LED 성능 보호)
 
   const REACTION_EMOJI = { heart: '❤️', thumbs: '👍', down: '👎' };
+
+  // 하트가 3초 안에 40개 이상 몰리면 가운데 큰 하트가 터짐 (채팅·결과·대기 화면에서만)
+  const heartBurst = LedFx.hearts.create(reactionLayer, OPTION_COLORS);
 
   // 이모지 하나를 랜덤 위치에서 떠오르게 (리액션·이모지 질문 공용)
   function spawnFloat(text) {
@@ -1318,6 +1397,7 @@
     const type = data && data.type;
     if (!REACTION_EMOJI[type]) return;
     spawnFloat(REACTION_EMOJI[type]);
+    heartBurst.onReaction(type, currentMode);
   });
 
   // 이모지 반응 질문: 관객이 고른 이모지가 떠오름
