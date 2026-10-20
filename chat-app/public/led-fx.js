@@ -2109,7 +2109,10 @@
     socket.on('history', (history) => {
       // 재접속 때도 history가 다시 오므로 기존 화면·버퍼를 비우고 다시 그린다(중복 표시 방지)
       messages.length = 0;
-      container.innerHTML = '';
+      // 일시정지 중 재접속이면 멈춘 화면은 그대로 둔다 — 비우면 재생할 때까지 채팅창이 빈 화면이 된다.
+      // 버퍼만 history로 다시 채우고(addMessage가 정지 중엔 그리지 않음) 재생 때 최신으로 이어 그린다.
+      // 단, history가 비었으면(채팅 초기화·서버 재시작) 멈춘 화면도 비운다.
+      if (!chatPaused || history.length === 0) container.innerHTML = '';
       const recent = history.slice(-MAX_VISIBLE);
       recent.forEach(addMessage);
       idleFx.reset(history); // 대기 화면 피드: 끊긴 사이 지워진 채팅만 id로 뺌 (남은 말풍선은 그대로)
