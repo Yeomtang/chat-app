@@ -1,0 +1,140 @@
+/* ══════════════════════════════════
+   LED 공용 모션 스타일 (led.html · led-concert.html 공용, led-fx.js와 짝)
+   색은 각 페이지 :root 변수, 크기는 #screen의 --u 배율을 따른다.
+   가로형처럼 글자를 더 키울 화면은 :root에 --fx-k(배율)만 지정한다.
+   ══════════════════════════════════ */
+
+/* ── 질문 등장: 어절마다 공용 popIn을 140ms 간격으로 (LedFx.question이 지연 시간 지정) ── */
+.fx-word {
+  display: inline-block;
+  max-width: 100%;
+  opacity: 0;
+}
+
+.fx-word.in {
+  animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* ── 하트 폭발 (LedFx.hearts) — 화면 가운데 큰 하트 + 링 파티클 ── */
+.fx-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.fx-burst-heart,
+.fx-burst-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform, opacity;
+}
+
+.fx-burst-heart {
+  line-height: 1;
+  filter: drop-shadow(0 calc(6px * var(--u)) calc(16px * var(--u)) rgba(30, 30, 66, 0.18));
+}
+
+.fx-burst-dot { border-radius: 50%; }
+
+/* ── 결과: 막대 경주로 넘어갈 때 공 상자 캔버스를 서서히 숨김 ── */
+.fx-hidden {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+/* ── 객관식 막대 경주 (LedFx.result.createBarRace) — 공 상자와 같은 자리 ── */
+.fx-bars {
+  position: absolute;
+  inset: 0;
+  padding: 0 calc(48px * var(--u));
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.fx-bars.active { opacity: 1; }
+
+.fx-bars-area {
+  position: relative;
+  height: 100%;
+}
+
+/* 순위가 바뀌면 줄이 부드럽게 자리를 바꿈 (top은 JS가 순위로 지정) */
+.fx-bar-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1));
+  gap: calc(16px * var(--u));
+  align-items: center;
+  transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fx-bar-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(6px * var(--u));
+  min-width: 0;
+  font-size: calc(20px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.25;
+  text-align: right;
+}
+
+/* 긴 보기 이름은 두 줄까지 (순위 표시는 잘리지 않게 따로) */
+.fx-bar-name {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.fx-bar-rank {
+  display: none;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--orange-deep);
+}
+
+.fx-bar-row.win .fx-bar-rank { display: inline; }
+
+.fx-bar-track {
+  height: 62%;
+  min-height: calc(18px * var(--u));
+  max-height: calc(48px * var(--u) * var(--fx-k, 1)); /* 세로형처럼 칸이 넓어도 막대가 뭉툭해지지 않게 */
+  background: var(--surface);
+  border-radius: calc(12px * var(--u));
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.fx-bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: calc(12px * var(--u));
+}
+
+.fx-bar-pct {
+  font-size: calc(24px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */
+@media (prefers-reduced-motion: reduce) {
+  .fx-word.in { animation: none; opacity: 1; }
+  .fx-hidden,
+  .fx-bars,
+  .fx-bar-row { transition: none; }
+}

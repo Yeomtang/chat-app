@@ -6,6 +6,7 @@
   <title>LED 채팅 화면</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="/led-fx.css"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝) -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -268,34 +269,10 @@
       filter: drop-shadow(0 calc(2px * var(--u)) calc(6px * var(--u)) rgba(0, 0, 0, 0.15));
     }
 
-    /* ── 하트 폭발 (LedFx.hearts) — 화면 가운데 큰 하트 + 링 파티클 ── */
-    .fx-burst {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 0;
-      height: 0;
-      pointer-events: none;
-    }
-
-    .fx-burst-heart,
-    .fx-burst-dot {
-      position: absolute;
-      left: 0;
-      top: 0;
-      will-change: transform, opacity;
-    }
-
-    .fx-burst-heart {
-      line-height: 1;
-      filter: drop-shadow(0 calc(6px * var(--u)) calc(16px * var(--u)) rgba(30, 30, 66, 0.18));
-    }
-
-    .fx-burst-dot { border-radius: 50%; }
+    /* 하트 폭발·어절 등장·막대 경주 등 공용 모션 클래스는 led-fx.css */
 
     /* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */
     @media (prefers-reduced-motion: reduce) {
-      .fx-word.in { animation: none; opacity: 1; }
       #voting-timer.hot { animation: none; }
     }
 
@@ -383,17 +360,6 @@
       line-height: 1.4;
       word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
       overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
-    }
-
-    /* 질문 등장: 어절마다 공용 popIn을 140ms 간격으로 (LedFx.question이 지연 시간 지정) */
-    .fx-word {
-      display: inline-block;
-      max-width: 100%;
-      opacity: 0;
-    }
-
-    .fx-word.in {
-      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
     /* 공 상자 영역: 위로는 질문 카드, 아래로는 결과 배너와 겹치지 않도록 여백 확보 */
@@ -615,6 +581,8 @@
     </div>
     <div id="voting-canvas-wrap">
       <canvas id="voting-canvas"></canvas>
+      <!-- 객관식 3지 이상 결과: 막대 경주 (공 상자 자리에 겹쳐 표시) -->
+      <div class="fx-bars" id="bar-race"></div>
     </div>
     <!-- 주관식: 답변 흘려보내기 -->
     <div id="answer-stream"></div>
@@ -818,7 +786,11 @@
     cloudWrap.style.top = Math.max(layerH * 0.24, bottom + gap) + 'px';
   }
 
-  window.addEventListener('resize', () => { applyScreenScale(); layoutBelowQuestion(); resizeCanvas(); });
+  window.addEventListener('resize', () => {
+    applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
+    // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
+    if (reveal) { reveal = null; resultBanner.classList.add('active'); }
+  });
 
   function initBallState(n) {
     ballState = [];
@@ -979,7 +951,8 @@
       const now = performance.now();
       let order = 0;
       while (arr.length < desired) {
-        const slot = pos[arr.length];
+        // 표가 비정상적으로 많아 hexPositions가 줄 상한에서 멈추면 칸이 모자람 → 상자 가운데로 대신
+        const slot = pos[arr.length] || { x: box.x + box.w / 2, y: fromY };
         const ball = { x: slot.x, y: slot.y, tx: slot.x, ty: slot.y, phase: Math.random() * Math.PI * 2, drop: null };
         if (!snap) LedFx.balls.startDrop(ball, fromY, order++, now);
         arr.push(ball);
@@ -1032,6 +1005,24 @@
     // 표가 늘어 공이 작아질 때 크기가 툭 튀지 않도록 부드럽게 수렴시키고, 그 크기로 다시 쌓는다
     curBallR += (ballR - curBallR) * 0.15;
     if (Math.abs(curBallR - ballR) < 0.05) curBallR = ballR;
+
+    // 결과 공개(2지선다) 연출 중: 상자·공은 연출이 그리고, 끝나면 결과 배너를 띄운다
+    if (reveal) {
+      const done = reveal.draw(ctx, time, (i, alpha) => {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        drawBox(boxRect(i), colorFor(i), voteOptions[i] || '');
+        ctx.restore();
+      });
+      ctx.restore();
+      if (done) {
+        reveal = null;
+        resultBanner.classList.add('active');
+      }
+      rafHandle = requestAnimationFrame(drawFrame);
+      return;
+    }
+
     for (let i = 0; i < optCount; i++) repackSide(i);
 
     for (let i = 0; i < optCount; i++) {
@@ -1085,6 +1076,68 @@
     });
   }
 
+  // ── 결과 연출 ── 2지선다(YES/NO 포함)는 숫자 변신, 3지 이상은 막대 경주.
+  // 투표 → 결과로 "실시간" 넘어올 때만 재생하고, 재접속(state 스냅샷)은 최종 화면만 보여준다.
+  let reveal = null;          // 진행 중인 숫자 변신 연출 (LedFx.result.createReveal)
+  let canvasStopTimer = null; // 막대 경주로 넘어갈 때 캔버스가 사라진 뒤 렌더 루프를 멈춤
+  let resultKey = null;       // 지금 보여주는 결과(질문·보기·득표) — 같은 결과 재전송 판별용
+  const barRace = LedFx.result.createBarRace(document.getElementById('bar-race'));
+
+  function stopResultFx() {
+    reveal = null;
+    barRace.clear();
+    if (canvasStopTimer) { clearTimeout(canvasStopTimer); canvasStopTimer = null; }
+    canvas.classList.remove('fx-hidden');
+  }
+
+  function showResult(counts, live) {
+    const per = counts && counts.perOption ? counts.perOption : [];
+    updateResultLine(counts);
+
+    if (optCount >= 3) {
+      // 막대 경주: 상자 캔버스를 숨기고(실시간이면 서서히) 같은 자리에 막대를 보여준다. 배너는 막대가 대신함
+      resultBanner.classList.remove('active');
+      if (live) {
+        canvas.classList.add('fx-hidden');
+        canvasStopTimer = setTimeout(() => { canvasStopTimer = null; stopRenderLoop(); }, 500);
+      } else {
+        canvas.style.transition = 'none'; // 스냅샷은 바로 숨김
+        canvas.classList.add('fx-hidden');
+        void canvas.offsetWidth;
+        canvas.style.transition = '';
+        stopRenderLoop();
+      }
+      barRace.show({ labels: voteOptions, colors: OPTION_COLORS, perOption: per, animate: live });
+      return;
+    }
+
+    const sum = LedFx.result.summarize(per);
+    // 표가 없거나·동작 줄이기·재접속이면 연출 없이 바로 배너
+    if (!live || !sum.total || LedFx.prefersReduced()) {
+      resultBanner.classList.add('active');
+      return;
+    }
+    resultBanner.classList.remove('active');
+    const winner = sum.tie ? -1 : sum.top[0];
+    const centers = [];
+    for (let i = 0; i < optCount; i++) {
+      const b = boxRect(i);
+      centers.push({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+    }
+    reveal = LedFx.result.createReveal({
+      W: logicalW(), H: logicalH(),
+      sides: ballState.map((s, i) => ({ color: colorFor(i), balls: s.balls })),
+      centers,
+      ballR: curBallR,
+      winner,
+      pct: sum.pct,
+      label: winner < 0 ? '동률' : (voteOptions[winner] || ''),
+      labelFamily: BOX_FONT,
+      ink: '#1e1e42',
+      confettiColors: OPTION_COLORS,
+    });
+  }
+
   const answerStream = document.getElementById('answer-stream');
   const cloudWrap = document.getElementById('cloud-wrap');
 
@@ -1096,6 +1149,13 @@
 
     // 채팅 일시정지 상태는 모드와 별개로 항상 서버 값을 따른다(관리자 화면에서 제어)
     if (state.chatPaused) pauseChat(); else resumeChat();
+
+    // 결과 화면에서 "같은" 결과가 다시 오면(재전송) 진행 중인 연출·막대를 끊지 않는다.
+    // (끊긴 사이 다른 투표가 끝났다면 내용이 달라 새로 그림)
+    const key = state.mode === 'result' ? JSON.stringify([state.question, state.voteOptions, state.counts]) : null;
+    if (key && prevMode === 'result' && key === resultKey && (reveal || barRace.isActive())) return;
+    resultKey = key;
+    stopResultFx();
 
     if (state.mode === 'chat') {
       chatLayer.classList.remove('blurred');
@@ -1160,8 +1220,8 @@
       // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
       if (timerInterval) clearInterval(timerInterval);
       votingTimer.style.display = 'none';
-      updateResultLine(state.counts);
-      resultBanner.classList.add('active');
+      // 투표 중이던 화면에서 실시간으로 넘어올 때만 결과 공개 연출
+      showResult(state.counts, !isSnapshot && prevMode === 'voting');
     } else if (state.mode === 'subjective') {
       // 답변 접수 중: 타이머 없음, 답변 흘려보내기
       if (timerInterval) clearInterval(timerInterval);
