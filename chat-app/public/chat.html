@@ -1410,7 +1410,9 @@
       if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
       if (!res || res.ok || res.reason === 'empty') return;
       if (res.reason === 'rate') showNotice('너무 빨리 보내고 있어요. 잠시 후 다시 보내주세요.', { warn: true });
-      else if (res.reason === 'mode') showNotice('지금은 질문에 답하는 시간이라 채팅을 보낼 수 없어요.', { warn: true });
+      else if (res.reason === 'mode') showNotice(currentMode === 'applause' || currentMode === 'applauseResult'
+        ? '지금은 함성 측정 중이에요. 끝나면 다시 보내 주세요.'
+        : '지금은 질문에 답하는 시간이라 채팅을 보낼 수 없어요.', { warn: true });
       if (!input.value) { // 그 사이 새로 입력하지 않았다면 되살리기
         input.value = sent;
         input.dispatchEvent(new Event('input'));

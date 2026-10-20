@@ -573,7 +573,24 @@
   let chatPaused = false; // 채팅 빈 영역 클릭으로 일시정지된 상태인지
 
   const container = document.getElementById('led-messages');
-  const socket = io();
+  // ── 마이크 화면 운영진 키 ── 주소에 ?mic=1&key=운영진키 로 열면 키를 이 브라우저에 기억하고 주소창에서는 지운다.
+  // 함성 레벨은 운영진 키로 접속한 소켓만 받으므로(관객 위조 방지) 마이크 화면만 키를 싣는다 — 일반 LED는 그대로 접속
+  const MIC_KEY_STORE = 'ledMicKey';
+  function loadMicKey() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('mic') !== '1') return null;
+    const fromUrl = params.get('key');
+    if (fromUrl) {
+      try { localStorage.setItem(MIC_KEY_STORE, fromUrl); } catch {}
+      params.delete('key');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      return fromUrl;
+    }
+    try { return localStorage.getItem(MIC_KEY_STORE) || ''; } catch { return ''; }
+  }
+  const micKey = loadMicKey();
+  const socket = micKey === null ? io() : io({ auth: { key: micKey } });
 
   socket.on('history', (history) => {
     // 재접속 때도 history가 다시 오므로 기존 화면·버퍼를 비우고 다시 그린다(중복 표시 방지)
@@ -1235,8 +1252,15 @@
   const micFx = LedFx.applause.createMic({
     search: location.search,
     host: screenEl,
-    emit: (level) => socket.emit('applauseLevel', { level }),
+    // volatile: 끊긴 동안의 레벨은 쌓아 두지 않고 버린다 (다시 붙었을 때 지난 값이 몰려가지 않게)
+    emit: (level) => socket.volatile.emit('applauseLevel', { level }),
   });
+  // 키가 없거나 틀리면 서버가 레벨을 받지 않는다 — 마이크 화면에 작게 안내
+  const MIC_KEY_WARN = '마이크 화면은 운영진 키가 필요합니다 (주소에 &key=운영진키)';
+  if (micFx) {
+    if (!micKey) micFx.authWarn(MIC_KEY_WARN);
+    socket.on('authError', () => micFx.authWarn(MIC_KEY_WARN));
+  }
 
   function applySpecialScreens(state, isSnapshot) {
     const m = state.mode;
@@ -1370,8 +1394,9 @@
   // (최초 1회만 보내면 서버 재시작·네트워크 끊김 뒤 옛 모드에 고착됨)
   const ledScreenId = 'led-screen-' + Math.random().toString(36).slice(2);
   socket.on('connect', () => {
-    socket.emit('identify', ledScreenId);
+    // 화면 등록을 먼저 — identify 응답(state)이 화면용(엔딩 슬라이드 전체 포함)으로 오게
     socket.emit('registerScreen');
+    socket.emit('identify', ledScreenId);
   });
 </script>
 </body>

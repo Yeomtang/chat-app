@@ -1828,6 +1828,14 @@
         if (s.y > layer.clientHeight + 20) { s.el.remove(); sparks.splice(i, 1); continue; }
         s.el.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -50%)`;
       }
+      // 결과 화면에서 게이지가 다 따라붙고 불꽃도 다 떨어졌으면 루프를 멈춘다(정지 화면에 매 프레임 낭비 방지)
+      // — 다시 움직일 일이 생기면 start()/result()의 run()이 새로 돌린다
+      if (mode === 'result' && Math.abs(target - level) < 0.001 && !sparks.length) {
+        level = target;
+        draw();
+        raf = null;
+        return;
+      }
       draw();
       raf = requestAnimationFrame(frame);
     }
@@ -1931,7 +1939,7 @@
     let baseline = null, samples = [], t0 = 0;
     let warnKind = null, tapArmed = false;
 
-    // kind: 'denied'(권한·장치 — 다음 측정 전까지 유지) | 'suspended'(탭 안내 — 측정이 끝나면 지움)
+    // kind: 'denied'(권한·장치 — 다음 측정 전까지 유지) | 'suspended'(탭 안내 — 측정이 끝나면 지움) | 'auth'(운영진 키 — 계속 유지)
     function warn(msg, kind) {
       warnKind = msg ? kind || null : null;
       warnEl.textContent = msg || '';
@@ -2007,7 +2015,7 @@
         ensure().then(() => {
           if (my !== run || !running) return;
           if (ctx.state !== 'running') { warn('마이크 소리가 멈춰 있어요 — 화면을 한 번 눌러 주세요', 'suspended'); resumeOnTap(); }
-          else warn('');
+          else if (warnKind !== 'auth') warn(''); // 키 안내는 측정을 다시 시작해도 남김
           t0 = performance.now();
           timer = setInterval(tick, MIC.SEND_MS);
         }).catch((e) => {
@@ -2026,6 +2034,8 @@
         if (warnKind === 'suspended') warn(''); // 탭 안내는 측정 중에만 의미 (권한 거부 안내는 남김)
         if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
       },
+      // 서버가 이 화면의 레벨을 받지 않을 때(운영진 키 없음·틀림) — 측정 시작과 무관하게 계속 띄움
+      authWarn(msg) { warn(msg || '', msg ? 'auth' : null); },
       gain,
     };
   }

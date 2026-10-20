@@ -1013,7 +1013,8 @@
     const resultReact = document.getElementById('result-react');
     const subjectiveWrap = document.getElementById('subjective-wrap');
 
-    if (state.mode === 'chat') {
+    // chat·idle(대기 화면)·ending(엔딩 슬라이드) — 세 모드 모두 채팅이 열려 있어야 함(서버 CHAT_MODES와 동일)
+    if (state.mode === 'chat' || state.mode === 'idle' || state.mode === 'ending') {
       overlay.classList.remove('active');
       chatContent.classList.remove('blurred');
       resultReact.classList.remove('active');
@@ -1046,6 +1047,14 @@
     // 공통: 질문은 항상 표시 (결과에서도 유지)
     questionEl.style.display = 'block';
     questionEl.textContent = state.question || '';
+
+    // 함성 측정 모드는 투표 카드를 그대로 재사용해 안내문만 바꿔 보여준다 (화면은 함성 레벨을 안 받으므로 안내문만)
+    if (state.mode === 'applause') {
+      questionEl.textContent = '지금 박수와 함성을 보내 주세요!';
+    } else if (state.mode === 'applauseResult') {
+      const peak = (state.applause && state.applause.peak) || 0;
+      questionEl.textContent = `함성 지수 ${Math.round(peak * 100)}`;
+    }
 
     // 모드별 요소 표시
     const isVote = state.mode === 'voting' || state.mode === 'result';
@@ -1093,6 +1102,10 @@
     } else if (state.mode === 'emoji') {
       timerEl.style.display = 'none';
       resultReact.classList.remove('active'); // 이모지 모드는 자체 버튼만
+      stopPhoneTimer();
+    } else if (state.mode === 'applause' || state.mode === 'applauseResult') {
+      timerEl.style.display = 'none'; // 화면 쪽 타이머/함성 레벨은 LED에만 보임
+      resultReact.classList.remove('active');
       stopPhoneTimer();
     }
 
@@ -1307,7 +1320,9 @@
       if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
       if (!res || res.ok || res.reason === 'empty') return;
       if (res.reason === 'rate') showNotice('너무 빨리 보내고 있어요. 잠시 후 다시 보내주세요.', { warn: true });
-      else if (res.reason === 'mode') showNotice('지금은 질문에 답하는 시간이라 채팅을 보낼 수 없어요.', { warn: true });
+      else if (res.reason === 'mode') showNotice(currentMode === 'applause' || currentMode === 'applauseResult'
+        ? '지금은 함성 측정 중이에요. 끝나면 다시 보내 주세요.'
+        : '지금은 질문에 답하는 시간이라 채팅을 보낼 수 없어요.', { warn: true });
       if (!input.value) { // 그 사이 새로 입력하지 않았다면 되살리기
         input.value = sent;
         input.dispatchEvent(new Event('input'));
