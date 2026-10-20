@@ -180,6 +180,10 @@ app.get('/host', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'host.html'));
 });
 
+// 채팅이 허용되는 모드 / 리액션이 막히는 모드
+const CHAT_MODES = ['chat', 'idle', 'ending'];
+const REACTION_BLOCKED_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+
 // 최근 메시지 저장 (새 연결 시 보여줄 용도)
 const recentMessages = [];
 let msgSeq = 0; // 메시지 고유 id 시퀀스 (Date.now() 단독은 동시 전송 시 충돌 → 삭제 오작동)
@@ -236,9 +240,13 @@ function maskProfanity(text) {
 
 // ── 투표(질문) 상태 관리 ──
 // mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult' | 'emoji'
+//       | 'idle' | 'applause' | 'applauseResult' | 'ending'
 //  - voting/result: 선택형 투표. voteType='yesno'(YES/NO 2지) 또는 'choice'(N지선다 2~6지)
 //  - subjective/subjectiveResult: 주관식(자유 텍스트, 제작진 수동 마감 → 워드클라우드)
 //  - emoji: 이모지 반응 질문(관객이 이모지 선택 → LED에 대량으로 떠오름, 비율 X, 분위기 고조용)
+//  - idle: 대기 화면(입장 QR) — 채팅은 허용
+//  - applause/applauseResult: 함성 측정(LED 마이크 레벨을 서버가 모아 화면에 중계) → 최고치 표시
+//  - ending: 엔딩 슬라이드(그동안의 결과 모음) — 관리자가 직접 넘김(자동 진행 없음)
 const appState = {
   mode: 'chat',
   question: null,
@@ -256,7 +264,24 @@ const appState = {
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
+  effects: { heartBurst: true }, // LED 연출 on/off (리허설·현장 상황에 따라 관리자가 끔)
+  applause: { endTime: null, peak: 0 }, // 함성 측정: 종료 시각(epoch ms) + 최고 레벨(0~1)
+  endingIndex: 0,         // 엔딩 슬라이드 현재 위치
 };
+
+// ── 결과 기록 ── 투표·주관식 마감 결과를 쌓아 두었다가 엔딩 슬라이드로 다시 보여준다.
+// 메모리에만 보관(재시작 시 초기화). 리허설 뒤에는 관리자가 비운다.
+const MAX_RESULTS = 20;
+const resultsHistory = [];
+function recordResult(entry) {
+  resultsHistory.push(entry);
+  if (resultsHistory.length > MAX_RESULTS) resultsHistory.shift(); // 오래된 것부터 버림
+}
+
+// 엔딩 슬라이드 = 타이틀 + 결과(오래된 순) + 감사 인사. 결과를 비우면 바로 반영되도록 매번 만든다.
+function endingSlides() {
+  return [{ kind: 'title' }, ...resultsHistory, { kind: 'thanks' }];
+}
 
 // 주관식 답변 → 워드클라우드용 빈도 집계 (상위 40개)
 // 단어로 쪼개지 않고 답변 전체를 한 덩어리로 집계 — "나 빼고 다" 같은 문구형 답변의
@@ -308,7 +333,20 @@ function publicState(forClientId) {
     pinnedChat: appState.pinnedChat,
     chatPaused: appState.chatPaused,
     audience: audienceStats(),
+    // 아래는 모든 모드에서 같은 모양으로 보낸다(해당 모드가 아니면 기본값) — 클라이언트가 분기 없이 읽도록
+    effects: { ...appState.effects },
+    applause: isApplauseMode()
+      ? { endTime: appState.applause.endTime, peak: appState.applause.peak }
+      : { endTime: null, peak: 0 },
+    ending: appState.mode === 'ending'
+      ? { index: appState.endingIndex, slides: endingSlides() }
+      : { index: 0, slides: [] },
+    resultsCount: resultsHistory.length,
   };
+}
+
+function isApplauseMode() {
+  return appState.mode === 'applause' || appState.mode === 'applauseResult';
 }
 
 // ── 전송 대상 분리 ── 관객 폰이 쓰지 않는 이벤트(리액션·투표 중간 집계·주관식 답변 등)는
@@ -356,6 +394,7 @@ function clearPinnedChat() {
 // options: 보기 라벨 배열, type: 'yesno' | 'choice'
 function startVoting(question, options, duration, type) {
   clearPinnedChat();
+  resetSpecialState(); // 대기·함성·엔딩 중에 시작해도 남은 상태 정리
   if (appState.timerHandle) clearTimeout(appState.timerHandle);
   appState.mode = 'voting';
   appState.question = question;
@@ -379,6 +418,7 @@ function startVoting(question, options, duration, type) {
 // 관객이 이모지를 고르면 LED에 대량으로 떠오름(비율 X). 여러 번 탭 가능(분위기 고조).
 function startEmoji(question, emojis) {
   clearPinnedChat();
+  resetSpecialState(); // 대기·함성·엔딩 중에 시작해도 남은 상태 정리
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
     appState.timerHandle = null;
@@ -395,6 +435,7 @@ function startEmoji(question, emojis) {
 // ── 주관식 질문 (타이머 없음, 제작진 수동 마감) ──
 function startSubjective(question, maxLen) {
   clearPinnedChat();
+  resetSpecialState(); // 대기·함성·엔딩 중에 시작해도 남은 상태 정리
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
     appState.timerHandle = null;
@@ -415,6 +456,12 @@ function startSubjective(question, maxLen) {
 function endSubjective() {
   if (appState.mode !== 'subjective') return;
   appState.mode = 'subjectiveResult';
+  recordResult({
+    kind: 'subjective',
+    question: appState.question,
+    top: computeCloud().slice(0, 3).map(({ word, count }) => ({ word, count })),
+    answerCount: Object.keys(appState.answers).length,
+  });
   io.emit('modeChange', publicState()); // cloud 포함됨
 }
 
@@ -425,16 +472,26 @@ function endVoting() {
   }
   if (appState.mode !== 'voting') return;
   appState.mode = 'result';
+  const { perOption, total } = computeCounts();
+  recordResult({
+    kind: 'vote',
+    question: appState.question,
+    voteType: appState.voteType,
+    options: [...appState.voteOptions],
+    perOption,
+    total,
+  });
   io.emit('modeChange', publicState());
 }
 
-function returnToChat() {
+// 질문·함성·엔딩 상태를 모두 비운다 (모드 값은 호출한 쪽이 정함)
+// 타이머 슬롯은 투표·함성이 같이 쓰므로 여기서 함께 정리된다.
+function resetQuestionState() {
   clearPinnedChat();
   if (appState.timerHandle) {
     clearTimeout(appState.timerHandle);
     appState.timerHandle = null;
   }
-  appState.mode = 'chat';
   appState.question = null;
   appState.votingDuration = null;
   appState.votingEndTime = null;
@@ -447,7 +504,87 @@ function returnToChat() {
   appState.starredAnswers = [];
   appState.answerMaxLen = MAX_ANSWER_LENGTH;
   appState.emojiOptions = [];
+  resetSpecialState();
+}
+
+// 함성·엔딩 상태 초기화 — 질문 시작 등 다른 모드로 넘어갈 때 남은 값이 섞이지 않게
+function resetSpecialState() {
+  appState.applause = { endTime: null, peak: 0 };
+  appState.endingIndex = 0;
+  if (applauseRelayTimer) { clearTimeout(applauseRelayTimer); applauseRelayTimer = null; }
+  applauseRelayPending = null;
+}
+
+function returnToChat() {
+  resetQuestionState();
+  appState.mode = 'chat';
   io.emit('modeChange', publicState());
+}
+
+// 대기 화면(입장 QR) — 채팅 복귀와 같이 질문 상태를 비우고 핀도 내린다
+function showIdle() {
+  resetQuestionState();
+  appState.mode = 'idle';
+  io.emit('modeChange', publicState());
+}
+
+// ── 함성 측정 ── LED가 마이크 레벨(0~1)을 보내면 서버가 최고치를 갱신하고 화면들에 중계한다.
+// 진행 중인 질문이 있어도 대체한다(새 질문 시작과 같은 규칙). 시간이 끝나면 결과 모드로 자동 전환.
+const MIN_APPLAUSE_SECONDS = 5;
+const MAX_APPLAUSE_SECONDS = 30;
+function startApplause(seconds) {
+  resetQuestionState();
+  appState.mode = 'applause';
+  appState.applause = { endTime: Date.now() + seconds * 1000, peak: 0 };
+  io.emit('modeChange', publicState());
+  appState.timerHandle = setTimeout(endApplause, seconds * 1000);
+}
+
+function endApplause() {
+  appState.timerHandle = null;
+  if (appState.mode !== 'applause') return;
+  appState.mode = 'applauseResult';
+  io.emit('modeChange', publicState()); // 최고치(peak) 포함
+}
+
+// 레벨 중계는 APPLAUSE_RELAY_MS에 한 번만 — 첫 값은 즉시, 그 사이 들어온 값은 최신 것 하나만 뒤이어 보낸다
+const APPLAUSE_RELAY_MS = 100;
+let applauseRelayTimer = null;
+let applauseRelayPending = null;
+function relayApplause(level) {
+  if (applauseRelayTimer) { applauseRelayPending = level; return; }
+  io.to(SCREENS).emit('applauseLevel', { level, peak: appState.applause.peak });
+  applauseRelayTimer = setTimeout(flushApplauseRelay, APPLAUSE_RELAY_MS);
+}
+function flushApplauseRelay() {
+  applauseRelayTimer = null;
+  if (applauseRelayPending == null || appState.mode !== 'applause') { applauseRelayPending = null; return; }
+  const level = applauseRelayPending;
+  applauseRelayPending = null;
+  relayApplause(level);
+}
+
+// ── 엔딩 슬라이드 ── 넘김은 관리자만(자동 진행 없음)
+function startEnding() {
+  resetQuestionState();
+  appState.mode = 'ending';
+  appState.endingIndex = 0;
+  io.emit('modeChange', publicState());
+}
+
+function endingGo(index) {
+  if (appState.mode !== 'ending') return;
+  const last = endingSlides().length - 1;
+  appState.endingIndex = Math.min(last, Math.max(0, index));
+  io.emit('modeChange', publicState());
+}
+
+// ── 핀 알림용 작성자 기록 ── 메시지 id → 작성 관객 clientId (외부로 보내지 않음, 오래된 것부터 버림)
+const MAX_MESSAGE_AUTHORS = 500;
+const messageAuthors = new Map();
+function rememberAuthor(id, clientId) {
+  messageAuthors.set(id, clientId);
+  if (messageAuthors.size > MAX_MESSAGE_AUTHORS) messageAuthors.delete(messageAuthors.keys().next().value);
 }
 
 // 접속 시 인증 키로 역할 결정 — 관객은 키 없이 그대로 접속(audience)
@@ -498,7 +635,8 @@ io.on('connection', (socket) => {
   });
 
   // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
-  on('registerScreen', () => socket.join(SCREENS));
+  // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
+  on('registerScreen', () => { socket.isScreen = true; socket.join(SCREENS); });
 
   // 닉네임 요청 시 서버에서 고유 닉네임 배정 (레거시, 현재는 클라이언트가 즉시 로컬 배정)
   on('requestNickname', (theme) => {
@@ -551,12 +689,12 @@ io.on('connection', (socket) => {
   // 새 연결에 최근 메시지 전송
   socket.emit('history', recentMessages);
 
-  // 채팅 메시지 (채팅 모드일 때만 허용)
+  // 채팅 메시지 (채팅·대기·엔딩 모드에서 허용)
   // ack(선택): 보낸 사람에게 결과를 알려준다 — { ok: true } 또는 { ok: false, reason: 'mode'|'rate'|'empty' }
   // (예전 화면은 ack 없이 보내므로 함수일 때만 호출)
   on('chat', (data, ack) => {
     const reply = (r) => { if (typeof ack === 'function') ack(r); };
-    if (appState.mode !== 'chat') return reply({ ok: false, reason: 'mode' });
+    if (!CHAT_MODES.includes(appState.mode)) return reply({ ok: false, reason: 'mode' });
     const d = asObj(data);
     const raw = cleanStr(d.text, MAX_CHAT_LENGTH);
     if (!raw) return reply({ ok: false, reason: 'empty' });
@@ -580,6 +718,8 @@ io.on('connection', (socket) => {
       isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
       time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     };
+    // 핀 알림용으로 관객 작성자만 기억(운영진 메시지는 알릴 대상 없음)
+    if (!socket.isOperator && socket.clientId) rememberAuthor(message.id, socket.clientId);
     recentMessages.push(message);
     if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
     broadcastChat(message);
@@ -588,10 +728,10 @@ io.on('connection', (socket) => {
 
   // 리액션 (하트/붐업/붐따) — LED 화면에 떠오르는 이모지 효과
   // 채팅 모드: 하트/붐업, 결과 모드: 붐업/붐따로 결과에 반응
-  // 투표 중엔 차단(답변에만 집중), 소켓당 3초에 10회로 스팸 제한
+  // 투표·함성 측정 중엔 차단(답변·함성에 집중), 소켓당 3초에 10회로 스팸 제한
   on('reaction', (data) => {
     const { type } = data || {};
-    if (appState.mode === 'voting' || appState.mode === 'subjective' || appState.mode === 'emoji') return; // 답변 집중 구간엔 차단
+    if (REACTION_BLOCKED_MODES.includes(appState.mode)) return; // 답변 집중 구간엔 차단
     if (type !== 'heart' && type !== 'thumbs' && type !== 'down') return;
     const now = Date.now();
     if (!socket._reactionTimes) socket._reactionTimes = [];
@@ -701,6 +841,13 @@ io.on('connection', (socket) => {
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
     appState.pinnedChat = { id, nickname, text };
     io.to(SCREENS).emit('chatPinned', { message: appState.pinnedChat });
+    // 작성한 관객에게 "내 채팅이 LED에 올라감" 알림 — 같은 사람의 탭이 여러 개면 모두에게
+    const author = messageAuthors.get(id);
+    if (author) {
+      for (const s of io.sockets.sockets.values()) {
+        if (s.clientId === author) s.emit('chatPinnedYou', { id, text });
+      }
+    }
   });
 
   onAdmin('admin:unpinChat', () => {
@@ -742,6 +889,7 @@ io.on('connection', (socket) => {
   onAdmin('admin:clearChat', () => {
     recentMessages.length = 0;
     chatQueue = [];
+    messageAuthors.clear();
     clearPinnedChat(); // 지워진 메시지가 LED에 핀으로 남아 있으면 안 됨
     io.emit('chatCleared');
   });
@@ -779,6 +927,57 @@ io.on('connection', (socket) => {
 
   onAdmin('admin:returnToChat', () => {
     returnToChat();
+  });
+
+  onAdmin('admin:showIdle', () => {
+    showIdle();
+  });
+
+  // 함성 측정 시작 — 초는 5~30 (기본 10)
+  onAdmin('admin:startApplause', (data) => {
+    const n = parseInt(asObj(data).seconds, 10);
+    const seconds = Number.isFinite(n)
+      ? Math.min(MAX_APPLAUSE_SECONDS, Math.max(MIN_APPLAUSE_SECONDS, n))
+      : 10;
+    startApplause(seconds);
+  });
+
+  onAdmin('admin:startEnding', () => {
+    startEnding();
+  });
+
+  onAdmin('admin:endingGo', (data) => {
+    const index = asObj(data).index;
+    if (typeof index !== 'number' || !Number.isFinite(index)) return;
+    endingGo(Math.floor(index));
+  });
+
+  // LED 연출 on/off — 화면들에 즉시 반영
+  onAdmin('admin:setEffects', (data) => {
+    const d = asObj(data);
+    if (typeof d.heartBurst !== 'boolean') return;
+    appState.effects.heartBurst = d.heartBurst;
+    io.to(SCREENS).emit('effectsChange', { effects: { ...appState.effects } });
+  });
+
+  // 결과 기록 비우기 — 리허설 뒤 본 행사 전에. 엔딩 중이면 슬라이드도 바로 갱신
+  onAdmin('admin:clearResults', () => {
+    resultsHistory.length = 0;
+    if (appState.mode === 'ending') endingGo(appState.endingIndex);
+    else io.to(ADMINS).emit('state', publicState(null)); // 관리자 화면의 기록 개수 갱신
+  });
+
+  // 함성 레벨 (LED → 서버) — 측정 중에만, registerScreen한 화면 소켓만, 소켓당 초당 15회까지
+  on('applauseLevel', (data) => {
+    if (!socket.isScreen || appState.mode !== 'applause') return;
+    const level = asObj(data).level;
+    if (typeof level !== 'number' || !Number.isFinite(level) || level < 0 || level > 1) return;
+    const now = Date.now();
+    socket._applauseTimes = (socket._applauseTimes || []).filter(t => now - t < 1000);
+    if (socket._applauseTimes.length >= 15) return;
+    socket._applauseTimes.push(now);
+    if (level > appState.applause.peak) appState.applause.peak = level;
+    relayApplause(level);
   });
 
   onAdmin('admin:getState', () => {
