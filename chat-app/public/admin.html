@@ -649,6 +649,9 @@
       <button class="btn btn-secondary" id="ending-prev-btn" onclick="endingGoPrev()" disabled>← 이전</button>
       <button class="btn btn-secondary" id="ending-next-btn" onclick="endingGoNext()" disabled>다음 →</button>
     </div>
+    <div class="preset-list" id="results-list">
+      <div class="empty-hint">기록된 결과가 없습니다</div>
+    </div>
     <button class="btn btn-danger" id="clear-results-btn" onclick="clearResultsNow()">결과 기록 비우기</button>
     <p class="note" style="margin: 10px 0 0;">기록된 결과: <span id="results-count">0</span>개</p>
   </div>
@@ -743,6 +746,7 @@
     socket.emit('admin:getState');
     socket.emit('admin:getAnswers');
     socket.emit('admin:getPresets');
+    socket.emit('admin:getResults');
   });
 
   socket.on('presets', (list) => {
@@ -750,6 +754,13 @@
     presets = Array.isArray(list) ? list : [];
     backupPresetsLocally();
     renderPresets();
+  });
+
+  // 오늘의 결과 목록(엔딩 슬라이드 원본) — 결과가 바뀔 때마다 서버가 다시 보내준다
+  let resultsList = [];
+  socket.on('results', (list) => {
+    resultsList = Array.isArray(list) ? list : [];
+    renderResults();
   });
 
   socket.on('state', (state) => {
@@ -901,6 +912,54 @@
 
   function startEndingNow() {
     socket.emit('admin:startEnding');
+  }
+
+  // 오늘의 결과 목록 — 엔딩 슬라이드 순서와 같게(오래된 순), 한 건만 삭제 가능
+  function renderResults() {
+    const list = document.getElementById('results-list');
+    if (resultsList.length === 0) {
+      list.innerHTML = '<div class="empty-hint">기록된 결과가 없습니다</div>';
+      return;
+    }
+    list.innerHTML = '';
+    const TAG = { vote: ['choice', '투표'], subjective: ['subjective', '주관식'] };
+    // 질문/요약 문구는 사용자·관리자 입력이므로 innerHTML이 아닌 textContent로만 넣는다(XSS 방지)
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    };
+    resultsList.forEach((r, i) => {
+      const item = document.createElement('div');
+      item.className = 'preset-item';
+      const t = TAG[r.kind] || TAG.vote;
+      const main = el('div', 'preset-main');
+      main.append(el('span', `preset-tag ${t[0]}`, t[1]), el('span', 'preset-q', `질문 ${i + 1}. ${r.question}`));
+      main.append(el('span', 'preset-detail', r.summary));
+      const actions = el('div', 'preset-actions');
+      const removeBtn = el('button', 'remove-btn', '✕');
+      // 결과 기록 비우기와 같은 2클릭 확인 패턴(버튼별로 독립된 상태)
+      let confirming = false;
+      let timer = null;
+      removeBtn.addEventListener('click', () => {
+        if (!confirming) {
+          confirming = true;
+          removeBtn.textContent = '한 번 더 누르면 삭제';
+          timer = setTimeout(() => {
+            confirming = false;
+            removeBtn.textContent = '✕';
+          }, 3000);
+          return;
+        }
+        clearTimeout(timer);
+        confirming = false;
+        socket.emit('admin:removeResult', { index: i });
+      });
+      actions.append(removeBtn);
+      item.append(main, actions);
+      list.appendChild(item);
+    });
   }
 
   function endingGoPrev() {

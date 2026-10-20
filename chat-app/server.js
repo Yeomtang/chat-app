@@ -283,6 +283,33 @@ function endingSlides() {
   return [{ kind: 'title' }, ...resultsHistory, { kind: 'thanks' }];
 }
 
+// 결과 한 건을 관리자 목록에 보여줄 한 줄 요약으로 줄인다 (질문 전체 텍스트는 그대로 둠)
+function resultSummary(entry) {
+  if (entry.kind === 'vote') {
+    const total = entry.total;
+    const parts = entry.options.map((label, i) => {
+      const pct = total > 0 ? Math.round((entry.perOption[i] / total) * 100) : 0;
+      return `${label} ${pct}%`;
+    });
+    return `${parts.join(' · ')} (총 ${total}표)`;
+  }
+  if (entry.kind === 'subjective') {
+    const top = entry.top[0];
+    return top ? `1위 ‘${top.word}’ ${top.count}명 (답변 ${entry.answerCount})` : `답변 없음 (답변 ${entry.answerCount})`;
+  }
+  return '';
+}
+
+// 관리자 화면의 "오늘의 결과" 목록용 — 질문 사전등록 목록과 같은 모양({kind,question,summary})
+function resultsSummaryList() {
+  return resultsHistory.map(e => ({ kind: e.kind, question: e.question, summary: resultSummary(e) }));
+}
+
+// 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
+function emitResults() {
+  io.to(ADMINS).emit('results', resultsSummaryList());
+}
+
 // 주관식 답변 → 워드클라우드용 빈도 집계 (상위 40개)
 // 단어로 쪼개지 않고 답변 전체를 한 덩어리로 집계 — "나 빼고 다" 같은 문구형 답변의
 // 어순/의미가 보존되고, 같은 답변을 쓴 사람이 많을수록 그 문구가 커진다.
@@ -471,6 +498,7 @@ function endSubjective() {
     answerCount: Object.keys(appState.answers).length,
   });
   emitModeChange(); // cloud 포함됨
+  emitResults();
 }
 
 function endVoting() {
@@ -490,6 +518,7 @@ function endVoting() {
     total,
   });
   emitModeChange();
+  emitResults();
 }
 
 // 질문·함성·엔딩 상태를 모두 비운다 (모드 값은 호출한 쪽이 정함)
@@ -973,6 +1002,24 @@ io.on('connection', (socket) => {
     resultsHistory.length = 0;
     if (appState.mode === 'ending') endingGo(appState.endingIndex);
     else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
+    emitResults();
+  });
+
+  // 결과 기록 한 건만 삭제 — 질문을 두 번 돌렸거나 장난 답변이 1위로 올라온 경우 등
+  onAdmin('admin:removeResult', (data) => {
+    const index = asObj(data).index;
+    if (typeof index !== 'number' || !Number.isInteger(index)) return; // 숫자 아님/정수 아님 무시
+    if (index < 0 || index >= resultsHistory.length) return; // 범위 밖 무시
+    resultsHistory.splice(index, 1);
+    // 엔딩 중이면 슬라이드를 다시 만들고 범위 안으로 클램프 — clearResults와 같은 방식으로 전송
+    if (appState.mode === 'ending') endingGo(appState.endingIndex);
+    else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
+    emitResults();
+  });
+
+  // 관리자: 결과 기록 요약 목록 조회 (화면 로드 시)
+  onAdmin('admin:getResults', () => {
+    socket.emit('results', resultsSummaryList());
   });
 
   // 함성 레벨 (LED → 서버) — 측정 중에만, 운영진 키로 접속해 registerScreen한 화면 소켓만, 소켓당 초당 15회까지
