@@ -273,14 +273,16 @@ const appState = {
 // 메모리에만 보관(재시작 시 초기화). 리허설 뒤에는 관리자가 비운다.
 const MAX_RESULTS = 20;
 const resultsHistory = [];
+let resultSeq = 0; // 결과마다 서버가 붙이는 고정 id — 삭제를 위치(index)가 아닌 id로 해서 엇갈림 방지
 function recordResult(entry) {
-  resultsHistory.push(entry);
+  resultsHistory.push({ ...entry, id: ++resultSeq });
   if (resultsHistory.length > MAX_RESULTS) resultsHistory.shift(); // 오래된 것부터 버림
 }
 
 // 엔딩 슬라이드 = 타이틀 + 결과(오래된 순) + 감사 인사. 결과를 비우면 바로 반영되도록 매번 만든다.
 function endingSlides() {
-  return [{ kind: 'title' }, ...resultsHistory, { kind: 'thanks' }];
+  // id는 관리자 목록용 — 슬라이드 모양(프로토콜)은 그대로 둔다
+  return [{ kind: 'title' }, ...resultsHistory.map(({ id, ...e }) => e), { kind: 'thanks' }];
 }
 
 // 결과 한 건을 관리자 목록에 보여줄 한 줄 요약으로 줄인다 (질문 전체 텍스트는 그대로 둠)
@@ -302,7 +304,7 @@ function resultSummary(entry) {
 
 // 관리자 화면의 "오늘의 결과" 목록용 — 질문 사전등록 목록과 같은 모양({kind,question,summary})
 function resultsSummaryList() {
-  return resultsHistory.map(e => ({ kind: e.kind, question: e.question, summary: resultSummary(e) }));
+  return resultsHistory.map(e => ({ id: e.id, kind: e.kind, question: e.question, summary: resultSummary(e) }));
 }
 
 // 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
@@ -1006,14 +1008,20 @@ io.on('connection', (socket) => {
   });
 
   // 결과 기록 한 건만 삭제 — 질문을 두 번 돌렸거나 장난 답변이 1위로 올라온 경우 등
+  // id로 지운다 — 관리자 두 명이 동시에 지우거나 20건 상한으로 밀려나도 엉뚱한 항목이 지워지지 않게(모르는 id는 무시)
   onAdmin('admin:removeResult', (data) => {
-    const index = asObj(data).index;
-    if (typeof index !== 'number' || !Number.isInteger(index)) return; // 숫자 아님/정수 아님 무시
-    if (index < 0 || index >= resultsHistory.length) return; // 범위 밖 무시
+    const id = asObj(data).id;
+    if (!Number.isInteger(id)) return; // 정수 id만
+    const index = resultsHistory.findIndex(e => e.id === id);
+    if (index < 0) return; // 이미 지워졌거나 밀려난 항목
     resultsHistory.splice(index, 1);
-    // 엔딩 중이면 슬라이드를 다시 만들고 범위 안으로 클램프 — clearResults와 같은 방식으로 전송
-    if (appState.mode === 'ending') endingGo(appState.endingIndex);
-    else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
+    if (appState.mode === 'ending') {
+      // 지운 결과가 지금 슬라이드보다 앞이면 한 칸 당겨서 같은 슬라이드를 유지한다
+      // (슬라이드 번호 = 결과 위치 + 1, 0장은 표지). 지금 슬라이드를 지우면 그 자리에 온 장을 보여준다.
+      if (index + 1 < appState.endingIndex) appState.endingIndex -= 1;
+      // 슬라이드를 다시 만들고 범위 안으로 클램프 — clearResults와 같은 방식으로 전송
+      endingGo(appState.endingIndex);
+    } else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
     emitResults();
   });
 
