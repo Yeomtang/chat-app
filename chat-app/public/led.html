@@ -530,6 +530,11 @@
   <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
   <div id="chat-pin"></div>
 
+  <!-- 대기 화면 · 엔딩 "오늘의 결과" · 함성 미터 (모양·움직임은 LedFx.idle / ending / applause) -->
+  <div id="idle-layer" class="fx-screen fx-idle"></div>
+  <div id="ending-layer" class="fx-screen fx-ending"></div>
+  <div id="applause-layer" class="fx-screen fx-applause"></div>
+
   <!-- 리액션 레이어 (하트/붐업 이모지 떠오르는 효과) -->
   <div id="reaction-layer"></div>
 
@@ -559,6 +564,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="/vendor/qrcode.js"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
 <script src="/led-fx.js"></script>
 <script>
   const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
@@ -575,6 +581,8 @@
     container.innerHTML = '';
     const recent = history.slice(-MAX_VISIBLE);
     recent.forEach(addMessage);
+    if (!chatPaused) idleFx.reset(recent); // 대기 화면 피드도 서버 기준으로 (끊긴 사이 지워진 채팅 제외)
+    pinFx.reconcile(); // 다시 그린 말풍선 중 핀으로 떠오른 것은 다시 숨김
   });
 
   socket.on('chat', (msg) => {
@@ -591,14 +599,16 @@
   socket.on('chatCleared', () => {
     messages.length = 0;
     container.innerHTML = '';
+    idleFx.clearFeed();
   });
 
   // 관리자가 개별 채팅을 삭제하면 화면·버퍼에서 제거
   socket.on('chatDeleted', (id) => {
     const i = messages.findIndex(m => m.id === id);
     if (i !== -1) messages.splice(i, 1);
-    const el = container.querySelector('[data-id="' + id + '"]');
+    const el = container.querySelector('[data-id="' + CSS.escape(String(id)) + '"]');
     if (el) el.remove();
+    idleFx.remove(id);
   });
 
   // 메시지 수신: 항상 버퍼(messages)에는 기록하되, 일시정지 중이면 화면엔 그리지 않음
@@ -635,6 +645,8 @@
     if (groups.length > MAX_VISIBLE) {
       groups[0].remove();
     }
+
+    idleFx.push(msg); // 대기 화면 피드에도 (화면에 그려지는 채팅만 — 일시정지 중엔 보류)
   }
 
   // 일시정지: 화면 갱신만 멈춤(버퍼링은 계속) — 더블클릭 시 최신 상태로 점프
@@ -648,6 +660,7 @@
     chatPaused = false;
     container.innerHTML = '';
     messages.slice(-MAX_VISIBLE).forEach(renderMessage);
+    pinFx.reconcile(); // 다시 그린 말풍선 중 핀으로 떠오른 것은 다시 숨김
   }
 
   // ══════════════════════════════════
@@ -752,6 +765,7 @@
     if (reveal) { reveal = null; resultBanner.classList.add('active'); }
     cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
     pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
+    idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
   });
 
   function initBallState(n) {
@@ -1119,8 +1133,12 @@
     resultKey = key;
     stopResultFx();
 
-    if (state.mode === 'chat') {
-      chatLayer.classList.remove('blurred');
+    // 대기·엔딩·함성 화면은 각 레이어가 맡고, 해당 모드가 아니면 숨긴다
+    applySpecialScreens(state, isSnapshot);
+
+    if (state.mode === 'chat' || SPECIAL_MODES.includes(state.mode)) {
+      // 함성 미터는 흐린 채팅 위 반투명 판, 대기·엔딩은 불투명 화면이라 흐림 불필요
+      chatLayer.classList.toggle('blurred', state.mode === 'applause' || state.mode === 'applauseResult');
       votingLayer.classList.remove('active');
       resultBanner.classList.remove('active');
       answerFx.clear();
@@ -1129,7 +1147,8 @@
       stopRenderLoop();
       if (timerInterval) clearInterval(timerInterval);
       LedFx.timer.reset(votingTimer);
-      pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
+      if (state.mode === 'chat') pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
+      else pinFx.clear(); // 대기·엔딩·함성 화면에선 핀 숨김
       return;
     }
 
@@ -1205,6 +1224,37 @@
       cloudFx.clear();
     }
   }
+
+  // ── 대기 화면 · 엔딩 · 함성 미터 ── 움직임은 LedFx, 여기서는 레이어와 설정만
+  const SPECIAL_MODES = ['idle', 'ending', 'applause', 'applauseResult'];
+  // 대기 화면 QR = 이 LED 테마의 관객 주소
+  const idleFx = LedFx.idle.create({ layer: document.getElementById('idle-layer'), url: location.origin + '/', colors: OPTION_COLORS, scale: () => uScale });
+  const endingFx = LedFx.ending.create({ layer: document.getElementById('ending-layer'), colors: OPTION_COLORS, yesnoColors: YESNO_COLORS });
+  const applauseFx = LedFx.applause.create({ layer: document.getElementById('applause-layer'), colors: OPTION_COLORS });
+  // 주소에 ?mic=1 인 화면만 마이크로 함성을 잰다 (그 외 화면은 마이크를 요청하지 않음 → null)
+  const micFx = LedFx.applause.createMic({
+    search: location.search,
+    host: screenEl,
+    emit: (level) => socket.emit('applauseLevel', { level }),
+  });
+
+  function applySpecialScreens(state, isSnapshot) {
+    const m = state.mode;
+    if (m === 'idle') idleFx.show(); else idleFx.hide();
+    // 엔딩 장 넘김은 서버 상태(관리자)만 따른다 — 실시간 전환일 때만 밀리는 연출
+    if (m === 'ending') endingFx.show(state.ending, { animate: !isSnapshot }); else endingFx.hide();
+    if (m === 'applause') applauseFx.start(state.applause);
+    else if (m === 'applauseResult') applauseFx.result(state.applause);
+    else applauseFx.hide();
+    // 측정 중에만 마이크 분석 (회차 = 종료 시각 — 새 회차면 바닥 소음을 다시 잼)
+    if (micFx) { if (m === 'applause') micFx.start(state.applause && state.applause.endTime); else micFx.stop(); }
+  }
+
+  // 서버가 모은 함성 레벨(모든 마이크 화면 공용) → 게이지
+  socket.on('applauseLevel', (data) => {
+    if (currentMode !== 'applause') return;
+    applauseFx.level(data);
+  });
 
   // ── 주관식: 답변 흘려보내기 · 워드클라우드 · 제작진 픽 ──
   // 움직임·판단은 LedFx(공용)에서, 여기서는 화면 요소와 설정만 넘긴다

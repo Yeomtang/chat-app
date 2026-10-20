@@ -234,6 +234,467 @@
   pointer-events: none;
 }
 
+/* ══ 대기·엔딩·함성 공용 레이어 (LedFx.idle / ending / applause) ══
+   채팅 핀(15) 위, 투표(20)·리액션(25) 아래 — 하트는 대기 화면 위로도 떠오름.
+   .active = 표시, .on = 서서히 나타남 (led-fx.js fadeLayer) */
+.fx-screen {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.fx-screen.active { display: block; }
+.fx-screen.on { opacity: 1; }
+
+/* ── 대기 화면 (시안 11): 세로형은 QR 아래 채팅, 가로형(.fx-wide)은 오른쪽 열 ── */
+.fx-idle {
+  background: var(--bg);
+  padding: calc(72px * var(--u)) calc(56px * var(--u)) calc(36px * var(--u));
+}
+
+.fx-idle.active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: calc(36px * var(--u));
+}
+
+.fx-idle-blob {
+  position: absolute;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(calc(48px * var(--u)));
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.fx-idle-main {
+  position: relative; /* 번짐 위에 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: calc(20px * var(--u));
+  min-width: 0;
+}
+
+.fx-idle-eyebrow {
+  font-size: calc(24px * var(--u));
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--orange-deep);
+}
+
+.fx-idle-title {
+  font-size: calc(72px * var(--u));
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.fx-idle-sub {
+  font-size: calc(26px * var(--u));
+  line-height: 1.45;
+  color: var(--ink-soft);
+  max-width: calc(560px * var(--u));
+}
+
+.fx-idle-qrwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(18px * var(--u));
+  margin-top: calc(8px * var(--u));
+  min-width: 0;
+}
+
+/* QR 이미지 자체에 4칸 흰 여백이 들어 있어 상자 여백은 최소로 */
+.fx-idle-qr {
+  width: calc(330px * var(--u));
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-radius: calc(18px * var(--u));
+  padding: calc(4px * var(--u));
+  box-shadow: 0 calc(10px * var(--u)) calc(30px * var(--u)) rgba(30, 30, 66, 0.12);
+}
+
+.fx-idle-qr canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(14px * var(--u));
+  image-rendering: pixelated;
+}
+
+.fx-idle-url {
+  font-size: calc(26px * var(--u));
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.4;
+  min-width: 0; /* 줄바꿈 위치는 JS가 '.'·'/' 뒤에 <wbr>로 지정 */
+}
+
+.fx-idle-url small {
+  display: block;
+  font-size: calc(20px * var(--u));
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* 최근 채팅: 위아래 끝은 서서히 사라짐 */
+.fx-idle-feed {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  max-width: calc(600px * var(--u));
+  justify-self: center;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+
+.fx-idle-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.fx-idle-b {
+  position: absolute;
+  left: 0;
+  max-width: 100%;
+  background: var(--surface);
+  border-radius: calc(18px * var(--u));
+  padding: calc(10px * var(--u)) calc(18px * var(--u)) calc(12px * var(--u));
+  box-shadow: 0 calc(4px * var(--u)) calc(14px * var(--u)) rgba(30, 30, 66, 0.06);
+}
+
+.fx-idle-b b {
+  display: block;
+  font-size: calc(16px * var(--u));
+  font-weight: 700;
+  color: var(--orange-deep);
+}
+
+.fx-idle-b span {
+  font-size: calc(22px * var(--u));
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.fx-idle-b.operator { background: var(--ink); }
+.fx-idle-b.operator b { color: rgba(255, 255, 255, 0.7); }
+.fx-idle-b.operator span { color: #fff; }
+
+/* 가로형: 왼쪽 안내 + QR, 오른쪽 열에 채팅 */
+.fx-idle.fx-wide { padding: calc(56px * var(--u)) calc(64px * var(--u)); }
+
+.fx-idle.fx-wide.active {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 34%;
+  gap: calc(48px * var(--u));
+}
+
+.fx-wide .fx-idle-main {
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+}
+
+.fx-wide .fx-idle-qrwrap {
+  flex-direction: row;
+  gap: calc(28px * var(--u));
+}
+
+.fx-wide .fx-idle-qr { width: calc(270px * var(--u)); }
+.fx-wide .fx-idle-feed { max-width: none; }
+
+/* ── 엔딩 "오늘의 결과" (시안 12): 관리자가 넘김, 왼쪽으로 밀리며 바뀜 ── */
+.fx-ending { background: var(--bg); }
+
+.fx-end-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(26px * var(--u));
+  padding: calc(70px * var(--u)) calc(56px * var(--u)) calc(90px * var(--u));
+  text-align: center;
+  opacity: 0;
+  transform: translateX(calc(60px * var(--u)));
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.22, 0.75, 0.25, 1);
+}
+
+.fx-end-slide.on { opacity: 1; transform: none; }
+.fx-end-slide.off { opacity: 0; transform: translateX(calc(-60px * var(--u))); }
+
+.fx-end-kicker {
+  font-size: calc(24px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--orange-deep);
+  letter-spacing: 0.06em;
+}
+
+.fx-end-title {
+  font-size: calc(68px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.fx-end-q {
+  font-size: calc(34px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  max-width: 100%;
+}
+
+.fx-end-rows {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: calc(16px * var(--u));
+}
+
+.fx-end-row {
+  display: grid;
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-k, 1));
+  gap: calc(18px * var(--u));
+  align-items: center;
+  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.fx-end-lab {
+  text-align: right;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.fx-end-trk {
+  display: block;
+  height: calc(38px * var(--u) * var(--fx-k, 1));
+  background: var(--bg-soft);
+  border-radius: calc(12px * var(--u));
+  overflow: hidden;
+}
+
+.fx-end-fil {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: calc(12px * var(--u));
+  transition: width 1.2s cubic-bezier(0.22, 0.75, 0.25, 1) 0.25s;
+}
+
+.fx-end-pct {
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-end-row.win .fx-end-pct { color: var(--orange-deep); }
+
+.fx-end-big {
+  font-size: calc(64px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--orange);
+  max-width: 100%;
+}
+
+.fx-end-note {
+  font-size: calc(28px * var(--u) * var(--fx-k, 1));
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* 주관식 2·3위: 1위보다 작게 */
+.fx-end-more {
+  display: flex;
+  flex-direction: column;
+  gap: calc(10px * var(--u));
+  margin-top: calc(10px * var(--u));
+  max-width: 100%;
+}
+
+.fx-end-more-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: calc(12px * var(--u));
+  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.fx-end-rank { color: var(--orange-deep); flex-shrink: 0; }
+.fx-end-word { min-width: 0; }
+.fx-end-count { color: var(--ink-soft); font-weight: 600; flex-shrink: 0; }
+
+.fx-end-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(36px * var(--u));
+  display: flex;
+  justify-content: center;
+  gap: calc(12px * var(--u));
+}
+
+.fx-end-dots i {
+  width: calc(12px * var(--u));
+  height: calc(12px * var(--u));
+  border-radius: calc(6px * var(--u));
+  background: rgba(30, 30, 66, 0.18);
+  transition: background-color 0.4s, width 0.4s;
+}
+
+.fx-end-dots i.on { background: var(--ink); width: calc(34px * var(--u)); }
+
+/* 재접속 스냅샷: 전환 없이 바로 그 장으로 */
+.fx-instant .fx-end-slide,
+.fx-instant .fx-end-fil,
+.fx-instant .fx-end-dots i { transition: none; }
+
+/* ── 함성 미터 (시안 5): 흐린 채팅 위 반투명 판 + 가로 게이지 ── */
+.fx-applause { background: color-mix(in srgb, var(--bg) 80%, transparent); }
+
+.fx-applause.active { display: flex; align-items: center; justify-content: center; }
+
+.fx-clap {
+  width: 84%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.fx-clap-head {
+  font-size: calc(48px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+  transition: color 0.4s ease;
+}
+
+.fx-clap-head.win { color: var(--orange); }
+
+.fx-clap-gauge {
+  position: relative;
+  width: 100%;
+  height: calc(90px * var(--u) * var(--fx-k, 1));
+  margin-top: calc(110px * var(--u) * var(--fx-k, 1)); /* 위에 "목표" 글자 자리 */
+  background: var(--bg-soft);
+  border-radius: calc(45px * var(--u) * var(--fx-k, 1));
+  box-shadow: var(--shadow);
+}
+
+/* 그라디언트는 게이지 전체 기준, 차오른 만큼만 둥글게 잘라 보임 (clip-path는 JS) */
+.fx-clap-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--purple), var(--orange) 60%, var(--warn));
+  clip-path: inset(0 100% 0 0);
+}
+
+.fx-clap-peak {
+  position: absolute;
+  top: 12%;
+  bottom: 12%;
+  width: calc(5px * var(--u));
+  margin-left: calc(-2.5px * var(--u));
+  border-radius: calc(3px * var(--u));
+  background: var(--ink-soft);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.fx-clap-goal {
+  position: absolute;
+  top: calc(-30px * var(--u));
+  bottom: calc(-30px * var(--u));
+  width: calc(6px * var(--u));
+  margin-left: calc(-3px * var(--u));
+  border-radius: calc(3px * var(--u));
+  background: var(--ink);
+}
+
+.fx-clap-goal span {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, calc(-10px * var(--u)));
+  white-space: nowrap;
+  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.fx-clap-num {
+  margin-top: calc(60px * var(--u));
+  font-size: calc(72px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-clap-cap {
+  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+/* 결과: 제목이 "함성 지수 NN"을 보여 주므로 아래 숫자는 숨김 */
+.fx-applause.result .fx-clap-num,
+.fx-applause.result .fx-clap-cap { visibility: hidden; }
+
+.fx-clap-spark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 마이크 화면(?mic=1)만: 권한 거부 등 작은 안내 */
+.fx-mic-warn {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px * var(--u));
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: 90%;
+  padding: calc(6px * var(--u)) calc(14px * var(--u));
+  border-radius: calc(10px * var(--u));
+  background: var(--warn);
+  color: #fff;
+  font-size: calc(14px * var(--u));
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+.fx-mic-warn.active { display: block; }
+
 /* 동작 줄이기: 장식 모션 생략 (내용은 그대로 보임) */
 @media (prefers-reduced-motion: reduce) {
   .fx-word.in { animation: none; opacity: 1; }
@@ -241,7 +702,11 @@
   .fx-bars,
   .fx-bar-row,
   .fx-cloud.placed .fx-cloud-word,
-  .fx-cloud-count { transition: none; }
+  .fx-cloud-count,
+  .fx-screen,
+  .fx-end-slide,
+  .fx-end-fil,
+  .fx-end-dots i { transition: none; }
   .fx-cloud-word.pop,
   .fx-cloud-word.bump,
   .fx-cloud-word.bob { animation: none; }

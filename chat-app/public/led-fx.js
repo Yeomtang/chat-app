@@ -1270,6 +1270,7 @@
   function createChatPin(opts) {
     const lift = createLift({ layer: opts.layer, scale: opts.scale, coverAt: PIN.COVER_AT, coverMs: PIN.COVER_MS });
     let key = null; // 지금 보이는 핀 (같은 핀이 다시 오면 그대로 둠)
+    let lifted = null; // 들어올려 자리를 비워 둔 말풍선 { id, el } — 채팅을 다시 그리면 새 요소로 옮겨 숨김
 
     function makeCard(m) {
       const c = document.createElement('div');
@@ -1310,13 +1311,694 @@
         const el = live ? visibleBubble(message.id) : null;
         lift.show(makeCard(message), el ? {
           el,
-          hide: () => { el.style.visibility = 'hidden'; },   // 떠오른 말풍선 자리는 비워 둠 (시안처럼)
-          release: () => { el.style.visibility = ''; },      // 교체·해제되면 다시 보임
+          // 떠오른 말풍선 자리는 비워 둠 (시안처럼)
+          hide: () => { lifted = { id: message.id, el }; el.style.visibility = 'hidden'; },
+          // 교체·해제되면 다시 보임 (그사이 다시 그려졌으면 지금 요소 기준)
+          release: () => { if (lifted) lifted.el.style.visibility = ''; lifted = null; },
         } : null);
       },
       hide,
       clear() { key = null; lift.clear(); },
       settle: lift.settle,
+      // 채팅 목록을 다시 그린 뒤(일시정지 해제·재접속 history) 호출 — 핀으로 떠오른 말풍선이 새로 그려져 다시 보이지 않게
+      reconcile() {
+        if (!lifted) return;
+        const el = opts.findBubble(lifted.id);
+        if (!el || el === lifted.el) return;
+        lifted.el.style.visibility = '';
+        el.style.visibility = 'hidden';
+        lifted.el = el;
+      },
+    };
+  }
+
+  // ══════════════════════════════════
+  //  대기 화면 (시안 11) · 엔딩 "오늘의 결과" (시안 12) · 함성 미터 (시안 5)
+  // ══════════════════════════════════
+
+  // 레이어 공용 표시/숨김: 서서히 나타나고 사라진 뒤 display를 끈다 (.active = 표시, .on = 불투명)
+  const LAYER_FADE_MS = 600;
+  function fadeLayer(layer, on) {
+    if (layer._fxOff) { clearTimeout(layer._fxOff); layer._fxOff = null; }
+    if (on) {
+      if (layer.classList.contains('on')) return;
+      layer.classList.add('active');
+      void layer.offsetWidth; // display가 켜진 뒤 전환이 시작되도록
+      layer.classList.add('on');
+      return;
+    }
+    if (!layer.classList.contains('active')) return;
+    layer.classList.remove('on');
+    layer._fxOff = setTimeout(() => { layer._fxOff = null; layer.classList.remove('active'); }, prefersReduced() ? 0 : LAYER_FADE_MS);
+  }
+
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+
+  // 레이어(페이지 :root)에 정의된 색 토큰 값 — 캔버스 그리기용
+  const cssVar = (node, name, fallback) => (getComputedStyle(node).getPropertyValue(name).trim() || fallback);
+
+  // ── 입장 QR: 오류 복구 Q, 둘레 4칸 여백, 흰 바탕에 --ink 칸 (vendor/qrcode.js, MIT) ──
+  const QR_QUIET = 4;
+  // px: 그릴 크기(기기 픽셀) — 칸당 정수 픽셀로 맞춰 경계가 흐려지지 않게
+  function drawQr(canvas, text, opts) {
+    if (typeof window.qrcode !== 'function') return false;
+    const q = window.qrcode(0, 'Q'); // 0 = 주소 길이에 맞춰 버전 자동
+    q.addData(text);
+    q.make();
+    const n = q.getModuleCount();
+    const total = n + QR_QUIET * 2;
+    const cell = Math.max(2, Math.floor((opts.px || 600) / total));
+    canvas.width = canvas.height = total * cell;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = opts.ink || '#1e1e42';
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) if (q.isDark(r, c)) ctx.fillRect((c + QR_QUIET) * cell, (r + QR_QUIET) * cell, cell, cell);
+    }
+    return true;
+  }
+
+  // ── 대기 화면: 큰 입장 QR + 최근 채팅이 옆(세로형은 아래)에서 천천히 위로 흐름 + 느린 배경 번짐 ──
+  const IDLE = {
+    POOL_MAX: 30,    // 피드에 돌려 보여줄 최근 채팅 수
+    QUEUE_MAX: 8,    // 아직 안 나온 새 채팅 대기열 (몰리면 최신 것만)
+    SPEED: 20,       // 위로 흐르는 속도(논리 px/초, 화면 배율 곱함) — 시안 26초에 한 바퀴와 비슷
+    GAP: 14,         // 말풍선 간격(논리 px)
+    QR_PULSE_MS: 2600,
+  };
+  // 배경 번짐: [색 인덱스, 크기(레이어 폭 대비), 왼쪽%, 위%] — 시안 배치를 화면 비율에 맞춤
+  const IDLE_BLOBS = [[0, 0.62, -18, -10], [1, 0.52, 62, 58], [3, 0.4, 22, 66]];
+
+  // opts: { layer, url: 관객 주소, colors: OPTION_COLORS, scale: () => --u }
+  function createIdle(opts) {
+    const layer = opts.layer;
+    const scale = opts.scale || (() => 1);
+    const colors = opts.colors || [];
+    const url = opts.url;
+
+    IDLE_BLOBS.forEach(([ci, size, x, y], i) => {
+      const b = el('div', 'fx-idle-blob');
+      Object.assign(b.style, { background: colors[ci] || '', width: size * 100 + '%', left: x + '%', top: y + '%' });
+      b.dataset.i = i;
+      layer.appendChild(b);
+    });
+    const main = el('div', 'fx-idle-main');
+    main.append(
+      el('div', 'fx-idle-eyebrow', '직장 썰루션 토크콘서트'),
+      el('div', 'fx-idle-title'),
+      el('div', 'fx-idle-sub', 'QR을 찍으면 앱 설치 없이 바로 익명 채팅에 들어갑니다'),
+    );
+    main.querySelector('.fx-idle-title').append('폰으로', document.createElement('br'), '참여하세요');
+    const qrRow = el('div', 'fx-idle-qrwrap');
+    const qrBox = el('div', 'fx-idle-qr');
+    const qrCanvas = el('canvas');
+    qrBox.appendChild(qrCanvas);
+    const urlBox = el('div', 'fx-idle-url');
+    // 주소는 프로토콜 없이. 길면 '.'·'/' 뒤에서만 줄바꿈 (단어 중간에서 끊기지 않게)
+    const urlText = el('span');
+    url.replace(/^https?:\/\//, '').replace(/\/$/, '').split(/(?<=[./])/).forEach((part, i) => {
+      if (i) urlText.appendChild(document.createElement('wbr'));
+      urlText.appendChild(document.createTextNode(part));
+    });
+    urlBox.append(el('small', null, '주소로 들어와도 돼요'), urlText);
+    qrRow.append(qrBox, urlBox);
+    main.appendChild(qrRow);
+    const feed = el('div', 'fx-idle-feed');
+    const track = el('div', 'fx-idle-track');
+    feed.appendChild(track);
+    layer.append(main, feed);
+
+    let pool = [];   // 최근 채팅 { m, shown } (오래된 → 최신)
+    let queue = [];  // 피드에 아직 안 나온 새 채팅
+    let items = [];  // 트랙 위 말풍선 { el, rec, y, h }
+    let offset = 0;  // 트랙이 위로 올라간 거리(px)
+    let cursorY = 0; // 다음 말풍선이 놓일 y
+    let raf = null, last = 0, active = false;
+    let anims = [];
+
+    function drawCode() {
+      const w = qrBox.clientWidth;
+      if (!w) return;
+      drawQr(qrCanvas, url, { px: w * (window.devicePixelRatio || 1), ink: cssVar(layer, '--ink', '#1e1e42') });
+    }
+
+    function bubble(m) {
+      const b = el('div', 'fx-idle-b' + (m.isOperator ? ' operator' : ''));
+      b.append(el('b', null, m.nickname || ''), el('span', null, m.text || ''));
+      return b;
+    }
+
+    const gap = () => IDLE.GAP * scale();
+    const onScreen = (rec) => items.some((it) => it.rec === rec);
+
+    // 다음에 띄울 채팅: 새 채팅 먼저, 없으면 화면에 없는 최근 채팅 중 가장 오래전에 보인 것 (끊김 없이 흐르게)
+    function nextRec() {
+      while (queue.length) {
+        const rec = queue.shift();
+        if (pool.includes(rec) && !onScreen(rec)) return rec;
+      }
+      let best = null;
+      pool.forEach((rec) => { if (!onScreen(rec) && (!best || rec.shown < best.shown)) best = rec; });
+      return best;
+    }
+
+    function place(rec, y) {
+      const b = bubble(rec.m);
+      b.style.top = y + 'px';
+      track.appendChild(b);
+      const it = { el: b, rec, y, h: b.offsetHeight };
+      rec.shown = performance.now();
+      items.push(it);
+      cursorY = y + it.h + gap();
+      return it;
+    }
+
+    function render() { track.style.transform = `translateY(${-offset}px)`; }
+
+    // 화면을 채운 상태로 시작: 최신 채팅부터 피드 높이만큼, 위에서부터 오래된 순 (모자라면 아래쪽에 붙임)
+    function prefill() {
+      track.innerHTML = '';
+      items = []; queue = [];
+      offset = 0; cursorY = 0;
+      const H = feed.clientHeight;
+      const pick = [];
+      let sum = 0;
+      for (let i = pool.length - 1; i >= 0; i--) {
+        const probe = bubble(pool[i].m);
+        track.appendChild(probe);
+        const h = probe.offsetHeight + gap();
+        probe.remove();
+        if (pick.length && sum + h > H) break;
+        pick.unshift(pool[i]);
+        sum += h;
+      }
+      pick.forEach((rec) => place(rec, cursorY));
+      if (cursorY < H) offset = cursorY - H; // 적으면 아래쪽에 모아 두고 거기서부터 올라감
+      render();
+    }
+
+    function frame(now) {
+      const dt = Math.min(100, now - last);
+      last = now;
+      const H = feed.clientHeight;
+      offset += IDLE.SPEED * scale() * dt / 1000;
+      // 위로 다 빠진 말풍선 정리
+      while (items.length && items[0].y + items[0].h < offset) { items[0].el.remove(); items.shift(); }
+      // 아래가 비면 다음 채팅을 피드 아래 끝에서 들여보냄
+      if (cursorY - offset < H) {
+        const rec = nextRec();
+        if (rec) place(rec, Math.max(cursorY, offset + H));
+      }
+      render();
+      raf = requestAnimationFrame(frame);
+    }
+
+    // 동작 줄이기: 흐름 없이 최신 채팅을 아래쪽에 쌓아 보여줌
+    function staticFill() { prefill(); }
+
+    function startMotion() {
+      stopMotion();
+      if (prefersReduced()) return;
+      layer.querySelectorAll('.fx-idle-blob').forEach((b, i) => {
+        anims.push(b.animate([{ transform: 'translate(0, 0)' }, { transform: `translate(${(i % 2 ? -1 : 1) * 8}%, ${(i ? -1 : 1) * 6}%)` }],
+          { duration: 9000 + i * 2500, direction: 'alternate', iterations: Infinity, easing: 'ease-in-out' }));
+      });
+      anims.push(qrBox.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.03)' }],
+        { duration: IDLE.QR_PULSE_MS, direction: 'alternate', iterations: Infinity, easing: 'ease-in-out' }));
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    }
+
+    function stopMotion() {
+      if (raf) cancelAnimationFrame(raf);
+      raf = null;
+      anims.forEach((a) => a.cancel());
+      anims = [];
+    }
+
+    const findRec = (id) => (id == null ? null : pool.find((r) => r.m.id === id));
+
+    return {
+      show() {
+        if (active) return;
+        active = true;
+        fadeLayer(layer, true);
+        drawCode();
+        prefill();
+        startMotion();
+      },
+      hide() {
+        if (!active) return;
+        active = false;
+        stopMotion();
+        fadeLayer(layer, false);
+      },
+      // 채팅 화면에 그려지는 메시지마다 호출 (대기 화면이 꺼져 있어도 최근 목록은 유지)
+      push(m) {
+        if (!m || typeof m.text !== 'string') return;
+        if (m.id != null && findRec(m.id)) return; // 다시 그리기(일시정지 해제 등)로 온 같은 메시지
+        const rec = { m, shown: 0 };
+        pool.push(rec);
+        if (pool.length > IDLE.POOL_MAX) pool.shift();
+        if (!active) return;
+        if (prefersReduced()) { staticFill(); return; }
+        queue.push(rec);
+        if (queue.length > IDLE.QUEUE_MAX) queue.shift();
+      },
+      // 재접속 history: 목록을 서버 기준으로 다시 맞춤 (끊긴 사이 지워진 채팅은 피드에서도 뺌)
+      reset(list) {
+        const keep = new Set((list || []).map((m) => m.id));
+        pool = pool.filter((r) => keep.has(r.m.id));
+        (list || []).slice(-IDLE.POOL_MAX).forEach((m) => { if (!findRec(m.id)) pool.push({ m, shown: 0 }); });
+        if (pool.length > IDLE.POOL_MAX) pool = pool.slice(-IDLE.POOL_MAX);
+        items = items.filter((it) => { if (pool.includes(it.rec)) return true; it.el.remove(); return false; });
+      },
+      remove(id) {
+        const rec = findRec(id);
+        if (!rec) return;
+        pool = pool.filter((r) => r !== rec);
+        queue = queue.filter((r) => r !== rec);
+        items = items.filter((it) => { if (it.rec !== rec) return true; it.el.remove(); return false; });
+      },
+      clearFeed() {
+        pool = []; queue = []; items = [];
+        track.innerHTML = '';
+        offset = 0; cursorY = 0;
+        render();
+      },
+      // 창 크기가 바뀌면 QR과 피드를 새 크기로
+      relayout() {
+        if (!active) return;
+        drawCode();
+        prefill();
+      },
+      isActive: () => active,
+      qrCanvas,
+    };
+  }
+
+  // ── 엔딩 "오늘의 결과": 관리자가 넘기는 대로(state.ending.index) 한 장씩, 왼쪽으로 밀리며 바뀜 ──
+  // opts: { layer, colors: OPTION_COLORS, yesnoColors }
+  function createEnding(opts) {
+    const layer = opts.layer;
+    let key = null, slides = [], dots = [], index = -1, frameReq = null;
+
+    function voteSlide(s, n) {
+      const d = el('div', 'fx-end-slide');
+      d.appendChild(el('div', 'fx-end-kicker', `질문 ${n} · ${s.voteType === 'yesno' ? 'YES/NO' : '객관식'}`));
+      d.appendChild(el('div', 'fx-end-q', s.question || ''));
+      const labels = Array.isArray(s.options) ? s.options : [];
+      const sum = summarize(Array.isArray(s.perOption) ? s.perOption : []);
+      const pcts = labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
+      const maxPct = Math.max(1, ...pcts);
+      const palette = s.voteType === 'yesno' ? (opts.yesnoColors || opts.colors) : opts.colors;
+      const rows = el('div', 'fx-end-rows');
+      labels.forEach((label, i) => {
+        const r = el('div', 'fx-end-row' + (sum.total && sum.top.includes(i) ? ' win' : ''));
+        const trk = el('span', 'fx-end-trk');
+        const fil = el('span', 'fx-end-fil');
+        fil.style.background = palette[i % palette.length];
+        fil.dataset.w = String(pcts[i] / maxPct * 100); // 1위 막대가 트랙을 채움 (실제 비율은 % 숫자)
+        trk.appendChild(fil);
+        r.append(el('span', 'fx-end-lab', String(label)), trk, el('span', 'fx-end-pct', pcts[i] + '%'));
+        rows.appendChild(r);
+      });
+      d.appendChild(rows);
+      if (!sum.total) d.appendChild(el('div', 'fx-end-note', '참여한 표가 없었어요'));
+      return d;
+    }
+
+    function subjectiveSlide(s, n) {
+      const d = el('div', 'fx-end-slide');
+      d.appendChild(el('div', 'fx-end-kicker', `질문 ${n} · 주관식 1위`));
+      d.appendChild(el('div', 'fx-end-q', s.question || ''));
+      const top = (Array.isArray(s.top) ? s.top : []).filter((t) => t && typeof t.word === 'string');
+      if (!top.length) {
+        d.appendChild(el('div', 'fx-end-note', '접수된 답변이 없었어요'));
+        return d;
+      }
+      d.appendChild(el('div', 'fx-end-big', `“${top[0].word}”`));
+      d.appendChild(el('div', 'fx-end-note', top[0].count > 1 ? `${top[0].count}명이 같은 답` : '1명의 답'));
+      if (top.length > 1) {
+        const more = el('div', 'fx-end-more');
+        top.slice(1, 3).forEach((t, i) => {
+          const r = el('div', 'fx-end-more-row');
+          r.append(el('span', 'fx-end-rank', `${i + 2}위`), el('span', 'fx-end-word', t.word), el('span', 'fx-end-count', `${t.count}명`));
+          more.appendChild(r);
+        });
+        d.appendChild(more);
+      }
+      return d;
+    }
+
+    function makeSlide(s, n) {
+      if (s && s.kind === 'vote') return voteSlide(s, n);
+      if (s && s.kind === 'subjective') return subjectiveSlide(s, n);
+      const d = el('div', 'fx-end-slide');
+      if (s && s.kind === 'thanks') {
+        const t = el('div', 'fx-end-title');
+        t.append('함께해 주셔서', document.createElement('br'), '감사합니다');
+        d.append(t, el('div', 'fx-end-note', '오늘도 수고 많으셨어요'));
+      } else {
+        d.append(el('div', 'fx-end-kicker', '직장 썰루션 토크콘서트'), el('div', 'fx-end-title', '오늘의 결과'),
+          el('div', 'fx-end-note', '여러분이 함께 만든 답을 모아 봤어요'));
+      }
+      return d;
+    }
+
+    function build(list) {
+      layer.innerHTML = '';
+      slides = list.map((s, i) => { const d = makeSlide(s, i); layer.appendChild(d); return d; });
+      const dw = el('div', 'fx-end-dots');
+      dots = list.map(() => { const i = el('i'); dw.appendChild(i); return i; });
+      layer.appendChild(dw);
+      index = -1;
+    }
+
+    // n번째 슬라이드로: 이전 것들은 왼쪽으로, 다음 것들은 오른쪽 대기. 막대는 지금 슬라이드만 0에서 차오름
+    // slideAnim: 슬라이드가 밀리며 바뀜 / barAnim: 막대가 차오름 (재접속 스냅샷이면 둘 다 없이 바로)
+    function go(n, slideAnim, barAnim) {
+      if (prefersReduced()) { slideAnim = false; barAnim = false; }
+      if (frameReq) { cancelAnimationFrame(frameReq); frameReq = null; }
+      if (!slideAnim) layer.classList.add('fx-instant');
+      slides.forEach((s, i) => {
+        s.classList.toggle('on', i === n);
+        s.classList.toggle('off', i < n);
+        if (i !== n || barAnim) s.querySelectorAll('.fx-end-fil').forEach((f) => { f.style.width = '0'; });
+      });
+      dots.forEach((d, i) => d.classList.toggle('on', i === n));
+      index = n;
+      const fill = () => slides[n].querySelectorAll('.fx-end-fil').forEach((f) => { f.style.width = f.dataset.w + '%'; });
+      if (!barAnim) fill();
+      void layer.offsetWidth; // 바로 바뀐 상태를 먼저 확정한 뒤 전환을 다시 켬
+      layer.classList.remove('fx-instant');
+      // 다음 프레임에 막대 폭을 줘야 0에서 차오름
+      if (barAnim) frameReq = requestAnimationFrame(() => { frameReq = requestAnimationFrame(() => { frameReq = null; fill(); }); });
+    }
+
+    return {
+      // ending: state.ending { index, slides }. o.animate: 실시간 전환(재접속 스냅샷이면 false)
+      show(ending, o) {
+        const list = ending && Array.isArray(ending.slides) && ending.slides.length ? ending.slides : [{ kind: 'title' }, { kind: 'thanks' }];
+        const n = Math.min(list.length - 1, Math.max(0, Math.floor(Number(ending && ending.index) || 0)));
+        const animate = !!(o && o.animate);
+        const k = JSON.stringify(list);
+        const entering = !layer.classList.contains('on');
+        if (k !== key) { key = k; build(list); }
+        fadeLayer(layer, true);
+        if (n === index) return; // 같은 장 재전송 — 그대로
+        // 처음 들어올 땐 레이어가 서서히 나타나므로 슬라이드는 제자리에서 (막대만 차오름)
+        go(n, animate && !entering, animate);
+      },
+      hide() {
+        if (frameReq) { cancelAnimationFrame(frameReq); frameReq = null; }
+        key = null; index = -1;
+        fadeLayer(layer, false);
+      },
+      current: () => index,
+    };
+  }
+
+  // ── 함성 미터: 화면들이 받은 레벨(서버 중계)로 게이지가 차오르고, 목표선을 처음 넘으면 터짐 ──
+  const APPLAUSE = {
+    GOAL: 0.85,
+    WIN_MS: 2500,   // "대단해요! 목표 달성" 문구 유지 시간
+    STALE_MS: 700,  // 이만큼 레벨이 안 오면(마이크 화면 끊김) 게이지가 서서히 내려감
+    SPARKS: 60,
+  };
+
+  // opts: { layer, colors: OPTION_COLORS }
+  function createApplause(opts) {
+    const layer = opts.layer;
+    const colors = opts.colors || [];
+    const box = el('div', 'fx-clap');
+    const head = el('div', 'fx-clap-head');
+    const gauge = el('div', 'fx-clap-gauge');
+    const fill = el('div', 'fx-clap-fill');
+    const peakMark = el('div', 'fx-clap-peak');
+    const goal = el('div', 'fx-clap-goal');
+    goal.appendChild(el('span', null, '목표'));
+    goal.style.left = APPLAUSE.GOAL * 100 + '%';
+    gauge.append(fill, peakMark, goal);
+    const num = el('div', 'fx-clap-num', '0');
+    const cap = el('div', 'fx-clap-cap', '함성 지수');
+    box.append(head, gauge, num, cap);
+    layer.appendChild(box);
+
+    let mode = null;       // 'live' | 'result' | null
+    let session = null;    // 측정 회차 (endTime) — 같은 회차 재전송이면 이어감
+    let level = 0, target = 0, peak = 0, lastData = 0;
+    let wonAt = null, reached = false;
+    let raf = null, last = 0, shownNum = -1;
+    let sparks = [];
+
+    function setHead(text, win) {
+      if (head.textContent !== text) head.textContent = text;
+      head.classList.toggle('win', !!win);
+    }
+
+    function burst() {
+      if (prefersReduced()) return;
+      const lr = layer.getBoundingClientRect();
+      const hr = head.getBoundingClientRect();
+      const k = lr.width / 1000; // 시안(1000px) 대비 배율
+      const x0 = hr.left - lr.left + hr.width / 2, y0 = hr.top - lr.top + hr.height / 2;
+      for (let i = 0; i < APPLAUSE.SPARKS; i++) {
+        const a = Math.random() * Math.PI * 2, v = (3 + Math.random() * 8) * k;
+        const d = el('div', 'fx-clap-spark');
+        d.style.background = colors[i % 5] || '';
+        d.style.width = d.style.height = Math.round(14 * k) + 'px';
+        layer.appendChild(d);
+        sparks.push({ el: d, x: x0, y: y0, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 4 * k, g: 0.3 * k });
+      }
+    }
+
+    function clearSparks() { sparks.forEach((s) => s.el.remove()); sparks = []; }
+
+    function draw() {
+      const w = gauge.clientWidth, h = gauge.clientHeight;
+      const minFrac = w ? h / w : 0; // 0이어도 둥근 머리는 보이게 (시안: max(높이, 폭×레벨))
+      const f = Math.max(minFrac, Math.min(1, level));
+      fill.style.clipPath = `inset(0 ${((1 - f) * 100).toFixed(2)}% 0 0 round ${h / 2}px)`;
+      peakMark.style.left = (Math.min(1, peak) * 100).toFixed(2) + '%';
+      peakMark.style.opacity = mode === 'live' && peak > 0.01 ? '1' : '0'; // 결과에선 게이지 자체가 최고치
+      const n = Math.round((mode === 'result' ? peak : level) * 100);
+      if (n !== shownNum) { shownNum = n; num.textContent = String(n); }
+    }
+
+    function frame(now) {
+      const dt = Math.min(50, now - last);
+      last = now;
+      if (mode === 'live' && now - lastData > APPLAUSE.STALE_MS) target = 0;
+      // 오를 땐 빠르게, 내릴 땐 천천히 (시안과 같은 계수)
+      level += (target - level) * (target > level ? 0.18 : 0.05) * dt / 16;
+      if (mode === 'live') {
+        if (level >= APPLAUSE.GOAL && !reached) { reached = true; wonAt = now; burst(); }
+        const win = wonAt !== null && now - wonAt < APPLAUSE.WIN_MS;
+        setHead(win ? '대단해요! 목표 달성' : '더 크게! 박수 주세요', win);
+      }
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.vy += s.g * dt / 16; s.x += s.vx * dt / 16; s.y += s.vy * dt / 16;
+        if (s.y > layer.clientHeight + 20) { s.el.remove(); sparks.splice(i, 1); continue; }
+        s.el.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -50%)`;
+      }
+      draw();
+      raf = requestAnimationFrame(frame);
+    }
+
+    function run() {
+      if (raf) return;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    }
+
+    function stop() {
+      if (raf) cancelAnimationFrame(raf);
+      raf = null;
+      clearSparks();
+    }
+
+    return {
+      // 측정 중 (state.applause { endTime, peak })
+      start(ap) {
+        const s = ap && ap.endTime;
+        layer.classList.remove('result');
+        if (mode === 'live' && s === session) { fadeLayer(layer, true); return; } // 같은 회차 재전송
+        mode = 'live';
+        session = s;
+        peak = Math.max(0, Number(ap && ap.peak) || 0);
+        level = target = 0;
+        lastData = 0;
+        reached = peak >= APPLAUSE.GOAL; // 재접속 때 이미 넘었으면 다시 터뜨리지 않음
+        wonAt = null;
+        shownNum = -1;
+        clearSparks();
+        setHead('더 크게! 박수 주세요', false);
+        fadeLayer(layer, true);
+        draw();
+        run();
+      },
+      // 서버 중계 applauseLevel { level, peak }
+      level(data) {
+        if (mode !== 'live' || !data) return;
+        const lv = Number(data.level), pk = Number(data.peak);
+        if (Number.isFinite(lv)) target = Math.min(1, Math.max(0, lv));
+        if (Number.isFinite(pk)) peak = Math.max(peak, Math.min(1, pk));
+        lastData = performance.now();
+      },
+      // 측정 끝: 최고치로 게이지 고정 + "함성 지수 NN"
+      result(ap) {
+        const pk = Math.min(1, Math.max(0, Number(ap && ap.peak) || 0));
+        const wasLive = mode === 'live';
+        mode = 'result';
+        session = null;
+        peak = pk;
+        target = pk;
+        if (!wasLive || prefersReduced()) level = pk;
+        layer.classList.add('result');
+        setHead(`함성 지수 ${Math.round(pk * 100)}`, pk >= APPLAUSE.GOAL);
+        fadeLayer(layer, true);
+        draw();
+        run();
+      },
+      hide() {
+        if (mode === null) return;
+        mode = null;
+        session = null;
+        stop();
+        fadeLayer(layer, false);
+      },
+    };
+  }
+
+  // ── 함성 측정 마이크 (LED 주소에 ?mic=1 일 때만) ──
+  // 측정 시작 후 1.5초 소리의 중앙값을 바닥(dB)으로 잡고, 그보다 30dB 크면 1. ?gain= 으로 감도 조절
+  const MIC = {
+    SEND_MS: 75,       // 초당 약 13회 (서버 한도 15회/초 아래)
+    BASELINE_MS: 1500,
+    SPAN_DB: 30,
+  };
+
+  function micLevel(db, baselineDb, gain) {
+    return clamp01((db - baselineDb) / MIC.SPAN_DB * gain);
+  }
+
+  function median(arr) {
+    if (!arr.length) return -100;
+    const s = arr.slice().sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  // opts: { search: location.search, emit(level), host: 경고를 띄울 요소 }
+  // ?mic=1이 아니면 null — 마이크를 아예 요청하지 않는다
+  function createMic(opts) {
+    const params = new URLSearchParams(opts.search || '');
+    if (params.get('mic') !== '1') return null;
+    const g = parseFloat(params.get('gain'));
+    const gain = Number.isFinite(g) && g > 0 ? g : 1;
+    const warnEl = el('div', 'fx-mic-warn');
+    opts.host.appendChild(warnEl);
+
+    let stream = null, ctx = null, analyser = null, buf = null, source = null;
+    let timer = null, running = false, run = 0, key = null;
+    let baseline = null, samples = [], t0 = 0;
+
+    function warn(msg) {
+      warnEl.textContent = msg || '';
+      warnEl.classList.toggle('active', !!msg);
+    }
+
+    // 소리가 멈춰 있으면(자동재생 정책) 화면을 한 번 누르면 재개
+    function resumeOnTap() {
+      const h = () => { if (ctx) ctx.resume().then(() => { if (ctx.state === 'running') warn(''); }); };
+      document.addEventListener('pointerdown', h, { once: true });
+    }
+
+    async function ensure() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no mic'), { name: 'NotFoundError' });
+      const live = stream && stream.getAudioTracks().some((t) => t.readyState === 'live');
+      if (!live) {
+        // 박수·함성은 잡음처럼 처리되므로 잡음 제거·자동 음량은 끔 (가능한 브라우저에서만)
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        if (source) { source.disconnect(); source = null; }
+      }
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!source) {
+        source = ctx.createMediaStreamSource(stream);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        buf = new Float32Array(analyser.fftSize);
+        source.connect(analyser);
+      }
+      if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) { /* 아래에서 안내 */ } }
+    }
+
+    function readDb() {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      return 20 * Math.log10(Math.max(rms, 1e-8));
+    }
+
+    function tick() {
+      if (!running) return;
+      const now = performance.now();
+      // 소리가 멈춰 있으면(자동재생 정책) 무음만 읽히므로 바닥값은 재개된 뒤부터 잰다
+      if (ctx.state !== 'running') { t0 = now; samples = []; baseline = null; return; }
+      const db = readDb();
+      if (baseline === null) {
+        samples.push(db);
+        if (now - t0 >= MIC.BASELINE_MS) baseline = median(samples);
+        return;
+      }
+      opts.emit(Math.round(micLevel(db, baseline, gain) * 1000) / 1000);
+    }
+
+    function stopTimer() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+
+    return {
+      // 측정 시작 (k: 측정 회차 — 다른 회차면 바닥값을 새로 잼). 마이크 스트림은 처음 허용 뒤 재사용
+      start(k) {
+        if (running && k === key) return;
+        stopTimer();
+        running = true;
+        key = k;
+        const my = ++run;
+        baseline = null; samples = [];
+        ensure().then(() => {
+          if (my !== run || !running) return;
+          if (ctx.state !== 'running') { warn('마이크 소리가 멈춰 있어요 — 화면을 한 번 눌러 주세요'); resumeOnTap(); }
+          else warn('');
+          t0 = performance.now();
+          timer = setInterval(tick, MIC.SEND_MS);
+        }).catch((e) => {
+          if (my !== run) return;
+          running = false;
+          warn(e && e.name === 'NotAllowedError' ? '마이크 권한이 거부되어 함성을 잴 수 없어요' : '마이크를 쓸 수 없어 함성을 잴 수 없어요');
+        });
+      },
+      // 측정 끝(모드 전환): 분석만 멈춤 — 스트림은 다음 측정을 위해 유지
+      stop() {
+        if (!running && !timer) return;
+        running = false;
+        run++;
+        key = null;
+        stopTimer();
+        if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
+      },
+      gain,
     };
   }
 
@@ -1333,5 +2015,9 @@
     lift: { create: createLift, LIFT },
     spotlight: { create: createPickSpotlight, PICK },
     pin: { create: createChatPin, PIN },
+    qr: { draw: drawQr, QUIET: QR_QUIET },
+    idle: { create: createIdle, IDLE },
+    ending: { create: createEnding },
+    applause: { create: createApplause, createMic, micLevel, APPLAUSE, MIC },
   };
 })();
