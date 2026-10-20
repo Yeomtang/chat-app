@@ -2059,3 +2059,851 @@
     applause: { create: createApplause, createMic, micLevel, APPLAUSE, MIC },
   };
 })();
+
+// ══════════════════════════════════
+//  LED 페이지 배선 (led.html · led-concert.html 공용)
+//  소켓 이벤트 → 화면 모드 전환, 채팅 목록, 투표 상자 캔버스, 각 연출(LedFx.*) 연결.
+//  두 페이지는 마크업·CSS와 아래 설정만 다르다 — 동작 수정은 여기 한 곳에서.
+//  (원래 각 페이지 <script>에 있던 코드를 그대로 옮김: 전역이 아닌 함수 안이라 페이지 전역 변수는 없다)
+// ══════════════════════════════════
+(function () {
+  // cfg: {
+  //   baseW: 설계 기준 폭(px) — 화면 배율 --u의 기준,
+  //   box: 보기 상자 상수 덮어쓰기 (예: { headerH: 48 }),
+  //   clusterLayout(n) → { cols, rows }: 보기 n개의 상자 격자,
+  //   boxLabelPx(curScale) → 상자 헤더 라벨 글자 크기(px, 정수),
+  //   audiencePath: 대기 화면 QR이 가리킬 관객 주소 경로 ('/' 또는 '/concert'),
+  // }
+  function start(cfg) {
+    const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
+    const MAX_BUFFER = 300; // 일시정지 중에도 누적되는 메시지 버퍼 상한(메모리 보호용)
+    const messages = [];
+    let chatPaused = false; // 채팅 빈 영역 클릭으로 일시정지된 상태인지
+
+    const container = document.getElementById('led-messages');
+    // ── 마이크 화면 운영진 키 ── 주소에 ?mic=1&key=운영진키 로 열면 키를 이 브라우저에 기억하고 주소창에서는 지운다.
+    // 함성 레벨은 운영진 키로 접속한 소켓만 받으므로(관객 위조 방지) 마이크 화면만 키를 싣는다 — 일반 LED는 그대로 접속
+    const MIC_KEY_STORE = 'ledMicKey';
+    function loadMicKey() {
+      const params = new URLSearchParams(location.search);
+      if (params.get('mic') !== '1') return null;
+      const fromUrl = params.get('key');
+      if (fromUrl) {
+        try { localStorage.setItem(MIC_KEY_STORE, fromUrl); } catch {}
+        params.delete('key');
+        const qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+        return fromUrl;
+      }
+      try { return localStorage.getItem(MIC_KEY_STORE) || ''; } catch { return ''; }
+    }
+    const micKey = loadMicKey();
+    const socket = micKey === null ? io() : io({ auth: { key: micKey } });
+
+    socket.on('history', (history) => {
+      // 재접속 때도 history가 다시 오므로 기존 화면·버퍼를 비우고 다시 그린다(중복 표시 방지)
+      messages.length = 0;
+      container.innerHTML = '';
+      const recent = history.slice(-MAX_VISIBLE);
+      recent.forEach(addMessage);
+      idleFx.reset(history); // 대기 화면 피드: 끊긴 사이 지워진 채팅만 id로 뺌 (남은 말풍선은 그대로)
+      pinFx.reconcile(); // 다시 그린 말풍선 중 핀으로 떠오른 것은 다시 숨김
+    });
+
+    socket.on('chat', (msg) => {
+      addMessage(msg);
+    });
+
+    // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
+    socket.on('chatBatch', (list) => {
+      list.forEach(addMessage);
+    });
+
+    // 관리자가 채팅을 초기화하면 화면과 버퍼를 함께 비운다
+    // (버퍼를 안 비우면 일시정지 해제 시 지운 메시지가 되살아난다)
+    socket.on('chatCleared', () => {
+      messages.length = 0;
+      container.innerHTML = '';
+      idleFx.clearFeed();
+    });
+
+    // 관리자가 개별 채팅을 삭제하면 화면·버퍼에서 제거
+    socket.on('chatDeleted', (id) => {
+      const i = messages.findIndex(m => m.id === id);
+      if (i !== -1) messages.splice(i, 1);
+      const el = container.querySelector('[data-id="' + CSS.escape(String(id)) + '"]');
+      if (el) el.remove();
+      idleFx.remove(id);
+    });
+
+    // 메시지 수신: 항상 버퍼(messages)에는 기록하되, 일시정지 중이면 화면엔 그리지 않음
+    function addMessage(msg) {
+      messages.push(msg);
+      if (messages.length > MAX_BUFFER) messages.shift();
+      if (chatPaused) return;
+      renderMessage(msg);
+    }
+
+    function renderMessage(msg) {
+      const group = document.createElement('div');
+      group.className = 'led-msg-group';
+      if (msg.id != null) group.dataset.id = msg.id;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'led-bubble' + (msg.isOperator ? ' operator' : '');
+
+      const nick = document.createElement('div');
+      nick.className = 'led-nickname';
+      nick.textContent = msg.nickname;
+
+      const text = document.createElement('div');
+      text.className = 'led-text';
+      text.textContent = msg.text;
+
+      bubble.appendChild(nick);
+      bubble.appendChild(text);
+      group.appendChild(bubble);
+      container.appendChild(group);
+
+      // 최대 개수 초과 시 가장 오래된 것 제거
+      const groups = container.querySelectorAll('.led-msg-group');
+      if (groups.length > MAX_VISIBLE) {
+        groups[0].remove();
+      }
+
+      idleFx.push(msg); // 대기 화면 피드에도 (화면에 그려지는 채팅만 — 일시정지 중엔 보류)
+    }
+
+    // 일시정지: 화면 갱신만 멈춤(버퍼링은 계속) — 더블클릭 시 최신 상태로 점프
+    function pauseChat() {
+      if (chatPaused) return;
+      chatPaused = true;
+    }
+
+    function resumeChat() {
+      if (!chatPaused) return;
+      chatPaused = false;
+      container.innerHTML = '';
+      messages.slice(-MAX_VISIBLE).forEach(renderMessage);
+      pinFx.reconcile(); // 다시 그린 말풍선 중 핀으로 떠오른 것은 다시 숨김
+    }
+
+    // ══════════════════════════════════
+    //  투표 모드
+    // ══════════════════════════════════
+    const chatLayer = document.getElementById('chat-layer');
+
+    // 채팅 일시정지는 LED 화면 클릭이 아니라 관리자 화면(admin.html)에서 제어한다.
+    // 서버가 보내는 'chatPauseChange'/state.chatPaused 값을 그대로 따른다.
+
+    const votingLayer = document.getElementById('voting-layer');
+    const votingQuestion = document.getElementById('voting-question');
+    const votingTimer = document.getElementById('voting-timer');
+    const resultBanner = document.getElementById('result-banner');
+    const resultLine = document.getElementById('result-line');
+
+    const canvas = document.getElementById('voting-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // 보기 색 팔레트 (관객 폰과 순서 동일 — 같은 보기 = 같은 색)
+    const YESNO_COLORS = ['#fb7e55', '#5b5cc4'];
+    const OPTION_COLORS = ['#fb7e55', '#5b5cc4', '#2fb3a3', '#f2a03d', '#e3557f', '#4a4a7a'];
+    function colorFor(i) {
+      const arr = voteType === 'yesno' ? YESNO_COLORS : OPTION_COLORS;
+      return arr[i % arr.length];
+    }
+
+    // ── 공 크기 ──
+    // 1표 = 공 1개. 표가 가장 많은 보기가 상자를 거의 채우도록 반지름을 역산하고,
+    // 그 값을 모든 보기에 똑같이 적용한다(보기마다 크기가 다르면 양 비교가 왜곡됨).
+    const BALL_MIN_R = 2.5;
+    const BALL_MAX_R = 15;  // 표가 적을 땐 이 크기를 유지해 차오르는 과정이 보이게
+
+    // ── 보기 상자 ── 시안대로 컬러 헤더 + 흰 본문, 공이 그 안에 담김
+    // 페이지 설정(cfg.box)이 기본값을 덮어씀 — 가로형은 헤더가 조금 높다
+    const BOX = Object.assign({ headerH: 46, pad: 16, radius: 18, gap: 22, minW: 120, marginRatio: 0.11 }, cfg.box);
+
+    // 세로 비율 상한(높이 ÷ 너비). 열이 많아 상자가 좁아질수록 세로로 길어야
+    // 담긴 높이가 읽히므로 상한을 키운다. 2지선다는 시안대로 정사각형에 가깝게 유지.
+    function maxAspectFor(cols, rows) {
+      if (rows > 1) return 1.6;
+      return cols <= 2 ? 1.15 : 2.2;
+    }
+    const BOX_FONT = "'Pretendard Variable', Pretendard, -apple-system, sans-serif";
+
+    // 보기별 공 목록: ballState[i] = { balls: [{ x, y, tx, ty, phase, drop }] } (drop = 낙하 중 정보, LedFx.balls)
+    let ballState = [];
+    let ballR = BALL_MAX_R;    // 목표 공 반지름
+    let curBallR = BALL_MAX_R; // 실제 렌더 반지름 (목표값으로 부드럽게 수렴)
+    let voteOptions = [];      // 현재 질문 보기 라벨 배열
+    let voteType = 'yesno';    // 'yesno' | 'choice'
+    let optCount = 0;          // 보기 수
+    let curScale = 1;          // 보기 수에 따른 공 크기 축소(겹침 방지)
+
+    let votingEndTime = null;
+    let timerInterval = null;
+    let rafHandle = null;
+    let currentMode = 'chat';
+
+    // 화면 배율: 설계 기준 폭(cfg.baseW — 세로형 800, 가로형 1040) 대비 실제 #screen 폭. CSS(--u)와 캔버스 좌표계에 함께 적용해
+    // LED 해상도가 600이든 1080이든 화면 구성 비율이 완전히 동일하게 보이도록 한다.
+    const BASE_W = cfg.baseW;
+    const screenEl = document.getElementById('screen');
+    let uScale = 1;
+
+    function applyScreenScale() {
+      uScale = (screenEl.clientWidth || BASE_W) / BASE_W;
+      screenEl.style.setProperty('--u', uScale.toFixed(4));
+    }
+    applyScreenScale();
+
+    // 캔버스 논리 크기 — 항상 BASE_W 기준으로 환산해서 쓴다 (상자·공 상수를 그대로 재사용)
+    function logicalW() { return canvas.width / devicePixelRatio / uScale; }
+    function logicalH() { return canvas.height / devicePixelRatio / uScale; }
+
+    function resizeCanvas() {
+      const wrap = document.getElementById('voting-canvas-wrap');
+      const rect = wrap.getBoundingClientRect();
+      canvas.width = rect.width * devicePixelRatio;
+      canvas.height = rect.height * devicePixelRatio;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      // 캔버스 크기가 바뀌면 클러스터 중심도 바뀐다 → 공 목표 위치 재계산
+      for (let i = 0; i < ballState.length; i++) repackSide(i);
+    }
+    // 질문 카드 높이에 맞춰 그 아래 콘텐츠(공 상자·워드클라우드)의 시작 위치를 잡는다.
+    // 질문이 길어 카드가 2줄 이상이 되면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다.
+    function layoutBelowQuestion() {
+      const layerH = votingLayer.clientHeight;
+      if (!layerH) return; // 채팅 모드에선 레이어가 숨겨져 있어 측정 불가
+      const qWrap = document.getElementById('voting-question-wrap');
+      const qCard = document.getElementById('voting-question-card');
+      // offsetHeight는 팝인 transform의 영향을 받지 않아 등장 애니메이션 중에도 정확
+      const bottom = qWrap.offsetTop + qCard.offsetHeight;
+      const gap = layerH * 0.03;
+      document.getElementById('voting-canvas-wrap').style.top = Math.max(layerH * 0.22, bottom + gap) + 'px';
+      cloudWrap.style.top = Math.max(layerH * 0.24, bottom + gap) + 'px';
+    }
+
+    window.addEventListener('resize', () => {
+      applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
+      // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
+      if (reveal) { reveal = null; resultBanner.classList.add('active'); }
+      cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
+      pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
+      idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
+    });
+
+    function initBallState(n) {
+      ballState = [];
+      for (let i = 0; i < n; i++) ballState.push({ balls: [] });
+    }
+
+    // 보기 수에 맞춘 상자 격자 { cols, rows } — 화면 비율마다 다르므로 페이지 설정에서
+    const clusterLayout = cfg.clusterLayout;
+
+    // 공 클러스터 중심 = 보기 상자 본문(헤더 아래)의 한가운데.
+    // 배치의 기준은 상자(boxRect)이고 공은 거기에 따라온다.
+    function clusterCenter(i) {
+      const b = boxRect(i);
+      return { x: b.x + b.w / 2, y: b.y + BOX.headerH + (b.h - BOX.headerH) / 2 };
+    }
+
+    // 모서리별 반경을 따로 주는 둥근 사각형 경로 (헤더는 위쪽만 둥글게)
+    function roundRectPath(x, y, w, h, tl, tr, br, bl) {
+      ctx.beginPath();
+      ctx.moveTo(x + tl, y);
+      ctx.lineTo(x + w - tr, y);
+      ctx.arcTo(x + w, y, x + w, y + tr, tr);
+      ctx.lineTo(x + w, y + h - br);
+      ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+      ctx.lineTo(x + bl, y + h);
+      ctx.arcTo(x, y + h, x, y + h - bl, bl);
+      ctx.lineTo(x, y + tl);
+      ctx.arcTo(x, y, x + tl, y, tl);
+      ctx.closePath();
+    }
+
+    // 보기 상자 위치·크기. 본문(헤더 아래) 한가운데가 공 클러스터 중심과 맞도록 배치하고,
+    // 표가 쌓여 무리가 커지면 셀 크기 한도까지 상자도 함께 커진다.
+    function boxRect(i) {
+      const w = logicalW();
+      const h = logicalH();
+      const n = Math.max(1, optCount);
+      const { cols, rows } = clusterLayout(n);
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      const itemsInRow = (row === rows - 1) ? (n - row * cols) : cols;
+
+      // 크기는 표 수와 무관하게 고정 — 보기끼리 상자 크기가 달라 보이거나 서로 겹치면 안 됨.
+      // 표가 많아 무리가 상자보다 커지면 공 쪽을 축소해 담는다(drawFrame의 fit).
+      const margin = w * BOX.marginRatio;
+      const bw = Math.max(BOX.minW, (w - margin * 2 - BOX.gap * (cols - 1)) / cols);
+      const bh = Math.min(Math.max(BOX.minW, (h - BOX.gap * (rows - 1)) / rows), bw * maxAspectFor(cols, rows));
+
+      // 마지막 행이 덜 찼으면 그 행만 가운데 정렬
+      const rowW = itemsInRow * bw + (itemsInRow - 1) * BOX.gap;
+      const gridH = rows * bh + (rows - 1) * BOX.gap;
+      return {
+        x: (w - rowW) / 2 + col * (bw + BOX.gap),
+        y: (h - gridH) / 2 + row * (bh + BOX.gap),
+        w: bw,
+        h: bh,
+      };
+    }
+
+    function drawBox(box, color, label) {
+      const r = BOX.radius;
+      // 흰 본문 + 그림자
+      ctx.save();
+      ctx.shadowColor = 'rgba(30, 30, 66, 0.12)';
+      ctx.shadowBlur = 24;
+      ctx.shadowOffsetY = 8;
+      roundRectPath(box.x, box.y, box.w, box.h, r, r, r, r);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+      // 컬러 헤더 (위쪽 모서리만 둥글게)
+      ctx.save();
+      roundRectPath(box.x, box.y, box.w, BOX.headerH, r, r, 0, 0);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.clip();
+      ctx.font = `700 ${cfg.boxLabelPx(curScale)}px ${BOX_FONT}`; // 보기 라벨 크기는 페이지 설정 (넘치면 maxWidth로 자동 축소)
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, box.x + box.w / 2, box.y + BOX.headerH / 2 + 1, box.w - 16);
+      ctx.restore();
+    }
+
+    // ── 벌집 쌓기 ── 상자 바닥부터 한 줄씩 채워 올린다. 쌓인 높이가 곧 표 수.
+    const BALL_GAP = 1.1;   // 공 사이 간격 배율 (1이면 딱 붙어 겹쳐 보임)
+    const HEADROOM = 1.12;  // 1등 보기가 천장에 닿지 않도록 남기는 여유
+    const ROW_RATIO = Math.sqrt(3); // 벌집 배열의 줄 간격 = r * √3
+
+    function hexPerRow(innerW, r) { return Math.max(1, Math.floor(innerW / (2 * r * BALL_GAP))); }
+    function hexRowCount(innerH, r) { return Math.max(1, Math.floor((innerH - 2 * r) / (r * ROW_RATIO * BALL_GAP)) + 1); }
+
+    // 반지름 r일 때 상자 하나에 담기는 공의 최대 개수 (홀수 줄은 반 칸 어긋나 하나 적음)
+    function hexCapacity(innerW, innerH, r) {
+      const per = hexPerRow(innerW, r);
+      const rows = hexRowCount(innerH, r);
+      const odd = Math.floor(rows / 2);
+      return (rows - odd) * per + odd * Math.max(1, per - 1);
+    }
+
+    // 가장 많은 표(maxCount)가 상자에 딱 담기는 최대 반지름을 이분 탐색으로 찾는다
+    function computeBallR(maxCount) {
+      if (maxCount <= 0) return BALL_MAX_R;
+      const b = boxRect(0);
+      const innerW = b.w - BOX.pad * 2;
+      const innerH = b.h - BOX.headerH - BOX.pad * 2;
+      const need = maxCount * HEADROOM;
+      if (hexCapacity(innerW, innerH, BALL_MAX_R) >= need) return BALL_MAX_R;
+      let lo = BALL_MIN_R, hi = BALL_MAX_R;
+      for (let k = 0; k < 20; k++) {
+        const mid = (lo + hi) / 2;
+        if (hexCapacity(innerW, innerH, mid) >= need) lo = mid; else hi = mid;
+      }
+      return lo;
+    }
+
+    function hexPositions(box, r, count) {
+      const per = hexPerRow(box.w - BOX.pad * 2, r);
+      const step = 2 * r * BALL_GAP;
+      const rowH = r * ROW_RATIO * BALL_GAP;
+      const bottom = box.y + box.h - BOX.pad - r;
+      const cx = box.x + box.w / 2;
+      const out = [];
+      let row = 0;
+      while (out.length < count && row < 600) {
+        const cap = (row % 2 && per > 1) ? per - 1 : per;
+        const take = Math.min(cap, count - out.length);
+        const startX = cx - (take - 1) * step / 2; // 줄마다 가운데 정렬 → 홀수 줄이 자연스럽게 반 칸 어긋남
+        for (let c = 0; c < take; c++) out.push({ x: startX + c * step, y: bottom - row * rowH });
+        row++;
+      }
+      return out;
+    }
+
+    function repackSide(i) {
+      const slots = ballState[i];
+      if (!slots) return;
+      const pos = hexPositions(boxRect(i), curBallR, slots.balls.length);
+      slots.balls.forEach((p, k) => {
+        if (!pos[k]) return;
+        p.tx = pos[k].x;
+        p.ty = pos[k].y;
+      });
+    }
+
+    // 표 개수에 맞춰 공 배열 길이 조정. 새 공은 헤더 바로 아래, 자기 자리 바로 위에서 떨어진다.
+    // snap=true(모드 진입·재접속)면 낙하 없이 제자리에 바로 놓는다.
+    function syncBalls(i, desired, snap) {
+      const arr = ballState[i].balls;
+      if (arr.length < desired) {
+        const box = boxRect(i);
+        const pos = hexPositions(box, curBallR, desired);
+        const fromY = box.y + BOX.headerH + curBallR;
+        const now = performance.now();
+        let order = 0;
+        while (arr.length < desired) {
+          // 표가 비정상적으로 많아 hexPositions가 줄 상한에서 멈추면 칸이 모자람 → 상자 가운데로 대신
+          const slot = pos[arr.length] || { x: box.x + box.w / 2, y: fromY };
+          const ball = { x: slot.x, y: slot.y, tx: slot.x, ty: slot.y, phase: Math.random() * Math.PI * 2, drop: null };
+          if (!snap) LedFx.balls.startDrop(ball, fromY, order++, now);
+          arr.push(ball);
+        }
+      }
+      while (arr.length > desired) arr.pop();
+    }
+
+    // 모든 보기를 한 번에 갱신 — 공 크기는 보기 전체의 최댓값 기준이라 개별 갱신하면 안 됨.
+    // snap=true면 크기 변화 애니메이션 없이 즉시 반영(모드 진입·재접속 시).
+    function applyAllCounts(perOption, snap) {
+      let maxCount = 0;
+      for (let i = 0; i < optCount; i++) maxCount = Math.max(maxCount, (perOption && perOption[i]) || 0);
+      ballR = computeBallR(maxCount);
+      if (snap) curBallR = ballR;
+      for (let i = 0; i < optCount; i++) {
+        if (!ballState[i]) continue;
+        syncBalls(i, (perOption && perOption[i]) || 0, snap);
+        repackSide(i);
+      }
+    }
+
+    function drawBalls(balls, radius, color, time) {
+      const jitter = radius * 0.07; // 흔들림도 공 크기에 비례 (겹쳐 보이지 않을 만큼만)
+      ctx.fillStyle = color;
+      const now = performance.now();
+      balls.forEach((p) => {
+        // 낙하 중엔 시간 기반 낙하(LedFx.balls), 끝나면 목표 위치로 부드럽게 수렴(반지름 축소 재배치 포함)
+        const st = LedFx.balls.step(p, now);
+        if (!st.dropping) {
+          p.x += (p.tx - p.x) * 0.12;
+          p.y += (p.ty - p.y) * 0.12;
+        }
+        if (!st.visible) return; // 시차를 두고 떨어질 공은 차례가 올 때까지 숨김
+        ctx.beginPath();
+        ctx.arc(
+          p.x + Math.sin(time / 600 + p.phase) * jitter,
+          p.y + Math.cos(time / 700 + p.phase) * jitter,
+          radius, 0, Math.PI * 2
+        );
+        ctx.fill();
+      });
+    }
+
+    function drawFrame(time) {
+      ctx.save();
+      ctx.scale(devicePixelRatio * uScale, devicePixelRatio * uScale); // 논리 좌표계(BASE_W 기준)
+      ctx.clearRect(0, 0, logicalW(), logicalH());
+
+      // 표가 늘어 공이 작아질 때 크기가 툭 튀지 않도록 부드럽게 수렴시키고, 그 크기로 다시 쌓는다
+      curBallR += (ballR - curBallR) * 0.15;
+      if (Math.abs(curBallR - ballR) < 0.05) curBallR = ballR;
+
+      // 결과 공개(2지선다) 연출 중: 상자·공은 연출이 그리고, 끝나면 결과 배너를 띄운다
+      if (reveal) {
+        const done = reveal.draw(ctx, time, (i, alpha) => {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          drawBox(boxRect(i), colorFor(i), voteOptions[i] || '');
+          ctx.restore();
+        });
+        ctx.restore();
+        if (done) {
+          reveal = null;
+          resultBanner.classList.add('active');
+        }
+        rafHandle = requestAnimationFrame(drawFrame);
+        return;
+      }
+
+      for (let i = 0; i < optCount; i++) repackSide(i);
+
+      for (let i = 0; i < optCount; i++) {
+        const slots = ballState[i];
+        if (!slots) continue;
+        const color = colorFor(i);
+        const box = boxRect(i);
+        drawBox(box, color, voteOptions[i] || ''); // 라벨은 헤더 안에
+
+        ctx.save();
+        roundRectPath(box.x, box.y + BOX.headerH, box.w, box.h - BOX.headerH, 0, 0, BOX.radius, BOX.radius);
+        ctx.clip();
+        drawBalls(slots.balls, curBallR, color, time);
+        ctx.restore();
+      }
+
+      ctx.restore();
+      rafHandle = requestAnimationFrame(drawFrame);
+    }
+
+    function startRenderLoop() {
+      if (rafHandle) cancelAnimationFrame(rafHandle);
+      resizeCanvas();
+      rafHandle = requestAnimationFrame(drawFrame);
+    }
+
+    function stopRenderLoop() {
+      if (rafHandle) cancelAnimationFrame(rafHandle);
+      rafHandle = null;
+    }
+
+    function updateTimerDisplay() {
+      if (!votingEndTime) return;
+      const remain = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000));
+      votingTimer.textContent = remain;
+      LedFx.timer.update(votingTimer, remain); // 마지막 5초 경고색·맥박, 0이면 멈춤
+    }
+
+    function updateResultLine(counts) {
+      const per = counts && counts.perOption ? counts.perOption : [];
+      const total = counts && counts.total ? counts.total : 0;
+      resultLine.innerHTML = '';
+      voteOptions.forEach((label, i) => {
+        const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
+        const span = document.createElement('span');
+        span.style.color = colorFor(i);
+        span.style.margin = '0 10px';
+        span.style.whiteSpace = 'nowrap';
+        span.textContent = `${label} ${pct}%`;
+        resultLine.appendChild(span);
+      });
+    }
+
+    // ── 결과 연출 ── 2지선다(YES/NO 포함)는 숫자 변신, 3지 이상은 막대 경주.
+    // 투표 → 결과로 "실시간" 넘어올 때만 재생하고, 재접속(state 스냅샷)은 최종 화면만 보여준다.
+    let reveal = null;          // 진행 중인 숫자 변신 연출 (LedFx.result.createReveal)
+    let canvasStopTimer = null; // 막대 경주로 넘어갈 때 캔버스가 사라진 뒤 렌더 루프를 멈춤
+    let resultKey = null;       // 지금 보여주는 결과(질문·보기·득표) — 같은 결과 재전송 판별용
+    const barRace = LedFx.result.createBarRace(document.getElementById('bar-race'));
+
+    function stopResultFx() {
+      reveal = null;
+      barRace.clear();
+      if (canvasStopTimer) { clearTimeout(canvasStopTimer); canvasStopTimer = null; }
+      canvas.classList.remove('fx-hidden');
+    }
+
+    function showResult(counts, live) {
+      const per = counts && counts.perOption ? counts.perOption : [];
+      updateResultLine(counts);
+
+      if (optCount >= 3) {
+        // 막대 경주: 상자 캔버스를 숨기고(실시간이면 서서히) 같은 자리에 막대를 보여준다. 배너는 막대가 대신함
+        resultBanner.classList.remove('active');
+        if (live) {
+          canvas.classList.add('fx-hidden');
+          canvasStopTimer = setTimeout(() => { canvasStopTimer = null; stopRenderLoop(); }, 500);
+        } else {
+          canvas.style.transition = 'none'; // 스냅샷은 바로 숨김
+          canvas.classList.add('fx-hidden');
+          void canvas.offsetWidth;
+          canvas.style.transition = '';
+          stopRenderLoop();
+        }
+        barRace.show({ labels: voteOptions, colors: OPTION_COLORS, perOption: per, animate: live });
+        return;
+      }
+
+      const sum = LedFx.result.summarize(per);
+      // 표가 없거나·동작 줄이기·재접속이면 연출 없이 바로 배너
+      if (!live || !sum.total || LedFx.prefersReduced()) {
+        resultBanner.classList.add('active');
+        return;
+      }
+      resultBanner.classList.remove('active');
+      const winner = sum.tie ? -1 : sum.top[0];
+      const centers = [];
+      for (let i = 0; i < optCount; i++) {
+        const b = boxRect(i);
+        centers.push({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+      }
+      reveal = LedFx.result.createReveal({
+        W: logicalW(), H: logicalH(),
+        sides: ballState.map((s, i) => ({ color: colorFor(i), balls: s.balls })),
+        centers,
+        ballR: curBallR,
+        winner,
+        pct: sum.pct,
+        label: winner < 0 ? '동률' : (voteOptions[winner] || ''),
+        labelFamily: BOX_FONT,
+        ink: '#1e1e42',
+        confettiColors: OPTION_COLORS,
+      });
+    }
+
+    const answerStream = document.getElementById('answer-stream');
+    const cloudWrap = document.getElementById('cloud-wrap');
+
+    // isSnapshot: 접속(재접속) 때 받는 'state' — 질문 등장 연출을 다시 재생하지 않는다
+    function applyState(state, isSnapshot) {
+      const prevMode = currentMode;
+      currentMode = state.mode;
+      if (state.effects) heartBurst.setEnabled(LedFx.hearts.enabledFrom(state.effects));
+
+      // 채팅 일시정지 상태는 모드와 별개로 항상 서버 값을 따른다(관리자 화면에서 제어)
+      if (state.chatPaused) pauseChat(); else resumeChat();
+
+      // 결과 화면에서 "같은" 결과가 다시 오면(재전송) 진행 중인 연출·막대를 끊지 않는다.
+      // (끊긴 사이 다른 투표가 끝났다면 내용이 달라 새로 그림)
+      const key = state.mode === 'result' ? JSON.stringify([state.question, state.voteOptions, state.counts]) : null;
+      if (key && prevMode === 'result' && key === resultKey && (reveal || barRace.isActive())) return;
+      resultKey = key;
+      stopResultFx();
+
+      // 대기·엔딩·함성 화면은 각 레이어가 맡고, 해당 모드가 아니면 숨긴다
+      applySpecialScreens(state, isSnapshot);
+
+      if (state.mode === 'chat' || SPECIAL_MODES.includes(state.mode)) {
+        // 함성 미터는 흐린 채팅 위 반투명 판, 대기·엔딩은 불투명 화면이라 흐림 불필요
+        chatLayer.classList.toggle('blurred', state.mode === 'applause' || state.mode === 'applauseResult');
+        votingLayer.classList.remove('active');
+        resultBanner.classList.remove('active');
+        answerFx.clear();
+        pickFx.clear();
+        cloudFx.clear();
+        stopRenderLoop();
+        if (timerInterval) clearInterval(timerInterval);
+        LedFx.timer.reset(votingTimer);
+        if (state.mode === 'chat') pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
+        else pinFx.clear(); // 대기·엔딩·함성 화면에선 핀 숨김
+        return;
+      }
+
+      // 질문 모드 공통 (voting/result/subjective/subjectiveResult)
+      pinFx.clear(); // 질문 모드에선 핀 숨김 (들어올리던 중이어도 바로 정리)
+      chatLayer.classList.add('blurred');
+      votingLayer.classList.add('active');
+      // 채팅 등 다른 화면에서 질문이 새로 시작될 때만 어절 단위 등장 (투표→결과·재접속 땐 그대로)
+      LedFx.question.render(votingQuestion, state.question, LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
+      votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
+      layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
+
+      // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음)
+      if (state.mode !== 'voting') LedFx.timer.reset(votingTimer);
+
+      const isVote = state.mode === 'voting' || state.mode === 'result';
+      if (isVote) {
+        // 선택형(YES/NO·N지선다): 공 클러스터 렌더
+        answerFx.clear();
+        pickFx.clear();
+        cloudFx.clear();
+        voteOptions = state.voteOptions || [];
+        voteType = state.voteType || 'yesno';
+        optCount = voteOptions.length;
+        curScale = optCount <= 2 ? 1 : (optCount <= 4 ? 0.72 : 0.56);
+        initBallState(optCount);
+        resizeCanvas(); // 공 배치 전에 캔버스 실제 크기 확정 (기본값 300x150 상태로 배치되는 것 방지)
+        const per = state.counts && state.counts.perOption ? state.counts.perOption : [];
+        applyAllCounts(per, true);
+        startRenderLoop();
+      } else {
+        // 주관식/이모지: 공 캔버스 정지 + 잔상 제거
+        stopRenderLoop();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      if (state.mode === 'voting') {
+        // 투표 중엔 숫자 배너 없이 공 클러스터 이동만으로 실시간 현황을 보여줌
+        resultBanner.classList.remove('active');
+        votingTimer.style.display = 'inline-flex';
+        votingEndTime = state.votingEndTime;
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(updateTimerDisplay, 200);
+        updateTimerDisplay();
+      } else if (state.mode === 'result') {
+        // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
+        if (timerInterval) clearInterval(timerInterval);
+        votingTimer.style.display = 'none';
+        // 투표 중이던 화면에서 실시간으로 넘어올 때만 결과 공개 연출
+        showResult(state.counts, !isSnapshot && prevMode === 'voting');
+      } else if (state.mode === 'subjective') {
+        // 답변 접수 중: 타이머 없음, 답변 흘려보내기
+        if (timerInterval) clearInterval(timerInterval);
+        votingTimer.style.display = 'none';
+        resultBanner.classList.remove('active');
+        cloudFx.clear();
+        if (prevMode !== 'subjective') pickFx.clear(); // 새 주관식 질문: 이전 질문의 픽 카드가 남아 있지 않게
+        answerFx.start();
+      } else if (state.mode === 'subjectiveResult') {
+        // 마감: 접수 화면에서 실시간으로 넘어오면 흐르던 답변이 단어 자리로 모이고,
+        // 재접속(state)이면 최종 워드클라우드를 바로 보여줌
+        if (timerInterval) clearInterval(timerInterval);
+        votingTimer.style.display = 'none';
+        resultBanner.classList.remove('active');
+        cloudFx.show(state.cloud || [], { live: !isSnapshot && prevMode === 'subjective' });
+      } else if (state.mode === 'emoji') {
+        // 이모지 반응: 타이머/배너/공 없음. 이모지는 reaction-layer로 떠오름(emojiFloat)
+        if (timerInterval) clearInterval(timerInterval);
+        votingTimer.style.display = 'none';
+        resultBanner.classList.remove('active');
+        answerFx.clear();
+        pickFx.clear();
+        cloudFx.clear();
+      }
+    }
+
+    // ── 대기 화면 · 엔딩 · 함성 미터 ── 움직임은 LedFx, 여기서는 레이어와 설정만
+    const SPECIAL_MODES = ['idle', 'ending', 'applause', 'applauseResult'];
+    // 대기 화면 QR = 이 LED 테마의 관객 주소 (cfg.audiencePath — 세로형 '/', 가로형 '/concert')
+    const idleFx = LedFx.idle.create({ layer: document.getElementById('idle-layer'), url: location.origin + cfg.audiencePath, colors: OPTION_COLORS, scale: () => uScale });
+    const endingFx = LedFx.ending.create({ layer: document.getElementById('ending-layer'), colors: OPTION_COLORS, yesnoColors: YESNO_COLORS });
+    const applauseFx = LedFx.applause.create({ layer: document.getElementById('applause-layer'), colors: OPTION_COLORS });
+    // 주소에 ?mic=1 인 화면만 마이크로 함성을 잰다 (그 외 화면은 마이크를 요청하지 않음 → null)
+    const micFx = LedFx.applause.createMic({
+      search: location.search,
+      host: screenEl,
+      // volatile: 끊긴 동안의 레벨은 쌓아 두지 않고 버린다 (다시 붙었을 때 지난 값이 몰려가지 않게)
+      emit: (level) => socket.volatile.emit('applauseLevel', { level }),
+    });
+    // 키가 없거나 틀리면 서버가 레벨을 받지 않는다 — 마이크 화면에 작게 안내
+    const MIC_KEY_WARN = '마이크 화면은 운영진 키가 필요합니다 (주소에 &key=운영진키)';
+    if (micFx) {
+      if (!micKey) micFx.authWarn(MIC_KEY_WARN);
+      socket.on('authError', () => micFx.authWarn(MIC_KEY_WARN));
+    }
+
+    function applySpecialScreens(state, isSnapshot) {
+      const m = state.mode;
+      if (m === 'idle') idleFx.show(); else idleFx.hide();
+      // 엔딩 장 넘김은 서버 상태(관리자)만 따른다 — 실시간 전환일 때만 밀리는 연출
+      if (m === 'ending') endingFx.show(state.ending, { animate: !isSnapshot }); else endingFx.hide();
+      if (m === 'applause') applauseFx.start(state.applause);
+      else if (m === 'applauseResult') applauseFx.result(state.applause);
+      else applauseFx.hide();
+      // 측정 중에만 마이크 분석 (회차 = 종료 시각 — 새 회차면 바닥 소음을 다시 잼)
+      if (micFx) { if (m === 'applause') micFx.start(state.applause && state.applause.endTime); else micFx.stop(); }
+    }
+
+    // 서버가 모은 함성 레벨(모든 마이크 화면 공용) → 게이지
+    socket.on('applauseLevel', (data) => {
+      if (currentMode !== 'applause') return;
+      applauseFx.level(data);
+    });
+
+    // ── 주관식: 답변 흘려보내기 · 워드클라우드 · 제작진 픽 ──
+    // 움직임·판단은 LedFx(공용)에서, 여기서는 화면 요소와 설정만 넘긴다
+    const answerFx = LedFx.answers.create({ el: answerStream, scale: () => uScale });
+
+    // 인접한 답변이 같은 색이 되지 않도록 팔레트를 순환 배정 (랜덤 X)
+    const CLOUD_COLORS = [
+      '#1e1e42', '#fb7e55', '#5b5cc4', '#2fb3a3', '#e3557f',
+      '#f2a03d', '#4a4a7a', '#c2544a', '#7b6cf0', '#1f8f83',
+    ];
+    const cloudFx = LedFx.cloud.create({ wrap: cloudWrap, stream: answerFx, colors: CLOUD_COLORS, scale: () => uScale });
+
+    const SPOTLIGHT_DURATION = 8000; // 픽 카드 표시 유지 시간(ms)
+    const pickFx = LedFx.spotlight.create({
+      layer: document.getElementById('spotlight'),
+      cardClass: 'spotlight-card',
+      stream: answerFx,
+      duration: SPOTLIGHT_DURATION,
+      scale: () => uScale,
+    });
+
+    socket.on('subjectiveAnswer', (data) => {
+      if (currentMode !== 'subjective') return;
+      answerFx.push(data);
+    });
+
+    // 제작진 픽 → 흐르던 답변이면 카드로 늘어나고, 아니면 카드 팝인 (접수 중/마감 후 모두)
+    socket.on('answerPicked', (data) => {
+      if (currentMode !== 'subjective' && currentMode !== 'subjectiveResult') return;
+      pickFx.pick(data);
+    });
+
+    socket.on('state', (s) => applyState(s, true));
+    socket.on('modeChange', (s) => applyState(s, false));
+
+    // 관리자가 연출 설정(하트 폭발 on/off)을 바꾸면 화면에 바로 반영
+    socket.on('effectsChange', (data) => {
+      heartBurst.setEnabled(LedFx.hearts.enabledFrom(data && data.effects));
+    });
+
+    socket.on('voteUpdate', (data) => {
+      if (currentMode !== 'voting') return;
+      applyAllCounts(data.counts && data.counts.perOption ? data.counts.perOption : [], false);
+    });
+
+    // ── 리액션 (하트/붐업) — 랜덤 위치에서 떠오르며 사라지는 이모지 ──
+    const reactionLayer = document.getElementById('reaction-layer');
+    const MAX_REACTIONS = 80; // 동시 표시 상한 (LED 성능 보호)
+
+    const REACTION_EMOJI = { heart: '❤️', thumbs: '👍', down: '👎' };
+
+    // 하트가 3초 안에 40개 이상 몰리면 가운데 큰 하트가 터짐 (채팅·결과·대기 화면에서만)
+    const heartBurst = LedFx.hearts.create(reactionLayer, OPTION_COLORS);
+
+    // 이모지 하나를 랜덤 위치에서 떠오르게 (리액션·이모지 질문 공용)
+    function spawnFloat(text) {
+      if (reactionLayer.childElementCount >= MAX_REACTIONS) return;
+      const el = document.createElement('div');
+      el.className = 'reaction-float';
+      el.textContent = text;
+      el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
+      el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
+      el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기
+      reactionLayer.appendChild(el);
+
+      const driftX = Math.random() * 60 - 30; // 좌우로 살짝 흔들리며 상승
+      el.animate([
+        { transform: 'translate(0, 0) scale(0)', opacity: 0 },
+        { transform: `translate(${driftX * 0.3}px, -25px) scale(1.2)`, opacity: 1, offset: 0.15 },
+        { transform: `translate(${driftX}px, -140px) scale(1)`, opacity: 0 },
+      ], {
+        duration: 1800 + Math.random() * 700,
+        easing: 'ease-out',
+      }).onfinish = () => el.remove();
+    }
+
+    socket.on('reaction', (data) => {
+      const type = data && data.type;
+      if (!REACTION_EMOJI[type]) return;
+      spawnFloat(REACTION_EMOJI[type]);
+      heartBurst.onReaction(type, currentMode);
+    });
+
+    // 이모지 반응 질문: 관객이 고른 이모지가 떠오름
+    socket.on('emojiFloat', (data) => {
+      const emo = data && data.emoji;
+      if (typeof emo === 'string' && emo) spawnFloat(emo);
+    });
+
+    // 관리자 화면에서 채팅 정지/재생을 누르면 서버가 모든 화면에 broadcast
+    socket.on('chatPauseChange', (data) => {
+      if (data && data.chatPaused) pauseChat(); else resumeChat();
+    });
+
+    // ── 채팅 핀 (관리자가 특정 채팅을 클릭해 고정) ──
+    // 채팅 화면에 보이는 말풍선이면 카드 색으로 물든 뒤 가운데 카드로 떠오르고, 아니면 카드가 팝인 (LedFx.pin)
+    const pinFx = LedFx.pin.create({
+      layer: document.getElementById('chat-pin'),
+      feed: container,
+      findBubble: (id) => container.querySelector('.led-msg-group[data-id="' + CSS.escape(String(id)) + '"] .led-bubble'),
+      canLift: () => !chatPaused, // 일시정지 중엔 화면이 멈춰 있어 말풍선 대신 팝인
+      cardClass: 'chat-pin-card',
+      nickClass: 'chat-pin-nick',
+      textClass: 'chat-pin-text',
+      scale: () => uScale,
+    });
+
+    socket.on('chatPinned', (data) => {
+      pinFx.show(data && data.message, true);
+    });
+
+    // 접속(재접속 포함)할 때마다 상태를 다시 받고 화면 전용 이벤트를 구독한다
+    // (최초 1회만 보내면 서버 재시작·네트워크 끊김 뒤 옛 모드에 고착됨)
+    const ledScreenId = 'led-screen-' + Math.random().toString(36).slice(2);
+    socket.on('connect', () => {
+      // 화면 등록을 먼저 — identify 응답(state)이 화면용(엔딩 슬라이드 전체 포함)으로 오게
+      socket.emit('registerScreen');
+      socket.emit('identify', ledScreenId);
+    });
+  }
+
+  window.LedFx.page = { start };
+})();
