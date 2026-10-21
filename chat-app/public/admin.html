@@ -73,8 +73,9 @@
     }
 
     .status-row:last-child { border-bottom: none; }
-    .status-label { color: #8e8e93; }
-    .status-value { color: #1c1c1e; font-weight: 600; }
+    /* 라벨은 한 줄 고정(값이 길어도 '질/문'처럼 세로로 쌓이지 않게), 긴 값은 오른쪽에서 줄바꿈 */
+    .status-label { color: #8e8e93; flex-shrink: 0; white-space: nowrap; margin-right: 12px; }
+    .status-value { color: #1c1c1e; font-weight: 600; min-width: 0; text-align: right; word-break: keep-all; overflow-wrap: anywhere; }
     .stat-reset-btn {
       margin-left: 8px;
       border: 1px solid #d1d1d6;
@@ -907,7 +908,9 @@
     const c = currentState.counts || { perOption: [], total: 0 };
     const opts = currentState.voteOptions || [];
     let txt = '-';
-    if (opts.length && Array.isArray(c.perOption)) {
+    // 투표 중·결과일 때만 (이모지·주관식 등 다른 모드에서 지난 투표 보기가 0표로 남아 보이지 않게)
+    const isVote = currentState.mode === 'voting' || currentState.mode === 'result';
+    if (isVote && opts.length && Array.isArray(c.perOption)) {
       txt = opts.map((o, i) => `${o} ${c.perOption[i] || 0}`).join('  ·  ');
     }
     document.getElementById('status-counts').textContent = txt;
