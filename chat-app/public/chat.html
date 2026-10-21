@@ -284,8 +284,9 @@
       overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 보기도 카드 폭 안에서 줄바꿈 */
       text-wrap: balance;      /* 마지막 줄에 한 글자만 남지 않게 줄 길이를 고르게 */
     }
-    /* 띄어쓰기 없는 긴 보기: 글자마다 줄바꿈 기회를 줘야 balance가 줄 길이를 고르게 나눔 (keep-all이면 마지막 줄에 '로' 한 글자) */
-    .vote-btn-head.long-word { word-break: break-all; }
+    /* 띄어쓰기 없는 긴 덩어리(12자+)만: 글자마다 줄바꿈 기회를 줘야 balance가 줄 길이를 고르게 나눔
+       (keep-all이면 마지막 줄에 '로' 한 글자). 같은 보기의 다른 어절은 keep-all 그대로 */
+    .vote-btn-head .long-word { word-break: break-all; }
 
     .vote-btn-body {
       background: var(--bg-soft); /* 흰 카드 위에서도 본문이 상자처럼 읽히도록 살짝 톤 다운 */
@@ -1000,8 +1001,16 @@
       b.className = 'vote-btn';
       const head = document.createElement('span');
       head.className = 'vote-btn-head';
-      if (/\S{12,}/.test(label)) head.classList.add('long-word'); // 12자 넘게 붙은 글 — 줄을 고르게 나누려면 글자 단위 줄바꿈
-      head.textContent = label;
+      // 12자 넘게 붙은 덩어리만 span.long-word(글자 단위 줄바꿈), 나머지는 그대로 — 사용자 글이라 textContent로만 넣음
+      String(label).split(/(\S{12,})/).forEach((part, k) => {
+        if (!part) return;
+        if (k % 2) {
+          const run = document.createElement('span');
+          run.className = 'long-word';
+          run.textContent = part;
+          head.appendChild(run);
+        } else head.appendChild(document.createTextNode(part));
+      });
       const body = document.createElement('span');
       body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
       b.appendChild(head);
