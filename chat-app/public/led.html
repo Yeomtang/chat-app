@@ -6,7 +6,7 @@
   <title>LED 채팅 화면</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="/led-fx.css?v=20261020"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
+  <link rel="stylesheet" href="/led-fx.css?v=20261021"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -364,11 +364,12 @@
       overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
     }
 
-    /* 공 상자 영역: 위로는 질문 카드, 아래로는 결과 배너와 겹치지 않도록 여백 확보 */
+    /* 공 상자·막대 영역: 위 끝은 JS가 질문 카드 실제 아래 끝에 맞춤(layoutBelowQuestion), 아래는 화면 여백만.
+       2지선다 결과 배너는 상자 바로 아래에 JS가 붙임 (아래 22%를 통째로 비워 두지 않음) */
     #voting-canvas-wrap {
       position: absolute;
       top: 22%;
-      bottom: 22%;
+      bottom: 3%;
       left: 0;
       right: 0;
     }
@@ -409,8 +410,8 @@
       position: absolute;
       left: 0;
       right: 0;
-      top: 24%;
-      bottom: 12%;
+      top: 24%;   /* JS가 질문 카드 아래 끝에 맞춤 */
+      bottom: 5%; /* 아래 여백만 — 단어는 이 영역에 맞춰 크기가 줄어듦 (LedFx.cloud) */
       align-items: center;
       justify-content: center;
       padding: 0 calc(36px * var(--u));
@@ -564,8 +565,8 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/vendor/qrcode.js?v=20261020"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
-<script src="/led-fx.js?v=20261020"></script>
+<script src="/vendor/qrcode.js?v=20261021"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
+<script src="/led-fx.js?v=20261021"></script>
 <script>
   // 세로형(2:3) 설정 — 동작(소켓·모드 전환·연출 배선)은 led-fx.js의 LedFx.page 공용
   LedFx.page.start({
@@ -577,7 +578,8 @@
       const rows = Math.ceil(n / cols);
       return { cols, rows };
     },
-    boxLabelPx: (curScale) => Math.round(21 * curScale), // 보기가 많을수록 라벨도 작게
+    // 보기 라벨: 2줄까지 줄바꿈 → 15px까지 축소 → 말줄임 (장평 압축 없음). 5~6지도 18px에서 시작
+    boxLabel: { maxPx: (n) => (n <= 2 ? 21 : n <= 4 ? 19 : 18), minPx: 15 },
     audiencePath: '/', // 대기 화면 QR = 세로형 관객 주소
   });
 </script>

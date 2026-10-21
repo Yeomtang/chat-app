@@ -15,6 +15,85 @@
   const easeBack = (t) => { t = clamp01(t); const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
   const ease = (t) => 1 - Math.pow(1 - clamp01(t), 3);
 
+  // ══════════════════════════════════
+  //  글자 맞춤 — 장평을 눌러 폭에 맞추지 않는다 (LED 거리에서 세로줄처럼 보임).
+  //  순서: 2줄까지 줄바꿈 → 글자 크기를 읽히는 최소값까지 한 단계씩 축소 → 마지막 수단으로 말줄임 "…"
+  // ══════════════════════════════════
+  const ELLIPSIS = '…';
+
+  // 캔버스 줄바꿈: 어절(공백) 단위, 한 줄보다 긴 어절(띄어쓰기 없는 긴 글)만 글자 단위로 끊음
+  // (CSS keep-all + overflow-wrap:anywhere와 같은 규칙). ctx.font는 미리 지정돼 있어야 함
+  function wrapCanvasLines(ctx, text, maxW) {
+    const fits = (s) => ctx.measureText(s).width <= maxW;
+    const lines = [];
+    let cur = '';
+    String(text == null ? '' : text).split(/\s+/).filter(Boolean).forEach((w) => {
+      const cand = cur ? cur + ' ' + w : w;
+      if (fits(cand)) { cur = cand; return; }
+      if (cur) { lines.push(cur); cur = ''; }
+      if (fits(w)) { cur = w; return; }
+      for (const ch of Array.from(w)) {
+        if (!cur || fits(cur + ch)) cur += ch;
+        else { lines.push(cur); cur = ch; }
+      }
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // 마지막 줄 끝을 "…"로 (폭 안에 들어갈 때까지 글자를 덜어냄)
+  function ellipsizeCanvas(ctx, line, maxW) {
+    let chars = Array.from(line);
+    while (chars.length && ctx.measureText(chars.join('').trimEnd() + ELLIPSIS).width > maxW) chars.pop();
+    return chars.join('').trimEnd() + ELLIPSIS;
+  }
+
+  // o: { maxW, maxPx, minPx, maxLines, weight, family, lineH(줄 간격 배율), maxH(선택: 글자 덩어리 높이 상한) }
+  // → { px, lines, cut } — maxPx부터 1px씩 줄이며 maxLines 줄(·maxH) 안에 드는 가장 큰 크기. 최소 크기로도 넘치면 말줄임
+  function fitCanvasText(ctx, text, o) {
+    const font = (px) => `${o.weight || 700} ${px}px ${o.family}`;
+    const lineH = o.lineH || 1.2;
+    const maxPx = Math.max(o.minPx, Math.floor(o.maxPx));
+    for (let px = maxPx; px >= o.minPx; px--) {
+      ctx.font = font(px);
+      const lines = wrapCanvasLines(ctx, text, o.maxW);
+      const h = lines.length * px * lineH;
+      if (lines.length <= o.maxLines && (!o.maxH || h <= o.maxH)) return { px, lines, cut: false };
+    }
+    const px = o.minPx;
+    ctx.font = font(px);
+    let lines = wrapCanvasLines(ctx, text, o.maxW);
+    let n = o.maxLines;
+    if (o.maxH) n = Math.max(1, Math.min(n, Math.floor(o.maxH / (px * lineH))));
+    if (lines.length > n) {
+      lines = lines.slice(0, n);
+      lines[n - 1] = ellipsizeCanvas(ctx, lines[n - 1], o.maxW);
+      return { px, lines, cut: true };
+    }
+    return { px, lines, cut: false };
+  }
+
+  // DOM 글자를 maxLines 줄 안으로: 넘치면 앞에서부터 들어가는 만큼 + "…" (CSS line-clamp는 keep-all과 함께면
+  // 잘린 어절이 통째로 다음 줄로 넘어가 "…"이 안 그려짐 → 직접 자름). 요소의 line-height는 숫자여야 함
+  function clampText(el, text, maxLines) {
+    text = String(text == null ? '' : text);
+    el.textContent = text;
+    const lh = parseFloat(getComputedStyle(el).lineHeight);
+    if (!(lh > 0)) return false;
+    const limit = lh * maxLines + 1;
+    if (el.scrollHeight <= limit) return false;
+    const chars = Array.from(text);
+    const at = (k) => chars.slice(0, k).join('').trimEnd() + ELLIPSIS;
+    let lo = 0, hi = chars.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      el.textContent = at(mid);
+      if (el.scrollHeight <= limit) lo = mid; else hi = mid - 1;
+    }
+    el.textContent = at(lo);
+    return true;
+  }
+
   // 질문 화면 계열 모드 (이 밖의 모드에서 들어올 때만 질문 등장 연출)
   const QUESTION_MODES = ['voting', 'result', 'subjective', 'subjectiveResult', 'emoji'];
   // 질문이 "새로 시작"되는 모드
@@ -254,6 +333,13 @@
     const numY = H * 0.44;
     const labelSize = Math.round(Math.max(22, Math.min(52, size * 0.18)));
     const labelY = numY + size * 0.42 + labelSize;
+    // 이긴 보기 이름: 폭 90% 안에 2줄까지 → 최소 22px까지 축소 → 말줄임 (장평 압축 없음). 캔버스 아래 끝을 넘지 않게
+    const LABEL_LH = 1.2;
+    const labelTop = labelY - labelSize / 2;
+    const labelFit = fitCanvasText(o, opts.label, {
+      maxW: W * 0.9, maxPx: labelSize, minPx: Math.min(labelSize, 22), maxLines: 2,
+      family: opts.labelFamily, lineH: LABEL_LH, maxH: Math.max(labelSize * LABEL_LH, H - labelTop - 4),
+    });
 
     // 글자를 격자로 훑어 점 위치를 뽑는다
     o.font = numFont; o.textAlign = 'center'; o.textBaseline = 'middle';
@@ -371,9 +457,10 @@
       const labelA = t < R.RETURN ? ease((t - R.SCATTER) / 800) : 1 - ease((t - R.RETURN) / 400);
       if (labelA > 0.01) {
         ctx.globalAlpha = labelA;
-        ctx.font = '700 ' + labelSize + 'px ' + opts.labelFamily;
+        ctx.font = '700 ' + labelFit.px + 'px ' + opts.labelFamily;
         ctx.fillStyle = numColor;
-        ctx.fillText(opts.label, W / 2, labelY, W * 0.9);
+        // 첫 줄 윗선은 원래 자리(labelTop)에 두고 아래로 줄을 이어 씀
+        labelFit.lines.forEach((ln, i) => ctx.fillText(ln, W / 2, labelTop + labelFit.px / 2 + i * labelFit.px * LABEL_LH));
       }
       ctx.globalAlpha = 1;
 
@@ -392,44 +479,91 @@
       return false;
     }
 
-    return { draw, numColor, text };
+    return { draw, numColor, text, labelFit, labelMaxW: W * 0.9 };
   }
 
   // ── 객관식 3지 이상: 막대 경주 (시안 4) ──
   // 막대가 흔들리며 자라 중간에 순위가 바뀌다가, 3.2초 뒤 정렬된 결과로 확정
   const RACE_MS = 3200;
 
+  // 글자 배율 단계(--fx-bar-s): 행이 칸에 다 안 들어가면 한 단계씩 줄임. 0.75 = 보기 이름 15px(세로형 800 기준) — 이보다 작게는 안 줄임
+  const BAR_STEPS = [1, 0.92, 0.84, 0.75];
+
   function createBarRace(container) {
     let raf = null;
-    let rows = [];
+    let rows = [], area = null, labels = [], winners = [];
+    let cur = null; // 지금 자리 { vals, order, done } — 창 크기가 바뀌면 이 상태로 다시 배치
+    let geo = null; // 행 배치 { y0, pitch, rowH } (px)
 
     function clear() {
       if (raf) cancelAnimationFrame(raf);
       raf = null;
-      rows = [];
+      rows = []; area = null; cur = null; geo = null;
       container.classList.remove('active');
       container.innerHTML = '';
+    }
+
+    // 행 높이 = 보기 이름 줄 수(최대 2줄)에 맞춘 실제 높이. 행끼리 겹치지 않게 칸이 모자라면 글자를 한 단계씩 줄이고,
+    // 그래도 모자라면 이름을 1줄로. 남으면 행 간격을 행 높이의 45%까지만 벌리고 가운데 모음 (3지에서 빈 띠 방지)
+    function layout() {
+      if (!area || !rows.length) return;
+      const H = area.clientHeight;
+      if (!H) return;
+      const u = parseFloat(getComputedStyle(container).getPropertyValue('--u')) || 1;
+      const n = rows.length;
+      const gapMin = 8 * u;
+      // 재는 동안은 최종 1위 표시(· 1위)를 켜 둔다 — 결과가 확정되며 배지가 붙어도 줄 수가 늘지 않게
+      rows.forEach((r, i) => { r.style.height = ''; r.classList.toggle('win', winners.includes(i)); });
+      const measure = (lines) => {
+        rows.forEach((r, i) => clampText(r.querySelector('.fx-bar-name'), labels[i], lines));
+        return Math.max(...rows.map((r) => r.offsetHeight));
+      };
+      let rowH = 0, ok = false;
+      for (const lines of [2, 1]) {
+        for (const s of BAR_STEPS) {
+          container.style.setProperty('--fx-bar-s', String(s));
+          rowH = Math.max(measure(lines), 44 * u * s);
+          if (n * rowH + (n - 1) * gapMin <= H) { ok = true; break; }
+        }
+        if (ok) break;
+      }
+      if (!ok) rowH = Math.max(1, (H - (n - 1) * gapMin) / n); // 극단적으로 좁을 때만 (글자는 이미 최소·1줄)
+      const pitch = n > 1 ? Math.min((H - rowH) / (n - 1), rowH * 1.45) : 0;
+      geo = { y0: (H - rowH - (n - 1) * pitch) / 2, pitch, rowH };
+      rows.forEach((r) => { r.style.height = rowH + 'px'; r.classList.remove('win'); });
+      if (cur) place(cur.vals, cur.order, cur.done);
+    }
+
+    let scaleMax = 10, top = [];
+    function place(vals, order, done) {
+      cur = { vals, order, done };
+      rows.forEach((r, i) => {
+        if (geo) r.style.top = (geo.y0 + order.indexOf(i) * geo.pitch) + 'px';
+        r.querySelector('.fx-bar-fill').style.width = (vals[i] / scaleMax * 100) + '%';
+        r.querySelector('.fx-bar-pct').textContent = Math.round(vals[i]) + '%';
+        r.classList.toggle('win', done && top.includes(i)); // 1위 동률이면 모두 표시
+      });
     }
 
     // opts: { labels, colors, perOption, animate }
     function show(opts) {
       clear();
       const sum = summarize(opts.perOption);
-      const n = opts.labels.length;
-      const pcts = opts.labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
+      labels = opts.labels.map((l) => String(l));
+      const pcts = labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
       const maxPct = Math.max(0, ...pcts);
-      const scaleMax = Math.max(10, maxPct * 1.12); // 1위 막대가 트랙을 거의 채우게
+      scaleMax = Math.max(10, maxPct * 1.12); // 1위 막대가 트랙을 거의 채우게
+      top = sum.top;
+      winners = sum.total ? sum.top : [];
       const wobbleAmp = maxPct * 0.26;
-      const slot = 100 / n;
       // 최종 순서: 득표 내림차순, 같으면 보기 순서
       const finalOrder = pcts.map((v, i) => [sum.per[i] || 0, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map((x) => x[1]);
 
-      const area = document.createElement('div');
+      area = document.createElement('div');
       area.className = 'fx-bars-area';
-      rows = opts.labels.map((label, i) => {
+      rows = labels.map((label, i) => {
         const r = document.createElement('div');
         r.className = 'fx-bar-row';
-        r.style.height = (slot * 0.78) + '%';
         r.innerHTML = '<div class="fx-bar-label"><span class="fx-bar-name"></span><span class="fx-bar-rank">· 1위</span></div>' +
           '<div class="fx-bar-track"><div class="fx-bar-fill"></div></div><div class="fx-bar-pct">0%</div>';
         r.querySelector('.fx-bar-name').textContent = label;
@@ -438,22 +572,20 @@
         return r;
       });
       container.appendChild(area);
-
-      const place = (vals, order, done) => {
-        rows.forEach((r, i) => {
-          r.style.top = (order.indexOf(i) * slot + slot * 0.11) + '%';
-          r.querySelector('.fx-bar-fill').style.width = (vals[i] / scaleMax * 100) + '%';
-          r.querySelector('.fx-bar-pct').textContent = Math.round(vals[i]) + '%';
-          r.classList.toggle('win', done && sum.top.includes(i)); // 1위 동률이면 모두 표시
-        });
-      };
+      // 첫 배치는 전환 없이 (행이 0에서 미끄러져 들어오지 않게)
+      container.classList.add('fx-instant');
+      layout();
 
       if (!opts.animate || prefersReduced() || !sum.total) {
         place(pcts, finalOrder, true);
+        void container.offsetWidth;
+        container.classList.remove('fx-instant');
         container.classList.add('active');
         return;
       }
-      place(pcts.map(() => 0), opts.labels.map((_, i) => i), false);
+      place(pcts.map(() => 0), labels.map((_, i) => i), false);
+      void container.offsetWidth;
+      container.classList.remove('fx-instant');
       container.classList.add('active');
       const t0 = performance.now();
       const frame = (now) => {
@@ -468,7 +600,18 @@
       raf = requestAnimationFrame(frame);
     }
 
-    return { show, clear, isActive: () => container.classList.contains('active') };
+    return {
+      show, clear,
+      isActive: () => container.classList.contains('active'),
+      // 창 크기·글꼴 로딩으로 칸이 바뀌면 행 높이·간격을 다시 잼 (전환 없이)
+      relayout() {
+        if (!area) return;
+        container.classList.add('fx-instant');
+        layout();
+        void container.offsetWidth;
+        container.classList.remove('fx-instant');
+      },
+    };
   }
 
   // ══════════════════════════════════
@@ -484,24 +627,42 @@
     LANE_COOLDOWN: 3500, // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
   };
 
-  // opts: { el: 흘려보내기 레이어, scale: () => 화면 배율(--u) }
+  // opts: { el: 흘려보내기 레이어, scale: () => 화면 배율(--u),
+  //         area: () => { top, bottom } 말풍선이 지나갈 세로 범위(px, 레이어 기준) — 질문 카드 아래만 쓰도록 }
   function createAnswerStream(opts) {
     const el = opts.el;
     const scale = opts.scale || (() => 1);
+    const area = opts.area || (() => ({ top: el.clientHeight * 0.14, bottom: el.clientHeight * 0.82 + 64 * scale() }));
+    const BUBBLE_H = 64; // 가장 큰 말풍선 높이(논리 px) — 맨 아래 레인도 범위 안에 들도록
     const queue = [];
     const laneBusy = new Array(STREAM.LANES).fill(0);
     let items = []; // 화면에 떠 있는 답변 { el, id, text, anim }
     let spawnTimer = null;
     let running = false;
 
-    const laneTop = (lane) => 14 + lane * (68 / (STREAM.LANES - 1)); // 14%~82% 균등 분할
+    // 레인: 질문 카드 아래 ~ 화면 아래 여백 사이를 균등 분할. 범위가 좁으면(긴 질문) 레인 수를 줄여
+    // 큰 말풍선끼리도 위아래로 겹치지 않게 (레인 간격 ≥ 56px·배율)
+    function laneSpan() {
+      const a = area();
+      return { top: a.top, span: Math.max(0, a.bottom - a.top - BUBBLE_H * scale()) };
+    }
+    function laneCount() {
+      return Math.max(2, Math.min(STREAM.LANES, Math.floor(laneSpan().span / (56 * scale())) + 1));
+    }
+    const laneTop = (lane) => {
+      const { top, span } = laneSpan();
+      const n = laneCount();
+      return top + Math.min(lane, n - 1) * (span / (n - 1));
+    };
 
     function pickLane() {
       const now = performance.now();
       const free = [];
-      for (let i = 0; i < STREAM.LANES; i++) if (laneBusy[i] <= now) free.push(i);
+      const n = laneCount();
+      for (let i = 0; i < n; i++) if (laneBusy[i] <= now) free.push(i);
       // 모두 사용 중이면 가장 먼저 비는 레인
-      const lane = free.length ? free[Math.floor(Math.random() * free.length)] : laneBusy.indexOf(Math.min(...laneBusy));
+      const busy = laneBusy.slice(0, n);
+      const lane = free.length ? free[Math.floor(Math.random() * free.length)] : busy.indexOf(Math.min(...busy));
       laneBusy[lane] = now + STREAM.LANE_COOLDOWN;
       return lane;
     }
@@ -512,7 +673,7 @@
       b.className = 'answer-float';
       b.textContent = text;
       b.style.fontSize = Math.round((18 + Math.random() * 12) * scale()) + 'px';
-      b.style.top = laneTop(lane == null ? pickLane() : lane) + '%';
+      b.style.top = laneTop(lane == null ? pickLane() : lane) + 'px';
       el.appendChild(b);
       return b;
     }
@@ -640,8 +801,21 @@
       flights = [];
     }
 
+    // 영역에 맞춘 글자 배율 — 단어가 많거나 영역이 낮으면(긴 질문) 모든 크기를 같은 비율로 줄인다
+    let fit = 1;
+    const sizeOf = (count) => Math.round(cloudSize(count, max) * scale() * fit);
+
+    // 두 단어(기울어진 사각형)가 pad 간격 안으로 들어오는지 — 분리축 검사
+    function hits(a, b, pad) {
+      const axes = [a.rot, a.rot + Math.PI / 2, b.rot, b.rot + Math.PI / 2];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const ext = (r, ax) => (r.w / 2 + pad / 2) * Math.abs(Math.cos(ax - r.rot)) + (r.h / 2 + pad / 2) * Math.abs(Math.sin(ax - r.rot));
+      return axes.every((ax) => Math.abs(dx * Math.cos(ax) + dy * Math.sin(ax)) < ext(a, ax) + ext(b, ax));
+    }
+
     // 최종 배치를 flex로 한 번 잡아 단어별 중심을 잰 뒤, 그 자리에 절대 위치로 고정한다
-    // (단어가 커지는 동안 다른 단어가 밀리지 않게)
+    // (단어가 커지는 동안 다른 단어가 밀리지 않게).
+    // 영역(질문 카드 아래 ~ 화면 아래)보다 크면 글자 배율을 줄여 다시 잼 — 넘쳐서 카드 뒤로 숨는 단어가 없게
     function build(cloud) {
       wrap.innerHTML = '';
       words = new Map();
@@ -665,38 +839,76 @@
         const s = document.createElement('span');
         s.className = 'fx-cloud-word';
         s.textContent = entry.word;
-        s.style.fontSize = Math.round(cloudSize(entry.count, max) * u) + 'px';
         s.style.color = colors[i % colors.length]; // 표시 순서대로 팔레트 순환 — 이웃끼리 다른 색
         box.appendChild(s);
         return { el: s, word: normText(entry.word), count: entry.count, shown: 0 };
       });
       wrap.appendChild(box);
+      // 영역에 들어가는 가장 큰 배율을 이분 탐색 (1이면 그대로, 최소 0.3)
+      const cs = getComputedStyle(wrap);
+      const availH = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const target = availH * 0.9; // 둥실(±6px)·흩뿌림 여유
+      const fitsAt = (f) => {
+        fit = f;
+        recs.forEach((r) => { r.el.style.fontSize = sizeOf(r.count) + 'px'; });
+        return !availH || box.offsetHeight <= target;
+      };
+      if (!fitsAt(1)) {
+        let lo = 0.3, hi = 1;
+        for (let k = 0; k < 7; k++) { const mid = (lo + hi) / 2; if (fitsAt(mid)) lo = mid; else hi = mid; }
+        fitsAt(lo);
+      }
       // offset*은 정수로 반올림돼 폭을 그대로 쓰면 줄이 바뀔 수 있어 실제 사각형으로 잰다
       // (영역 팝인 배율이 걸려 있을 수 있어 그 배율로 나눔)
       const bb = box.getBoundingClientRect();
       const k = bb.width / (box.offsetWidth || 1) || 1;
       const m = recs.map((r) => { const q = r.el.getBoundingClientRect(); return { x: (q.left - bb.left + q.width / 2) / k, y: (q.top - bb.top + q.height / 2) / k, w: q.width / k, h: q.height / k }; });
+      // 영역 안쪽 경계(상자 좌표) — 흩뿌린 단어도 영역 밖(질문 카드 쪽)으로 나가지 않게
+      const lim = { top: -box.offsetTop, bottom: wrap.clientHeight - box.offsetTop, left: -box.offsetLeft, right: wrap.clientWidth - box.offsetLeft };
       box.style.width = box.offsetWidth + 'px';
       box.style.height = box.offsetHeight + 'px';
       box.classList.add('placed');
+      // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼 (1등은 똑바로).
+      // 이웃 단어와 겹치면(둥실 6px까지 감안한 간격) 흔들림을 줄여 다시 시도 → 끝내 안 되면 flex 자리 그대로(겹치지 않음).
+      // 아직 안 놓인 단어는 flex 자리 기준으로 검사하므로, 언제나 서로 겹치지 않는 상태가 유지된다
+      const pad = 8 * u;
+      const placed = m.map((q) => ({ x: q.x, y: q.y, w: q.w, h: q.h, rot: 0 }));
+      const inside = (c) => {
+        const ex = (c.w / 2) * Math.abs(Math.cos(c.rot)) + (c.h / 2) * Math.abs(Math.sin(c.rot));
+        const ey = (c.w / 2) * Math.abs(Math.sin(c.rot)) + (c.h / 2) * Math.abs(Math.cos(c.rot));
+        return c.x - ex >= lim.left && c.x + ex <= lim.right && c.y - ey >= lim.top + 6 * u && c.y + ey <= lim.bottom;
+      };
+      const TRIES = 10;
       recs.forEach((r, i) => {
-        // 랜덤 흩뿌림: 위아래로 어긋나게 + 살짝 기울여서 서로 다른 사람의 답변처럼 (1등은 똑바로)
-        // 폭은 시안 7과 같게(±10·±15) — 이전 ±45는 고정 자리에서 이웃 단어와 겹침
         const isFirst = r.word === normText(cloud[0].word);
-        r.cx = m[i].x + Math.round(Math.random() * 20 - 10) * u;
-        r.cy = m[i].y + (isFirst ? 0 : Math.round(Math.random() * 30 - 15) * u);
+        let cand = placed[i];
+        if (!isFirst) {
+          for (let t = 0; t < TRIES; t++) {
+            const f = 1 - t / TRIES; // 시도할수록 흔들림을 줄임
+            const c = {
+              x: m[i].x + Math.round(Math.random() * 20 - 10) * u * f,
+              y: m[i].y + Math.round(Math.random() * 30 - 15) * u * f,
+              w: m[i].w, h: m[i].h,
+              rot: (Math.random() * 8 - 4) * f * Math.PI / 180,
+            };
+            if (inside(c) && placed.every((o, j) => j === i || !hits(c, o, pad))) { cand = c; break; }
+          }
+        }
+        placed[i] = cand;
+        r.cx = cand.x;
+        r.cy = cand.y;
         r.h = m[i].h;
         r.el.style.left = r.cx + 'px';
         r.el.style.top = r.cy + 'px';
         r.el.style.width = (Math.ceil(m[i].w) + 2) + 'px'; // 최종 크기 기준 줄바꿈 고정 (반올림 여유 2px, 가운데 정렬이라 티 안 남)
-        r.el.style.setProperty('--rot', (isFirst ? 0 : (Math.random() * 10 - 5).toFixed(1)) + 'deg');
+        r.el.style.setProperty('--rot', (cand.rot * 180 / Math.PI).toFixed(1) + 'deg');
         if (!words.has(r.word)) words.set(r.word, r);
       });
     }
 
     function setShown(r, n) {
       r.shown = n;
-      r.el.style.fontSize = Math.round(cloudSize(n, max) * scale()) + 'px';
+      r.el.style.fontSize = sizeOf(n) + 'px';
     }
 
     function startBob() {
@@ -1423,10 +1635,16 @@
     const urlBox = el('div', 'fx-idle-url');
     // 주소는 프로토콜 없이. 길면 '.'·'/' 뒤에서만 줄바꿈 (단어 중간에서 끊기지 않게)
     const urlText = el('span');
-    url.replace(/^https?:\/\//, '').replace(/\/$/, '').split(/(?<=[./])/).forEach((part, i) => {
-      if (i) urlText.appendChild(document.createElement('wbr'));
-      urlText.appendChild(document.createTextNode(part));
-    });
+    const urlParts = url.replace(/^https?:\/\//, '').replace(/\/$/, '').split(/(?<=[./])/);
+    // breaks=false: 한 줄 글자만 (<wbr>은 white-space:nowrap이어도 줄바꿈 기회가 되므로 아예 뺌)
+    function setUrlText(breaks) {
+      urlText.textContent = '';
+      urlParts.forEach((part, i) => {
+        if (i && breaks) urlText.appendChild(document.createElement('wbr'));
+        urlText.appendChild(document.createTextNode(part));
+      });
+    }
+    setUrlText(true);
     urlBox.append(el('small', null, '주소로 들어와도 돼요'), urlText);
     qrRow.append(qrBox, urlBox);
     main.appendChild(qrRow);
@@ -1448,6 +1666,25 @@
       const w = qrBox.clientWidth;
       if (!w) return;
       drawQr(qrCanvas, url, { px: w * (window.devicePixelRatio || 1), ink: cssVar(layer, '--ink', '#1e1e42') });
+    }
+
+    // 주소는 한 줄이 가장 읽기 쉬움: 넘치면 글자 크기를 70%까지 줄여 한 줄에 맞추고,
+    // 그래도 길면(긴 실제 도메인) 원래 크기로 '.'·'/' 뒤에서 줄바꿈 (<wbr>)
+    function fitUrl() {
+      urlText.style.fontSize = '';
+      urlText.style.whiteSpace = 'nowrap';
+      setUrlText(false);
+      const base = parseFloat(getComputedStyle(urlText).fontSize);
+      if (urlBox.clientWidth && base) {
+        for (let f = 1; f >= 0.699; f -= 0.05) {
+          urlText.style.fontSize = (base * f).toFixed(2) + 'px';
+          // 줄바꿈이 없으면 줄이 QR 줄(qrRow)을 밀어 넓히므로 안내 열(main) 폭과도 비교
+          if (urlBox.scrollWidth <= urlBox.clientWidth + 0.5 && qrRow.offsetWidth <= main.clientWidth + 0.5) return;
+        }
+      }
+      urlText.style.fontSize = '';
+      urlText.style.whiteSpace = '';
+      setUrlText(true);
     }
 
     function bubble(m) {
@@ -1560,6 +1797,7 @@
         active = true;
         fadeLayer(layer, true);
         drawCode();
+        fitUrl();
         prefill();
         startMotion();
       },
@@ -1607,8 +1845,11 @@
       relayout() {
         if (!active) return;
         drawCode();
+        fitUrl();
         prefill();
       },
+      // 글꼴이 늦게 도착했을 때 — 흐르는 피드는 그대로 두고 주소 크기만 다시
+      refitUrl() { if (active) fitUrl(); },
       isActive: () => active,
       // 점검용: 최근 목록·대기열·화면 말풍선의 채팅 id
       stats: () => ({ pool: pool.map(idOf), queue: queue.map(idOf), items: items.map((it) => idOf(it.rec)) }),
@@ -1618,9 +1859,43 @@
 
   // ── 엔딩 "오늘의 결과": 관리자가 넘기는 대로(state.ending.index) 한 장씩, 왼쪽으로 밀리며 바뀜 ──
   // opts: { layer, colors: OPTION_COLORS, yesnoColors }
+  // 엔딩 슬라이드 맞춤 단계 [글자 배율, 질문 최대 줄 수(0 = 제한 없음)] — 앞에서부터 처음 맞는 단계를 씀.
+  // 먼저 배율만 0.85까지, 그래도 넘치면 질문을 4→3→2줄로 줄이며(말줄임) 배율을 0.6까지. 0.6 = 세로형 막대 이름 15.6px(800 기준)
+  const END_FIT = [[1, 0], [0.92, 0], [0.85, 0], [0.85, 4], [0.78, 3], [0.72, 3], [0.66, 2], [0.6, 2]];
+
   function createEnding(opts) {
     const layer = opts.layer;
     let key = null, slides = [], dots = [], index = -1, frameReq = null;
+    let fitted = false; // 지금 화면 크기로 슬라이드 맞춤을 했는지
+
+    // 내용(질문·막대·안내)이 위아래 여백(아래는 페이지 점 자리) 안에 들어가도록 글자 배율을 줄이고, 그래도 넘치면 질문 줄 수를 제한.
+    // 보기 이름은 단계마다 2줄 + "…"로 다시 자름 (배율이 바뀌면 줄바꿈이 바뀌므로)
+    function fitSlide(d) {
+      const q = d.querySelector('.fx-end-q');
+      const labs = [...d.querySelectorAll('.fx-end-lab')];
+      if (q && q.dataset.full == null) q.dataset.full = q.textContent;
+      labs.forEach((l) => { if (l.dataset.full == null) l.dataset.full = l.textContent; });
+      const kids = [...d.children];
+      if (!kids.length || !d.clientHeight) return;
+      const cs = getComputedStyle(d);
+      const avail = d.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const need = () => {
+        const last = kids[kids.length - 1];
+        return last.offsetTop + last.offsetHeight - kids[0].offsetTop;
+      };
+      for (const [k, qLines] of END_FIT) {
+        d.style.setProperty('--fx-end-s', String(k));
+        if (q) { if (qLines) clampText(q, q.dataset.full, qLines); else q.textContent = q.dataset.full; }
+        labs.forEach((l) => clampText(l, l.dataset.full, 2));
+        if (need() <= avail + 1) return;
+      }
+    }
+
+    function fitAll() {
+      if (!layer.classList.contains('active') || !layer.clientHeight) return;
+      slides.forEach(fitSlide);
+      fitted = true;
+    }
 
     function voteSlide(s, n) {
       const d = el('div', 'fx-end-slide');
@@ -1729,8 +2004,9 @@
         const animate = !!(o && o.animate);
         const k = JSON.stringify(list);
         const entering = !layer.classList.contains('on');
-        if (k !== key) { key = k; build(list); }
+        if (k !== key) { key = k; build(list); fitted = false; }
         fadeLayer(layer, true);
+        if (!fitted) fitAll(); // 레이어가 보인 뒤에 재야 크기가 나옴
         if (n === index) return; // 같은 장 재전송 — 그대로
         // 처음 들어올 땐 레이어가 서서히 나타나므로 슬라이드는 제자리에서 (막대만 차오름)
         go(n, animate && !entering, animate);
@@ -1741,6 +2017,8 @@
         fadeLayer(layer, false);
       },
       current: () => index,
+      // 창 크기·글꼴 로딩으로 슬라이드 크기가 바뀌면 다시 맞춤
+      relayout() { fitted = false; fitAll(); },
     };
   }
 
@@ -2049,6 +2327,7 @@
   window.LedFx = {
     prefersReduced,
     easeBack,
+    text: { fit: fitCanvasText, wrap: wrapCanvasLines, clamp: clampText, ELLIPSIS },
     question,
     timer,
     balls,
@@ -2077,7 +2356,7 @@
   //   baseW: 설계 기준 폭(px) — 화면 배율 --u의 기준,
   //   box: 보기 상자 상수 덮어쓰기 (예: { headerH: 48 }),
   //   clusterLayout(n) → { cols, rows }: 보기 n개의 상자 격자,
-  //   boxLabelPx(curScale) → 상자 헤더 라벨 글자 크기(px, 정수),
+  //   boxLabel: { maxPx(n) → 보기 n개일 때 상자 헤더 라벨 최대 글자 크기, minPx: 읽히는 최소 크기 } (논리 px, 2줄까지 줄바꿈),
   //   audiencePath: 대기 화면 QR이 가리킬 관객 주소 경로 ('/' 또는 '/concert'),
   // }
   function start(cfg) {
@@ -2247,7 +2526,6 @@
     let voteOptions = [];      // 현재 질문 보기 라벨 배열
     let voteType = 'yesno';    // 'yesno' | 'choice'
     let optCount = 0;          // 보기 수
-    let curScale = 1;          // 보기 수에 따른 공 크기 축소(겹침 방지)
 
     let votingEndTime = null;
     let timerInterval = null;
@@ -2270,18 +2548,44 @@
     function logicalW() { return canvas.width / devicePixelRatio / uScale; }
     function logicalH() { return canvas.height / devicePixelRatio / uScale; }
 
+    const canvasWrap = document.getElementById('voting-canvas-wrap');
+    // 2지선다 결과 배너(YES 62% · NO 38%) 자리: 상자 바로 아래에 붙인다. 상자 배치에서 배너 높이만큼만 비워 두고
+    // (예전처럼 화면 아래 22%를 통째로 비우지 않음) 배너는 상자 아래 끝 + 간격에 놓는다
+    const BANNER_GAP = 16; // 논리 px
+    let bannerReserve = 0;  // 논리 px — boxRect가 아래에서 비워 두는 높이
+    // 배너가 숨겨져 있어도(display:none) 잴 수 있게 잠깐 보이지 않는 채로 펼쳐서 fn 실행
+    function withBannerShown(fn) {
+      if (resultBanner.classList.contains('active')) return fn();
+      resultBanner.style.visibility = 'hidden';
+      resultBanner.style.display = 'block';
+      try { return fn(); } finally {
+        resultBanner.style.display = '';
+        resultBanner.style.visibility = '';
+      }
+    }
+    const measureBannerH = () => withBannerShown(() => resultBanner.offsetHeight);
+    function placeBanner() {
+      if (!optCount || optCount > 2) return;
+      const b = boxRect(0);
+      resultBanner.style.bottom = 'auto';
+      resultBanner.style.top = (canvasWrap.offsetTop + (b.y + b.h + BANNER_GAP) * uScale) + 'px';
+    }
+
     function resizeCanvas() {
-      const wrap = document.getElementById('voting-canvas-wrap');
-      const rect = wrap.getBoundingClientRect();
+      const rect = canvasWrap.getBoundingClientRect();
       canvas.width = rect.width * devicePixelRatio;
       canvas.height = rect.height * devicePixelRatio;
       canvas.style.width = rect.width + 'px';
       canvas.style.height = rect.height + 'px';
+      headFit = null; // 상자 폭이 바뀌면 헤더 라벨 줄바꿈도 다시
+      bannerReserve = optCount && optCount <= 2 ? measureBannerH() / uScale + BANNER_GAP : 0;
+      placeBanner();
       // 캔버스 크기가 바뀌면 클러스터 중심도 바뀐다 → 공 목표 위치 재계산
       for (let i = 0; i < ballState.length; i++) repackSide(i);
     }
-    // 질문 카드 높이에 맞춰 그 아래 콘텐츠(공 상자·워드클라우드)의 시작 위치를 잡는다.
-    // 질문이 길어 카드가 2줄 이상이 되면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다.
+    // 질문 카드 실제 아래 끝에 맞춰 그 아래 콘텐츠(공 상자·막대·워드클라우드·흘러가는 답변)의 시작 위치를 잡는다.
+    // 질문이 길어 카드가 커지면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다. 아래 끝은 CSS(화면 아래 여백만)
+    let belowQ = 0; // 질문 카드 아래 콘텐츠가 시작하는 y(px, 투표 레이어 기준)
     function layoutBelowQuestion() {
       const layerH = votingLayer.clientHeight;
       if (!layerH) return; // 채팅 모드에선 레이어가 숨겨져 있어 측정 불가
@@ -2289,19 +2593,44 @@
       const qCard = document.getElementById('voting-question-card');
       // offsetHeight는 팝인 transform의 영향을 받지 않아 등장 애니메이션 중에도 정확
       const bottom = qWrap.offsetTop + qCard.offsetHeight;
-      const gap = layerH * 0.03;
-      document.getElementById('voting-canvas-wrap').style.top = Math.max(layerH * 0.22, bottom + gap) + 'px';
-      cloudWrap.style.top = Math.max(layerH * 0.24, bottom + gap) + 'px';
+      const gap = 16 * uScale; // 카드와 콘텐츠 사이 (예전 3%는 긴 질문일 때 막대 칸을 너무 많이 먹음)
+      belowQ = bottom + gap;
+      canvasWrap.style.top = Math.max(layerH * 0.22, belowQ) + 'px';
+      cloudWrap.style.top = Math.max(layerH * 0.24, belowQ) + 'px';
     }
 
     window.addEventListener('resize', () => {
       applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
+      barRace.relayout(); // 막대 행 높이·간격도 새 칸에 맞춰
+      endingFx.relayout(); // 엔딩 슬라이드도 새 화면 높이에 맞춰
       // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
       if (reveal) { reveal = null; resultBanner.classList.add('active'); }
       cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
       pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
       idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
     });
+
+    // 웹폰트(Pretendard 글자 묶음)가 늦게 도착하면 글자 폭·줄바꿈이 바뀌므로 잰 배치를 다시 잰다
+    // (워드클라우드는 자리를 다시 섞어 깜빡이므로 제외 — 질문 카드는 클라우드보다 먼저 그려져 이미 글꼴이 있음)
+    if (document.fonts && document.fonts.addEventListener) {
+      document.fonts.addEventListener('loadingdone', () => {
+        if (votingLayer.classList.contains('active')) { layoutBelowQuestion(); resizeCanvas(); barRace.relayout(); }
+        endingFx.relayout();
+        idleFx.refitUrl();
+      });
+    }
+
+    // 점검용(QA 하네스): 지금 그려진 상자 헤더 라벨·숫자 변신 라벨의 글자 크기와 줄
+    window.LedFx.page.inspect = () => {
+      const f = headFit;
+      const measure = (px, lines) => { ctx.font = `700 ${px}px ${BOX_FONT}`; return lines.map((t) => ({ t, w: Math.round(ctx.measureText(t).width) })); };
+      return {
+        u: uScale,
+        canvas: { top: canvasWrap.offsetTop, h: canvasWrap.clientHeight, layerH: votingLayer.clientHeight, belowQ },
+        header: f ? { px: f.px, maxW: Math.round(f.maxW), h: f.h, labels: f.labels.map((ls) => measure(f.px, ls)) } : null,
+        reveal: reveal ? { px: reveal.labelFit.px, maxW: Math.round(reveal.labelMaxW), cut: reveal.labelFit.cut, lines: measure(reveal.labelFit.px, reveal.labelFit.lines) } : null,
+      };
+    };
 
     function initBallState(n) {
       ballState = [];
@@ -2315,7 +2644,7 @@
     // 배치의 기준은 상자(boxRect)이고 공은 거기에 따라온다.
     function clusterCenter(i) {
       const b = boxRect(i);
-      return { x: b.x + b.w / 2, y: b.y + BOX.headerH + (b.h - BOX.headerH) / 2 };
+      return { x: b.x + b.w / 2, y: b.y + headH() + (b.h - headH()) / 2 };
     }
 
     // 모서리별 반경을 따로 주는 둥근 사각형 경로 (헤더는 위쪽만 둥글게)
@@ -2337,7 +2666,7 @@
     // 표가 쌓여 무리가 커지면 셀 크기 한도까지 상자도 함께 커진다.
     function boxRect(i) {
       const w = logicalW();
-      const h = logicalH();
+      const h = logicalH() - bannerReserve; // 2지선다는 아래에 결과 배너 자리
       const n = Math.max(1, optCount);
       const { cols, rows } = clusterLayout(n);
       const row = Math.floor(i / cols);
@@ -2361,7 +2690,25 @@
       };
     }
 
-    function drawBox(box, color, label) {
+    // ── 상자 헤더 라벨: 장평 압축 없이 2줄까지 → 글자 크기를 cfg.boxLabel.minPx까지 → 말줄임 ──
+    // 모든 상자가 같은 글자 크기·같은 헤더 높이 (같은 역할 = 같은 모양). 헤더는 2줄이면 그만큼 높아진다
+    const HEAD_PAD_X = 10, HEAD_PAD_Y = 7, HEAD_LH = 1.18;
+    let headFit = null; // { px, labels: [줄 배열], maxW, h } — 보기·캔버스 크기·글꼴이 바뀌면 다시 계산
+    function headerFit() {
+      if (headFit) return headFit;
+      const n = Math.max(1, optCount);
+      const maxW = boxRect(0).w - HEAD_PAD_X * 2;
+      const o = { maxW, maxPx: cfg.boxLabel.maxPx(n), minPx: cfg.boxLabel.minPx, maxLines: 2, family: BOX_FONT, lineH: HEAD_LH };
+      let px = o.maxPx;
+      voteOptions.forEach((l) => { px = Math.min(px, LedFx.text.fit(ctx, String(l), o).px); });
+      const fits = voteOptions.map((l) => LedFx.text.fit(ctx, String(l), Object.assign({}, o, { maxPx: px })));
+      const lines = Math.max(1, ...fits.map((f) => f.lines.length));
+      headFit = { px, labels: fits.map((f) => f.lines), maxW, h: Math.max(BOX.headerH, Math.ceil(lines * px * HEAD_LH + HEAD_PAD_Y * 2)) };
+      return headFit;
+    }
+    const headH = () => headerFit().h;
+
+    function drawBox(box, color, i) {
       const r = BOX.radius;
       // 흰 본문 + 그림자
       ctx.save();
@@ -2374,15 +2721,18 @@
       ctx.restore();
       // 컬러 헤더 (위쪽 모서리만 둥글게)
       ctx.save();
-      roundRectPath(box.x, box.y, box.w, BOX.headerH, r, r, 0, 0);
+      const hf = headerFit();
+      roundRectPath(box.x, box.y, box.w, hf.h, r, r, 0, 0);
       ctx.fillStyle = color;
       ctx.fill();
       ctx.clip();
-      ctx.font = `700 ${cfg.boxLabelPx(curScale)}px ${BOX_FONT}`; // 보기 라벨 크기는 페이지 설정 (넘치면 maxWidth로 자동 축소)
+      ctx.font = `700 ${hf.px}px ${BOX_FONT}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(label, box.x + box.w / 2, box.y + BOX.headerH / 2 + 1, box.w - 16);
+      const lines = hf.labels[i] || [];
+      const lh = hf.px * HEAD_LH;
+      lines.forEach((ln, k) => ctx.fillText(ln, box.x + box.w / 2, box.y + hf.h / 2 + 1 + (k - (lines.length - 1) / 2) * lh));
       ctx.restore();
     }
 
@@ -2407,7 +2757,7 @@
       if (maxCount <= 0) return BALL_MAX_R;
       const b = boxRect(0);
       const innerW = b.w - BOX.pad * 2;
-      const innerH = b.h - BOX.headerH - BOX.pad * 2;
+      const innerH = b.h - headH() - BOX.pad * 2;
       const need = maxCount * HEADROOM;
       if (hexCapacity(innerW, innerH, BALL_MAX_R) >= need) return BALL_MAX_R;
       let lo = BALL_MIN_R, hi = BALL_MAX_R;
@@ -2454,7 +2804,7 @@
       if (arr.length < desired) {
         const box = boxRect(i);
         const pos = hexPositions(box, curBallR, desired);
-        const fromY = box.y + BOX.headerH + curBallR;
+        const fromY = box.y + headH() + curBallR;
         const now = performance.now();
         let order = 0;
         while (arr.length < desired) {
@@ -2518,7 +2868,7 @@
         const done = reveal.draw(ctx, time, (i, alpha) => {
           ctx.save();
           ctx.globalAlpha = alpha;
-          drawBox(boxRect(i), colorFor(i), voteOptions[i] || '');
+          drawBox(boxRect(i), colorFor(i), i);
           ctx.restore();
         });
         ctx.restore();
@@ -2537,10 +2887,10 @@
         if (!slots) continue;
         const color = colorFor(i);
         const box = boxRect(i);
-        drawBox(box, color, voteOptions[i] || ''); // 라벨은 헤더 안에
+        drawBox(box, color, i); // 라벨은 헤더 안에
 
         ctx.save();
-        roundRectPath(box.x, box.y + BOX.headerH, box.w, box.h - BOX.headerH, 0, 0, BOX.radius, BOX.radius);
+        roundRectPath(box.x, box.y + headH(), box.w, box.h - headH(), 0, 0, BOX.radius, BOX.radius);
         ctx.clip();
         drawBalls(slots.balls, curBallR, color, time);
         ctx.restore();
@@ -2574,13 +2924,18 @@
       resultLine.innerHTML = '';
       voteOptions.forEach((label, i) => {
         const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
-        const span = document.createElement('span');
-        span.style.color = colorFor(i);
-        span.style.margin = '0 10px';
-        span.style.whiteSpace = 'nowrap';
-        span.textContent = `${label} ${pct}%`;
-        resultLine.appendChild(span);
+        // 항목 간격은 화면 배율을 따르는 공용 클래스(.fx-result-item). 보기 이름이 길면 한 줄 안에서 "…" — %는 항상 보임
+        const item = document.createElement('span');
+        item.className = 'fx-result-item';
+        item.style.color = colorFor(i);
+        const lab = document.createElement('span');
+        lab.className = 'fx-result-lab';
+        lab.textContent = String(label);
+        item.append(lab, ` ${pct}%`);
+        resultLine.appendChild(item);
       });
+      // 한 줄에 다 안 들어가는 이름만 글자 단위로 줄여 "…" (CSS text-overflow 대신 — 잘린 글자가 반쯤 보이지 않게)
+      withBannerShown(() => resultLine.querySelectorAll('.fx-result-lab').forEach((lab) => LedFx.text.clamp(lab, lab.textContent, 1)));
     }
 
     // ── 결과 연출 ── 2지선다(YES/NO 포함)는 숫자 변신, 3지 이상은 막대 경주.
@@ -2704,7 +3059,6 @@
         voteOptions = state.voteOptions || [];
         voteType = state.voteType || 'yesno';
         optCount = voteOptions.length;
-        curScale = optCount <= 2 ? 1 : (optCount <= 4 ? 0.72 : 0.56);
         initBallState(optCount);
         resizeCanvas(); // 공 배치 전에 캔버스 실제 크기 확정 (기본값 300x150 상태로 배치되는 것 방지)
         const per = state.counts && state.counts.perOption ? state.counts.perOption : [];
@@ -2796,7 +3150,12 @@
 
     // ── 주관식: 답변 흘려보내기 · 워드클라우드 · 제작진 픽 ──
     // 움직임·판단은 LedFx(공용)에서, 여기서는 화면 요소와 설정만 넘긴다
-    const answerFx = LedFx.answers.create({ el: answerStream, scale: () => uScale });
+    // 흘러가는 답변은 질문 카드 아래로만 (카드 뒤로 지나가지 않게)
+    const answerFx = LedFx.answers.create({
+      el: answerStream,
+      scale: () => uScale,
+      area: () => ({ top: belowQ || answerStream.clientHeight * 0.24, bottom: answerStream.clientHeight * 0.95 }),
+    });
 
     // 인접한 답변이 같은 색이 되지 않도록 팔레트를 순환 배정 (랜덤 X)
     const CLOUD_COLORS = [
@@ -2854,8 +3213,16 @@
       el.className = 'reaction-float';
       el.textContent = text;
       el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
-      el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
-      el.style.fontSize = Math.round(28 + Math.random() * 26) + 'px'; // 랜덤 크기
+      const size = Math.round(28 + Math.random() * 26);
+      const H = reactionLayer.clientHeight;
+      if (votingLayer.classList.contains('active') && belowQ && H) {
+        // 질문 화면: 떠오르는 높이(140px)만큼 띄워 질문 카드 글자를 가리지 않게 — 카드 아래 ~ 화면 아래 사이
+        const min = belowQ + 140 + size, max = Math.max(min, H * 0.9 - size);
+        el.style.top = Math.min(max, min + Math.random() * (max - min)) + 'px';
+      } else {
+        el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
+      }
+      el.style.fontSize = size + 'px'; // 랜덤 크기
       reactionLayer.appendChild(el);
 
       const driftX = Math.random() * 60 - 30; // 좌우로 살짝 흔들리며 상승

@@ -63,17 +63,20 @@
   height: 100%;
 }
 
-/* 순위가 바뀌면 줄이 부드럽게 자리를 바꿈 (top은 JS가 순위로 지정) */
+/* 순위가 바뀌면 줄이 부드럽게 자리를 바꿈 (top·height는 JS가 이름 줄 수와 칸 높이로 지정 — 행끼리 겹치지 않음).
+   --fx-bar-s: 칸이 모자랄 때 JS가 줄이는 글자 배율 (최소 0.75) */
 .fx-bar-row {
   position: absolute;
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1));
+  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
   gap: calc(16px * var(--u));
   align-items: center;
   transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+
+.fx-bars.fx-instant .fx-bar-row { transition: none; }
 
 .fx-bar-label {
   display: flex;
@@ -81,22 +84,18 @@
   justify-content: flex-end;
   gap: calc(6px * var(--u));
   min-width: 0;
-  font-size: calc(20px * var(--u) * var(--fx-k, 1));
+  font-size: calc(20px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
   font-weight: 700;
   color: var(--ink);
   line-height: 1.25;
   text-align: right;
 }
 
-/* 긴 보기 이름은 두 줄까지 (순위 표시는 잘리지 않게 따로) */
+/* 긴 보기 이름은 두 줄까지 — 넘치면 JS(clampText)가 "…"로 자름. 띄어쓰기 없는 긴 이름도 칸 안에서 줄바꿈 */
 .fx-bar-name {
   min-width: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   word-break: keep-all;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .fx-bar-rank {
@@ -111,7 +110,7 @@
 .fx-bar-track {
   height: 62%;
   min-height: calc(18px * var(--u));
-  max-height: calc(48px * var(--u) * var(--fx-k, 1)); /* 세로형처럼 칸이 넓어도 막대가 뭉툭해지지 않게 */
+  max-height: calc(48px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1)); /* 칸이 넓어도 막대가 뭉툭해지지 않게 */
   background: var(--surface);
   border-radius: calc(12px * var(--u));
   box-shadow: var(--shadow);
@@ -125,7 +124,7 @@
 }
 
 .fx-bar-pct {
-  font-size: calc(24px * var(--u) * var(--fx-k, 1));
+  font-size: calc(24px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
   font-weight: 700;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -426,8 +425,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(26px * var(--u));
-  padding: calc(70px * var(--u)) calc(56px * var(--u)) calc(90px * var(--u));
+  gap: calc(26px * var(--u) * var(--fx-end-s, 1));
+  padding: calc(70px * var(--u)) calc(56px * var(--u)) calc(90px * var(--u)); /* 아래 90 = 페이지 점 자리 */
+  /* 글자 배율 = 페이지 배율(--fx-k, 가로형 1.3) × 화면에 맞춘 축소(--fx-end-s, JS가 넘칠 때만 1 미만으로) */
+  --fx-ek: calc(var(--fx-k, 1) * var(--fx-end-s, 1));
   text-align: center;
   opacity: 0;
   transform: translateX(calc(60px * var(--u)));
@@ -438,56 +439,55 @@
 .fx-end-slide.off { opacity: 0; transform: translateX(calc(-60px * var(--u))); }
 
 .fx-end-kicker {
-  font-size: calc(24px * var(--u) * var(--fx-k, 1));
+  font-size: calc(24px * var(--u) * var(--fx-ek));
   font-weight: 700;
   color: var(--orange-deep);
   letter-spacing: 0.06em;
 }
 
 .fx-end-title {
-  font-size: calc(68px * var(--u) * var(--fx-k, 1));
+  font-size: calc(68px * var(--u) * var(--fx-ek));
   font-weight: 700;
   line-height: 1.2;
   color: var(--ink);
 }
 
 .fx-end-q {
-  font-size: calc(34px * var(--u) * var(--fx-k, 1));
+  font-size: calc(34px * var(--u) * var(--fx-ek));
   font-weight: 700;
   line-height: 1.35;
   color: var(--ink);
   max-width: 100%;
+  overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 질문도 화면 안에서 줄바꿈 (넘치면 JS가 줄 수 제한 + "…") */
 }
 
 .fx-end-rows {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: calc(16px * var(--u));
+  gap: calc(16px * var(--u) * var(--fx-end-s, 1));
 }
 
 .fx-end-row {
   display: grid;
-  grid-template-columns: minmax(0, 30%) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-k, 1));
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-ek));
   gap: calc(18px * var(--u));
   align-items: center;
-  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-size: calc(26px * var(--u) * var(--fx-ek));
   font-weight: 700;
   color: var(--ink);
 }
 
+/* 보기 이름 2줄까지 — 넘치면 JS(clampText)가 "…"로 자름 (line-clamp는 keep-all과 함께면 "…"이 안 그려짐) */
 .fx-end-lab {
   text-align: right;
   line-height: 1.25;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .fx-end-trk {
   display: block;
-  height: calc(38px * var(--u) * var(--fx-k, 1));
+  height: calc(38px * var(--u) * var(--fx-ek));
   background: var(--bg-soft);
   border-radius: calc(12px * var(--u));
   overflow: hidden;
@@ -509,7 +509,8 @@
 .fx-end-row.win .fx-end-pct { color: var(--orange-deep); }
 
 .fx-end-big {
-  font-size: calc(64px * var(--u) * var(--fx-k, 1));
+  overflow-wrap: anywhere;
+  font-size: calc(64px * var(--u) * var(--fx-ek));
   font-weight: 700;
   line-height: 1.2;
   color: var(--orange);
@@ -517,7 +518,7 @@
 }
 
 .fx-end-note {
-  font-size: calc(28px * var(--u) * var(--fx-k, 1));
+  font-size: calc(28px * var(--u) * var(--fx-ek));
   font-weight: 600;
   color: var(--ink-soft);
 }
@@ -536,7 +537,7 @@
   align-items: baseline;
   justify-content: center;
   gap: calc(12px * var(--u));
-  font-size: calc(26px * var(--u) * var(--fx-k, 1));
+  font-size: calc(26px * var(--u) * var(--fx-ek));
   font-weight: 700;
   color: var(--ink);
   min-width: 0;
@@ -713,4 +714,22 @@
   .fx-cloud-word.pop,
   .fx-cloud-word.bump,
   .fx-cloud-word.bob { animation: none; }
+}
+
+/* ── 2지선다 결과 배너 항목 (YES 62% · NO 38%) — 간격도 화면 배율(--u)을 따름 ── */
+.fx-result-item {
+  display: inline-block;
+  margin: 0 calc(14px * var(--u));
+  white-space: nowrap;
+}
+
+/* 긴 보기 이름은 한 줄 안에서 JS(clampText)가 "…"로 줄임 — %는 항상 보이게 이름만 폭 제한 */
+.fx-result-lab {
+  display: inline-block;
+  max-width: calc(260px * var(--u));
+  vertical-align: bottom;
+  white-space: normal;
+  line-height: 1.3;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
