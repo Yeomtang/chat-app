@@ -778,7 +778,9 @@
     MAX_FLY: 60,       // 날아가는 말풍선 상한 (나머지 수는 마지막 도착 때 한 번에 반영)
     SPOT_DELAY: 400,   // 다 모인 뒤 1등 비추기까지
     SPOT_MS: 2800,     // 1등 비추는 시간
-    TOP_SCALE: 1.25,
+    TOP_SCALE: 1.25,   // 1등 비추기 배율 (영역 밖으로 나가면 들어가는 만큼만)
+    MIN_PX: 26,        // 가장 작은 단어의 읽히는 하한(논리 px, 800/1040 기준) — 한 답이 압도적이어도 1표 단어가 18px로 작아지지 않게
+    MIN_PX_LAST: 18,   // 단어가 너무 많아 하한을 지키면 영역에 안 들어갈 때만 여기까지 내림
   };
   // 빈도 비례 18~92px — 지수(^1.6)로 상위 단어가 확실히 크게 (기존 LED 공식)
   const cloudSize = (count, max) => 18 + 74 * Math.pow(max > 1 ? (count - 1) / (max - 1) : 0.5, 1.6);
@@ -802,8 +804,10 @@
     }
 
     // 영역에 맞춘 글자 배율 — 단어가 많거나 영역이 낮으면(긴 질문) 모든 크기를 같은 비율로 줄인다
-    let fit = 1;
-    const sizeOf = (count) => Math.round(cloudSize(count, max) * scale() * fit);
+    // 큰 단어만 줄어들고 작은 단어는 하한(floor)을 지킴 → 영역이 모자라면 1등 쪽이 먼저 작아진다
+    let fit = 1, floor = CLOUD.MIN_PX;
+    let lim = null; // 단어가 머물 수 있는 영역(상자 좌표) — 1등 비추기 배율 제한에도 씀
+    const sizeOf = (count) => Math.round(Math.max(floor, cloudSize(count, max) * fit) * scale());
 
     // 두 단어(기울어진 사각형)가 pad 간격 안으로 들어오는지 — 분리축 검사
     function hits(a, b, pad) {
@@ -844,19 +848,20 @@
         return { el: s, word: normText(entry.word), count: entry.count, shown: 0 };
       });
       wrap.appendChild(box);
-      // 영역에 들어가는 가장 큰 배율을 이분 탐색 (1이면 그대로, 최소 0.3)
+      // 영역에 들어가는 가장 큰 배율을 이분 탐색 (1이면 그대로, 최소 0.3) — 작은 단어는 하한 26px 유지.
+      // 하한을 지키면 배율 0.3으로도 넘칠 때(단어가 아주 많을 때)만 하한을 18px까지 내림
       const cs = getComputedStyle(wrap);
       const availH = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
       const target = availH * 0.9; // 둥실(±6px)·흩뿌림 여유
-      const fitsAt = (f) => {
-        fit = f;
+      const fitsAt = (f, fl) => {
+        fit = f; floor = fl;
         recs.forEach((r) => { r.el.style.fontSize = sizeOf(r.count) + 'px'; });
         return !availH || box.offsetHeight <= target;
       };
-      if (!fitsAt(1)) {
-        let lo = 0.3, hi = 1;
-        for (let k = 0; k < 7; k++) { const mid = (lo + hi) / 2; if (fitsAt(mid)) lo = mid; else hi = mid; }
-        fitsAt(lo);
+      const search = (lo, hi, test) => { for (let k = 0; k < 7; k++) { const mid = (lo + hi) / 2; if (test(mid)) lo = mid; else hi = mid; } return lo; };
+      if (!fitsAt(1, CLOUD.MIN_PX)) {
+        if (fitsAt(0.3, CLOUD.MIN_PX)) fitsAt(search(0.3, 1, (f) => fitsAt(f, CLOUD.MIN_PX)), CLOUD.MIN_PX);
+        else fitsAt(0.3, search(CLOUD.MIN_PX_LAST, CLOUD.MIN_PX, (fl) => fitsAt(0.3, fl)));
       }
       // offset*은 정수로 반올림돼 폭을 그대로 쓰면 줄이 바뀔 수 있어 실제 사각형으로 잰다
       // (영역 팝인 배율이 걸려 있을 수 있어 그 배율로 나눔)
@@ -864,7 +869,7 @@
       const k = bb.width / (box.offsetWidth || 1) || 1;
       const m = recs.map((r) => { const q = r.el.getBoundingClientRect(); return { x: (q.left - bb.left + q.width / 2) / k, y: (q.top - bb.top + q.height / 2) / k, w: q.width / k, h: q.height / k }; });
       // 영역 안쪽 경계(상자 좌표) — 흩뿌린 단어도 영역 밖(질문 카드 쪽)으로 나가지 않게
-      const lim = { top: -box.offsetTop, bottom: wrap.clientHeight - box.offsetTop, left: -box.offsetLeft, right: wrap.clientWidth - box.offsetLeft };
+      lim = { top: -box.offsetTop, bottom: wrap.clientHeight - box.offsetTop, left: -box.offsetLeft, right: wrap.clientWidth - box.offsetLeft };
       box.style.width = box.offsetWidth + 'px';
       box.style.height = box.offsetHeight + 'px';
       box.classList.add('placed');
@@ -898,6 +903,7 @@
         r.cx = cand.x;
         r.cy = cand.y;
         r.h = m[i].h;
+        r.w = m[i].w;
         r.el.style.left = r.cx + 'px';
         r.el.style.top = r.cy + 'px';
         r.el.style.width = (Math.ceil(m[i].w) + 2) + 'px'; // 최종 크기 기준 줄바꿈 고정 (반올림 여유 2px, 가운데 정렬이라 티 안 남)
@@ -929,16 +935,30 @@
       const pills = [];
       words.forEach((r) => {
         r.el.classList.remove('pop', 'bump');
-        if (r.count === max) r.el.style.setProperty('--s', String(CLOUD.TOP_SCALE));
-        else r.el.classList.add('dim');
+        if (r.count !== max) r.el.classList.add('dim');
       });
+      // 1등 배율은 키운 단어와 "N명이 같은 답"이 영역 안에 머무는 만큼만 (긴 1등 단어가 화면 밖으로 나가지 않게, 들어가면 1.25 그대로)
+      const u = scale();
+      const m = 8 * u; // 화면 끝·둥실(6px) 여유
+      const gap = 4 * u;
       tops.forEach((r) => {
         const p = document.createElement('div');
         p.className = 'fx-cloud-count';
         p.textContent = `${max}명이 같은 답`;
-        p.style.left = r.cx + 'px';
-        p.style.top = (r.cy + r.h * 0.75) + 'px';
         box.appendChild(p);
+        const pw = p.offsetWidth, ph = p.offsetHeight;
+        const L = lim || { top: 0, left: 0, right: box.offsetWidth, bottom: box.offsetHeight };
+        const half = Math.min(r.cx - L.left, L.right - r.cx) - m; // 가로로 쓸 수 있는 반폭
+        let sc = Math.min(CLOUD.TOP_SCALE, (2 * half) / (r.w || 1), (r.cy - L.top - m) / (r.h / 2));
+        // 알약은 단어 아래 — 아래 자리가 모자라면 배율을 더 줄이고, 그래도 안 되면 단어 위에
+        const below = (L.bottom - m - ph - gap - r.cy) / (r.h / 2);
+        let pillTop;
+        if (below >= 1) { sc = Math.min(sc, below); pillTop = r.cy + sc * r.h / 2 + gap; }
+        else { sc = Math.min(sc, (r.cy - L.top - m - ph - gap) / (r.h / 2)); pillTop = r.cy - Math.max(1, sc) * r.h / 2 - gap - ph; }
+        sc = Math.max(1, sc); // 처음 자리(배율 1)는 이미 영역 안
+        r.el.style.setProperty('--s', sc.toFixed(3));
+        p.style.left = Math.min(L.right - m - pw / 2, Math.max(L.left + m + pw / 2, r.cx)) + 'px';
+        p.style.top = pillTop + 'px';
         pills.push(p);
       });
       requestAnimationFrame(() => requestAnimationFrame(() => pills.forEach((p) => p.classList.add('on'))));
@@ -2599,15 +2619,22 @@
       cloudWrap.style.top = Math.max(layerH * 0.24, belowQ) + 'px';
     }
 
+    // 창 크기를 바꾸는 동안 resize가 연달아 오므로, 무거운 DOM 다시 재기(막대·엔딩·대기 화면)는 멈춘 뒤 150ms에 한 번만
+    // (캔버스 크기·배율은 그리기 좌표와 맞아야 하므로 바로)
+    let relayoutTimer = null;
     window.addEventListener('resize', () => {
       applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
-      barRace.relayout(); // 막대 행 높이·간격도 새 칸에 맞춰
-      endingFx.relayout(); // 엔딩 슬라이드도 새 화면 높이에 맞춰
       // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
       if (reveal) { reveal = null; resultBanner.classList.add('active'); }
-      cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음
+      cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음 (자체 150ms 지연)
       pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
-      idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
+      if (relayoutTimer) clearTimeout(relayoutTimer);
+      relayoutTimer = setTimeout(() => {
+        relayoutTimer = null;
+        barRace.relayout(); // 막대 행 높이·간격도 새 칸에 맞춰
+        endingFx.relayout(); // 엔딩 슬라이드도 새 화면 높이에 맞춰
+        idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
+      }, 150);
     });
 
     // 웹폰트(Pretendard 글자 묶음)가 늦게 도착하면 글자 폭·줄바꿈이 바뀌므로 잰 배치를 다시 잰다

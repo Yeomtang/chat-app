@@ -6,7 +6,7 @@
   <title>LED 채팅 화면 (콘서트 4:3)</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="/led-fx.css?v=20261021"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
+  <link rel="stylesheet" href="/led-fx.css?v=20261021b"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -567,8 +567,8 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/vendor/qrcode.js?v=20261021"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
-<script src="/led-fx.js?v=20261021"></script>
+<script src="/vendor/qrcode.js?v=20261021b"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
+<script src="/led-fx.js?v=20261021b"></script>
 <script>
   // 가로형(4:3) 설정 — 동작(소켓·모드 전환·연출 배선)은 led-fx.js의 LedFx.page 공용
   LedFx.page.start({
