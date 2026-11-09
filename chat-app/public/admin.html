@@ -6,12 +6,16 @@
   <title>제작진 관리 (임시)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* 폼 요소는 브라우저 기본 글꼴을 써서 본문 글꼴을 물려받지 않음 → 본문과 같은 글꼴로 */
+    button, input, textarea, select { font-family: inherit; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
       background: #f2f2f7;
       min-height: 100vh;
       padding: 24px 16px 60px;
+      word-break: keep-all; /* 한글 어절이 중간에서 끊기지 않게 (긴 단어만 칸 안에서 줄바꿈) */
+      overflow-wrap: break-word;
     }
 
     .wrap { max-width: 480px; margin: 0 auto; }
@@ -46,8 +50,6 @@
       color: #8e8e93;
       margin-bottom: 20px;
       line-height: 1.5;
-      word-break: keep-all;
-      overflow-wrap: break-word;
     }
 
     .card {
