@@ -1089,6 +1089,7 @@
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
       nickSocket.on('chatCleared', () => {
         document.getElementById('messages').innerHTML = '';
+        hideNewMsgPill(); // 위로 올려 보던 중 떠 있던 '새 메시지 ↓'도 함께 내림(빈 목록 위에 남지 않게)
         pendingPinId = null; // 지워진 글의 핀 알림은 띄우지 않음
       });
       // 관리자가 개별 채팅을 삭제하면 내 화면에서도 제거
