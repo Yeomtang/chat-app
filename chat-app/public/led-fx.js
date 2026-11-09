@@ -738,7 +738,11 @@
   const STREAM = {
     MAX_QUEUE: 200,     // 대기열 상한 (초과 시 오래된 것부터 포기)
     LANES: 8,           // 가로 레인 수
-    LANE_COOLDOWN: 3500, // 같은 레인 재사용 대기(ms) — 앞 답변과 겹치지 않을 간격
+    LANE_COOLDOWN: 3500, // 같은 레인 재사용 대기(ms) — 워드클라우드로 모일 때 들어오는 말풍선용
+    MIN_MS: 9000,       // 화면을 지나가는 시간 9~14초 (빠를수록 짧음)
+    MAX_MS: 14000,
+    GAP: 40,            // 같은 레인 앞 말풍선과의 최소 간격(논리 px) — 들어올 때도, 지나가는 내내도
+    RETRY_MS: 120,      // 빈 레인이 없으면 대기열에서 기다렸다 이 간격으로 다시 봄
   };
 
   // opts: { el: 흘려보내기 레이어, scale: () => 화면 배율(--u),
@@ -750,6 +754,8 @@
     const BUBBLE_H = 64; // 가장 큰 말풍선 높이(논리 px) — 맨 아래 레인도 범위 안에 들도록
     const queue = [];
     const laneBusy = new Array(STREAM.LANES).fill(0);
+    // 레인마다 마지막으로 내보낸 말풍선 { t0(출발 시각), x0(출발 left), w(폭), v(px/ms) } — 뒤 말풍선이 따라잡지 않게
+    const laneLast = new Array(STREAM.LANES).fill(null);
     let items = []; // 화면에 떠 있는 답변 { el, id, text, anim }
     let spawnTimer = null;
     let running = false;
@@ -787,30 +793,65 @@
       b.className = 'answer-float';
       b.textContent = text;
       b.style.fontSize = Math.round((18 + Math.random() * 12) * scale()) + 'px';
-      b.style.top = laneTop(lane == null ? pickLane() : lane) + 'px';
+      if (lane !== false) b.style.top = laneTop(lane == null ? pickLane() : lane) + 'px'; // false: 레인은 부른 쪽이 정함
       el.appendChild(b);
       return b;
     }
 
+    // 이 레인에 폭 w 말풍선을 지금 내보낼 때 쓸 수 있는 가장 빠른 속도(px/ms). 못 쓰면 0
+    // 앞 말풍선 꼬리(오른쪽 끝)와 GAP 이상 떨어져 들어오고, 앞 말풍선이 화면을 다 지날 때까지 따라잡지 않아야 한다
+    function laneMaxSpeed(lane, sw, w, now) {
+      const last = laneLast[lane];
+      const vMax = (sw + w + 60 * scale()) / STREAM.MIN_MS;
+      if (!last) return vMax;
+      const gap = STREAM.GAP * scale();
+      const tailAt = (t) => last.x0 - last.v * (t - last.t0) + last.w; // 앞 말풍선 오른쪽 끝(레이어 x)
+      if (tailAt(now) + gap > sw) return 0; // 앞 말풍선이 아직 다 들어오지 않음
+      const tEnd = last.t0 + (last.x0 + last.w + 60 * scale()) / last.v; // 앞 말풍선이 왼쪽 밖으로 다 나가는 시각
+      if (tEnd <= now) return vMax;
+      // 새 말풍선 머리(left) = sw - v·(t - now) ≥ 앞 꼬리 + gap  (t = tEnd에서 가장 빡빡함 — 둘 다 직선이라 양 끝만 보면 됨)
+      const v = (sw - tailAt(tEnd) - gap) / (tEnd - now);
+      return Math.max(0, Math.min(vMax, v));
+    }
+
+    // 큐 앞 답변을 비어 있는 레인에 내보냄. 빈 레인이 없으면 false(대기열에 남김)
     function spawn(a) {
-      const b = makeBubble(a.text);
+      const b = makeBubble(a.text, false);
       const w = b.offsetWidth;
       const sw = el.clientWidth;
+      const now = performance.now();
+      const dist = sw + w + 60 * scale();
+      const vMin = dist / STREAM.MAX_MS;
+      const want = dist / (STREAM.MIN_MS + Math.random() * (STREAM.MAX_MS - STREAM.MIN_MS)); // 9~14초 무작위
+      const n = laneCount();
+      const ok = [];
+      for (let i = 0; i < n; i++) { const vm = laneMaxSpeed(i, sw, w, now); if (vm >= vMin) ok.push([i, vm]); }
+      if (!ok.length) { b.remove(); return false; }
+      // 원하는 속도를 그대로 낼 수 있는 레인 중 무작위, 없으면 가장 빨리 갈 수 있는 레인을 그 속도로
+      const full = ok.filter((x) => x[1] >= want);
+      const [lane, vm] = full.length ? full[Math.floor(Math.random() * full.length)] : ok.reduce((p, q) => (q[1] > p[1] ? q : p));
+      const v = Math.min(want, vm);
+      b.style.top = laneTop(lane) + 'px';
       b.style.left = sw + 'px'; // 오른쪽 밖에서 시작
+      laneLast[lane] = { t0: now, x0: sw, w, v };
+      laneBusy[lane] = now + (w + STREAM.GAP * scale()) / v; // 다 들어올 때까지 (클라우드 쪽 말풍선도 피해 감)
       const it = { el: b, id: a.id, text: normText(a.text) };
       it.anim = b.animate([
         { transform: 'translateX(0)' },
-        { transform: `translateX(${-(sw + w + 60 * scale())}px)` },
-      ], { duration: 9000 + Math.random() * 5000, easing: 'linear' }); // 9~14초에 걸쳐 통과
+        { transform: `translateX(${-dist}px)` },
+      ], { duration: dist / v, easing: 'linear' });
       it.anim.onfinish = () => { b.remove(); items = items.filter((x) => x !== it); };
       items.push(it);
+      return true;
     }
 
     function schedule() {
       if (spawnTimer || !running) return;
       const tick = () => {
         if (!running || !queue.length) { spawnTimer = null; return; }
-        spawn(queue.shift());
+        // 빈 레인이 없으면 내보내지 않고 대기열 앞에서 잠시 기다림 (겹치거나 앞지르지 않게)
+        if (!spawn(queue[0])) { spawnTimer = setTimeout(tick, STREAM.RETRY_MS); return; }
+        queue.shift();
         // 밀린 답변이 많을수록 배출 간격을 자동으로 줄임
         const delay = queue.length > 60 ? 150 : queue.length > 25 ? 250 : 420;
         spawnTimer = setTimeout(tick, delay);
@@ -853,6 +894,7 @@
         stop();
         items.forEach((it) => { it.anim.onfinish = null; it.anim.cancel(); });
         items = [];
+        laneLast.fill(null);
         el.innerHTML = '';
         el.classList.remove('active');
         el.style.zIndex = '';
