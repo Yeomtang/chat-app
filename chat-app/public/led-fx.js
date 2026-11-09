@@ -951,6 +951,32 @@
       const bb = box.getBoundingClientRect();
       const k = bb.width / (box.offsetWidth || 1) || 1;
       const m = recs.map((r) => { const q = r.el.getBoundingClientRect(); return { x: (q.left - bb.left + q.width / 2) / k, y: (q.top - bb.top + q.height / 2) / k, w: q.width / k, h: q.height / k }; });
+      // 잰 최종 줄바꿈을 고정 — 줄마다 나눠 <br> + nowrap (채팅 핀 들어올리기 splitLines와 같은 방식).
+      // 글자가 커지는 도중(크기 전환이 목표를 살짝 넘었다 돌아옴·통통)에 폭이 모자라 줄이 다시 나뉘며
+      // 옆 단어를 덮지 않게. 폭은 지정하지 않음(nowrap이라 글자 폭 그대로 → 가운데 기준으로 커짐)
+      recs.forEach((r) => {
+        const node = r.el.firstChild;
+        const lines = node ? splitLines(node) : [];
+        if (lines.length > 1) {
+          // 줄 사이 원래 공백은 앞 줄 끝에 남김(nowrap 줄 끝 공백은 그려지지 않음) → textContent가 원문 그대로
+          const src = node.textContent;
+          let pos = 0;
+          const parts = [];
+          lines.forEach((t) => {
+            const at = src.indexOf(t, pos);
+            if (at < 0) { parts.push(t); return; }
+            if (parts.length && at > pos) parts[parts.length - 1] += src.slice(pos, at);
+            parts.push(t);
+            pos = at + t.length;
+          });
+          r.el.textContent = '';
+          parts.forEach((t, j) => {
+            if (j) r.el.appendChild(document.createElement('br'));
+            r.el.appendChild(document.createTextNode(t));
+          });
+        }
+        r.el.style.whiteSpace = 'nowrap';
+      });
       // 영역 안쪽 경계(상자 좌표) — 흩뿌린 단어도 영역 밖(질문 카드 쪽)으로 나가지 않게
       lim = { top: -box.offsetTop, bottom: wrap.clientHeight - box.offsetTop, left: -box.offsetLeft, right: wrap.clientWidth - box.offsetLeft };
       box.style.width = box.offsetWidth + 'px';
@@ -989,7 +1015,6 @@
         r.w = m[i].w;
         r.el.style.left = r.cx + 'px';
         r.el.style.top = r.cy + 'px';
-        r.el.style.width = (Math.ceil(m[i].w) + 2) + 'px'; // 최종 크기 기준 줄바꿈 고정 (반올림 여유 2px, 가운데 정렬이라 티 안 남)
         r.el.style.setProperty('--rot', (cand.rot * 180 / Math.PI).toFixed(1) + 'deg');
         if (!words.has(r.word)) words.set(r.word, r);
       });
