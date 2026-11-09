@@ -52,6 +52,10 @@
       line-height: 1.5;
     }
 
+    /* 입력칸 바로 아래 글자 수 안내 (.note 변형) — 권장 길이를 넘으면 은은한 주황으로만 알림(입력은 막지 않음) */
+    .note.len-hint { margin: -4px 0 10px; }
+    .note.len-hint.over { color: #c46a00; }
+
     .card {
       background: #fff;
       border-radius: 14px;
@@ -666,6 +670,7 @@
       </select>
       <button onclick="addPreset()">추가</button>
     </div>
+    <p class="note len-hint" data-len-for="preset-input" data-len-max="80"></p>
     <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
     <input type="number" id="preset-maxlen" class="preset-extra" value="20" min="1" max="20" placeholder="최대 글자수 (1~20)" style="display:none">
     <label id="preset-duration-label" class="preset-extra">투표 시간 (초, 5~600) — 선택형 전용</label>
@@ -677,6 +682,7 @@
     <h2>즉석 질문 시작</h2>
     <label>질문 내용</label>
     <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?" maxlength="200">
+    <p class="note len-hint" data-len-for="question-input" data-len-max="80"></p>
     <label>질문 유형</label>
     <select id="question-type" class="type-select" onchange="onQuestionTypeChange()">
       <option value="yesno">YES/NO 투표</option>
@@ -1678,6 +1684,7 @@
     input.value = '';
     document.getElementById('preset-options').value = '';
     renderPresets();
+    refreshLenHints();
   }
 
   function runPreset(i) {
@@ -1773,6 +1780,24 @@
   }
 
   renderPresets();
+
+  // 질문 글자 수 안내: 가로형 LED는 질문이 3줄을 넘으면 글자가 작아지고 말줄임되므로 80자 이내를 권장 (입력은 막지 않음)
+  document.querySelectorAll('.len-hint[data-len-for]').forEach((hint) => {
+    const input = document.getElementById(hint.dataset.lenFor);
+    const max = Number(hint.dataset.lenMax) || 80;
+    const update = () => {
+      const n = Array.from(input.value.trim()).length;
+      hint.classList.toggle('over', n > max);
+      hint.textContent = n > max
+        ? `지금 ${n}자 — 가로형 LED는 ${max}자 이내 권장 (넘으면 글자가 작아지고 3줄에서 잘려요)`
+        : `가로형 LED는 ${max}자 이내 권장${n ? ` (지금 ${n}자)` : ''}`;
+    };
+    input.addEventListener('input', update);
+    input.addEventListener('change', update); // 붙여넣기·자동완성 등
+    hint.update = update;
+    update();
+  });
+  const refreshLenHints = () => document.querySelectorAll('.len-hint').forEach((h) => h.update && h.update());
 </script>
 </body>
 </html>

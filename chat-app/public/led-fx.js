@@ -610,9 +610,10 @@
         }
         if (ok) break;
       }
-      if (!ok) rowH = Math.max(1, (H - (n - 1) * gapMin) / n); // 극단적으로 좁을 때만 (글자는 이미 최소·1줄)
-      const pitch = n > 1 ? Math.min((H - rowH) / (n - 1), rowH * 1.45) : 0;
-      geo = { y0: (H - rowH - (n - 1) * pitch) / 2, pitch, rowH };
+      // 극단적으로 좁을 때(글자는 이미 최소·1줄): 행 높이를 글자 높이 아래로 줄이지 않는다(행끼리 겹침 방지) —
+      // 행 간격은 하한(gapMin)만 두고 칸 위 끝부터 쌓아, 모자라는 만큼은 아래 여백 쪽으로 넘침
+      const pitch = !ok ? rowH + gapMin : n > 1 ? Math.min((H - rowH) / (n - 1), rowH * 1.45) : 0;
+      geo = { y0: ok ? (H - rowH - (n - 1) * pitch) / 2 : 0, pitch, rowH };
       rows.forEach((r) => { r.style.height = rowH + 'px'; r.classList.remove('win'); });
       if (cur) place(cur.vals, cur.order, cur.done);
     }
@@ -2771,6 +2772,8 @@
     // 질문 카드 실제 아래 끝에 맞춰 그 아래 콘텐츠(공 상자·막대·워드클라우드·흘러가는 답변)의 시작 위치를 잡는다.
     // 질문이 길어 카드가 커지면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다. 아래 끝은 CSS(화면 아래 여백만)
     let belowQ = 0; // 질문 카드 아래 콘텐츠가 시작하는 y(px, 투표 레이어 기준)
+    // 공 상자·막대가 최소한 차지할 높이(레이어 높이 대비, cfg.question.minAreaRatio). 질문 카드가 아무리 커도 이만큼은 남긴다
+    const MIN_AREA = (cfg.question && cfg.question.minAreaRatio) || 0;
     function layoutBelowQuestion() {
       const layerH = votingLayer.clientHeight;
       if (!layerH) return; // 채팅 모드에선 레이어가 숨겨져 있어 측정 불가
@@ -2780,15 +2783,69 @@
       const bottom = qWrap.offsetTop + qCard.offsetHeight;
       const gap = 16 * uScale; // 카드와 콘텐츠 사이 (예전 3%는 긴 질문일 때 막대 칸을 너무 많이 먹음)
       belowQ = bottom + gap;
-      canvasWrap.style.top = Math.max(layerH * 0.22, belowQ) + 'px';
-      cloudWrap.style.top = Math.max(layerH * 0.24, belowQ) + 'px';
+      // 아래 끝은 CSS(공 상자 3%·워드클라우드 5% 여백) — 최소 높이를 넘겨 밀어내지 않음
+      const cap = (bottomRatio) => (MIN_AREA ? layerH * (1 - bottomRatio - MIN_AREA) : Infinity);
+      canvasWrap.style.top = Math.min(cap(0.03), Math.max(layerH * 0.22, belowQ)) + 'px';
+      cloudWrap.style.top = Math.min(cap(0.05), Math.max(layerH * 0.24, belowQ)) + 'px';
+    }
+
+    // 질문 글자 맞춤 (cfg.question { maxLines, minPx } — 가로형): 최대 maxLines줄 → 넘치면 글자를 minPx(논리 px)까지
+    // 한 단계씩 축소 → 그래도 넘치면 maxLines줄째 끝에서 말줄임 "…" (장평 압축 없음, 기존 글자 맞춤 원칙 순서).
+    // 돌려준 글자를 LedFx.question.render에 넘긴다. 같은 질문·같은 화면 폭이면 DOM을 다시 재지 않음(진행 중인 어절 등장 유지)
+    const QFIT = cfg.question && cfg.question.maxLines ? cfg.question : null;
+    let qFitKey = null, qFit = null, qMeasure = null;
+    function fitQuestion(text) {
+      text = text || '';
+      if (!QFIT) return text;
+      const el = votingQuestion;
+      const qWrap = document.getElementById('voting-question-wrap');
+      const qCard = document.getElementById('voting-question-card');
+      const pad = (e) => { const c = getComputedStyle(e); return parseFloat(c.paddingLeft) + parseFloat(c.paddingRight); };
+      // 카드는 글자만큼 줄어드는 inline-block(최대 폭 100%) — 긴 질문은 최대 폭에서 줄이 바뀌므로 그 폭으로 잰다
+      const maxW = qWrap.clientWidth - pad(qWrap) - pad(qCard);
+      const k = text + '\u0000' + Math.round(maxW);
+      if (k === qFitKey) { el.style.fontSize = qFit.font; return qFit.shown; }
+      // 화면에 보이는 질문(어절 등장 중일 수 있음)은 건드리지 않고, 같은 글꼴·줄바꿈 규칙의 숨은 복사본으로 잰다
+      el.style.fontSize = '';
+      const cs = getComputedStyle(el);
+      if (!qMeasure) {
+        qMeasure = document.createElement('div');
+        qMeasure.setAttribute('aria-hidden', 'true');
+        qMeasure.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;';
+      }
+      if (qMeasure.parentNode !== qWrap) qWrap.appendChild(qMeasure);
+      ['fontFamily', 'fontWeight', 'letterSpacing', 'wordBreak', 'overflowWrap', 'textAlign'].forEach((p) => { qMeasure.style[p] = cs[p]; });
+      qMeasure.style.width = maxW + 'px';
+      const basePx = parseFloat(cs.fontSize) || 0;
+      const lhRatio = (parseFloat(cs.lineHeight) || basePx * 1.4) / basePx;
+      const minPx = Math.min(basePx, QFIT.minPx * uScale);
+      const setPx = (px) => { qMeasure.style.fontSize = px + 'px'; qMeasure.style.lineHeight = (px * lhRatio) + 'px'; };
+      const lines = (px) => qMeasure.scrollHeight / (px * lhRatio);
+      qMeasure.textContent = text;
+      let px = basePx;
+      setPx(px);
+      const step = Math.max(1, uScale);
+      while (lines(px) > QFIT.maxLines + 0.25 && px > minPx) { px = Math.max(minPx, px - step); setPx(px); }
+      let shown = text;
+      if (lines(px) > QFIT.maxLines + 0.25 && LedFx.text.clamp(qMeasure, text, QFIT.maxLines)) shown = qMeasure.textContent;
+      qMeasure.remove();
+      qFitKey = k;
+      qFit = { font: px < basePx ? px + 'px' : '', shown, px: px / uScale, cut: shown !== text };
+      el.style.fontSize = qFit.font;
+      return shown;
     }
 
     // 창 크기를 바꾸는 동안 resize가 연달아 오므로, 무거운 DOM 다시 재기(막대·엔딩·대기 화면)는 멈춘 뒤 150ms에 한 번만
     // (캔버스 크기·배율은 그리기 좌표와 맞아야 하므로 바로)
     let relayoutTimer = null;
+    // 가로형 질문 글자 맞춤은 화면 폭이 바뀌면 다시 (어절 등장 없이)
+    function refitQuestion() {
+      if (!QFIT || !votingLayer.classList.contains('active') || votingQuestion.dataset.fxSrc == null) return;
+      const shown = fitQuestion(votingQuestion.dataset.fxSrc);
+      if (shown !== votingQuestion.dataset.fxText) LedFx.question.render(votingQuestion, shown, false); // 글자가 같으면 어절 등장 유지
+    }
     window.addEventListener('resize', () => {
-      applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
+      applyScreenScale(); refitQuestion(); layoutBelowQuestion(); resizeCanvas();
       // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(원 + 비율)으로
       if (reveal) { reveal = null; resultShownAt = 0; }
       cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음 (자체 150ms 지연)
@@ -2806,7 +2863,7 @@
     // (워드클라우드는 자리를 다시 섞어 깜빡이므로 제외 — 질문 카드는 클라우드보다 먼저 그려져 이미 글꼴이 있음)
     if (document.fonts && document.fonts.addEventListener) {
       document.fonts.addEventListener('loadingdone', () => {
-        if (votingLayer.classList.contains('active')) { layoutBelowQuestion(); resizeCanvas(); barRace.relayout(); }
+        if (votingLayer.classList.contains('active')) { qFitKey = null; refitQuestion(); layoutBelowQuestion(); resizeCanvas(); barRace.relayout(); }
         endingFx.relayout();
         idleFx.refitUrl();
       });
@@ -2819,6 +2876,7 @@
       return {
         u: uScale,
         canvas: { top: canvasWrap.offsetTop, h: canvasWrap.clientHeight, layerH: votingLayer.clientHeight, belowQ },
+        question: qFit && { px: qFit.px, cut: qFit.cut },
         header: f ? { px: f.px, maxW: Math.round(f.maxW), h: f.h, labels: f.labels.map((ls) => measure(f.px, ls)) } : null,
         reveal: reveal ? { px: reveal.labelFit.px, maxW: Math.round(reveal.labelMaxW), cut: reveal.labelFit.cut, lines: measure(reveal.labelFit.px, reveal.labelFit.lines) } : null,
       };
@@ -3386,7 +3444,8 @@
       chatLayer.classList.add('blurred');
       votingLayer.classList.add('active');
       // 채팅 등 다른 화면에서 질문이 새로 시작될 때만 어절 단위 등장 (투표→결과·재접속 땐 그대로)
-      LedFx.question.render(votingQuestion, state.question, LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
+      votingQuestion.dataset.fxSrc = state.question || ''; // 맞추기 전 원래 질문 (화면 크기가 바뀌면 다시 맞춤)
+      LedFx.question.render(votingQuestion, fitQuestion(state.question), LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
       votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
