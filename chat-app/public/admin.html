@@ -515,6 +515,8 @@
       cursor: pointer;
     }
     .chat-item .chat-del:hover { background: #ff3b30; color: #fff; }
+    /* 삭제 2클릭 확인 상태 (프리셋·결과 목록의 '삭제?'와 같은 모양) */
+    .chat-item .chat-del.confirming { width: auto; padding: 0 8px; background: #ff3b30; color: #fff; font-size: 12px; white-space: nowrap; }
 
     .chat-item:hover { background: #e5e5ea; }
     .chat-item.starred { background: #fff8e6; }
@@ -1401,9 +1403,28 @@
     socket.emit('admin:unpinNotice');
   }
 
-  // 개별 채팅 삭제 — 모든 화면에서 즉시 사라짐(되돌릴 수 없음)
+  // 개별 채팅 삭제 — 모든 화면에서 즉시 사라짐(되돌릴 수 없음).
+  // confirm()은 떠 있는 동안 화면 갱신(채팅·상태 수신)이 멈추므로 쓰지 않고 2클릭 확인(✕ → '삭제?', 3초 안에 한 번 더)
+  let pendingDeleteId = null, pendingDeleteTimer = null;
+  function refreshChatItem(id) {
+    const old = id != null ? chatEls.get(id) : null;
+    if (!old) return;
+    const el = chatItemEl(old._msg);
+    old.replaceWith(el);
+    chatEls.set(id, el);
+  }
   function deleteMessage(msg) {
-    if (!confirm('이 채팅을 모든 화면에서 삭제할까요?\n\n' + msg.nickname + ': ' + msg.text)) return;
+    clearTimeout(pendingDeleteTimer);
+    if (pendingDeleteId !== msg.id) {
+      const prev = pendingDeleteId;
+      pendingDeleteId = msg.id;
+      pendingDeleteTimer = setTimeout(() => { const id = pendingDeleteId; pendingDeleteId = null; refreshChatItem(id); }, 3000);
+      refreshChatItem(prev);
+      refreshChatItem(msg.id);
+      return;
+    }
+    pendingDeleteId = null;
+    refreshChatItem(msg.id);
     socket.emit('admin:deleteMessage', msg.id);
   }
 
@@ -1472,9 +1493,10 @@
     body.appendChild(text);
     body.onclick = () => { if (!isPinLocked()) pinChat(m); };
     const del = document.createElement('button');
-    del.className = 'chat-del';
-    del.textContent = '✕';
-    del.title = '이 채팅 삭제';
+    const delConfirming = pendingDeleteId === m.id;
+    del.className = 'chat-del' + (delConfirming ? ' confirming' : '');
+    del.textContent = delConfirming ? '삭제?' : '✕';
+    del.title = delConfirming ? '한 번 더 누르면 모든 화면에서 삭제' : '이 채팅 삭제';
     del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
     item.appendChild(star);
     item.appendChild(body);
