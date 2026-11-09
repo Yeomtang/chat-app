@@ -1288,7 +1288,8 @@
     chatContent.classList.add('blurred');
     overlay.classList.add('active');
     // 새 투표 질문 시작 시 내 선택 초기화, 재접속이면 서버 값(인덱스) 복원
-    if (state.mode === 'voting' && prevMode !== 'voting' && prevMode !== 'result') myVote = null;
+    // (결과 화면에서 바로 다음 투표를 시작해도 새 질문 — 서버는 표를 비우므로 지난 선택(✓)을 남기지 않는다)
+    if (state.mode === 'voting' && prevMode !== 'voting') myVote = null;
     if (state.myVote != null) myVote = state.myVote;
 
     // 새 주관식 질문 시작 시 답변 상태 초기화
