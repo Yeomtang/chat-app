@@ -2918,7 +2918,7 @@
         qMeasure.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;';
       }
       if (qMeasure.parentNode !== qWrap) qWrap.appendChild(qMeasure);
-      ['fontFamily', 'fontWeight', 'letterSpacing', 'wordBreak', 'overflowWrap', 'textAlign'].forEach((p) => { qMeasure.style[p] = cs[p]; });
+      ['fontFamily', 'fontWeight', 'letterSpacing', 'wordBreak', 'overflowWrap', 'textAlign', 'textWrap'].forEach((p) => { qMeasure.style[p] = cs[p]; });
       qMeasure.style.width = maxW + 'px';
       const basePx = parseFloat(cs.fontSize) || 0;
       const lhRatio = (parseFloat(cs.lineHeight) || basePx * 1.4) / basePx;

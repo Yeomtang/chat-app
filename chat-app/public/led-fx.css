@@ -156,6 +156,7 @@
   text-align: center;
   word-break: keep-all;
   overflow-wrap: break-word; /* 20자 답변이 큰 글씨로 커졌을 때 화면 밖으로 나가지 않게 */
+  text-wrap: balance;        /* 두 줄로 꺾인 긴 답이 "…노래 / 듣기"처럼 짧은 끝줄이 되지 않게 (잰 줄바꿈을 그대로 고정) */
   max-width: 100%;
   opacity: 0;
 }
@@ -466,6 +467,7 @@
   color: var(--ink);
   max-width: 100%;
   overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 질문도 화면 안에서 줄바꿈 (넘치면 JS가 줄 수 제한 + "…") */
+  text-wrap: balance;      /* 질문류: 줄 길이를 고르게 */
 }
 
 .fx-end-rows {
@@ -518,6 +520,7 @@
 
 .fx-end-big {
   overflow-wrap: anywhere;
+  text-wrap: balance;
   font-size: calc(64px * var(--u) * var(--fx-ek));
   font-weight: 700;
   line-height: 1.2;

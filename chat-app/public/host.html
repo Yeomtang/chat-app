@@ -262,6 +262,7 @@
 
     .msg-text {
       color: var(--ink);
+      text-wrap: pretty; /* 채팅: 마지막 줄에 한 글자만 남지 않게 (관객 폰과 같음) */
     }
 
     /* ── 입력창 ── */
@@ -377,7 +378,7 @@
     .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
     .pin-notice-body { flex: 1; min-width: 0; }
     .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
-    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; text-wrap: pretty; }
 
     /* ── 키 없음/틀림 안내 ── 입장·채팅 화면 어디서든 보이도록 상단 고정, 인증될 때까지 유지 */
     .auth-notice {

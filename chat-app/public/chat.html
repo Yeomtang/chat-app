@@ -308,6 +308,7 @@
       max-width: 320px;
       word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
       overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
+      text-wrap: balance;        /* 질문류: 줄 길이를 고르게 — "회사 / 행사는?"처럼 짧은 마지막 줄 방지 (미지원 브라우저는 그냥 줄바꿈) */
     }
 
     #voting-buttons {
@@ -639,6 +640,7 @@
 
     .msg-text {
       color: var(--ink);
+      text-wrap: pretty; /* 채팅: 마지막 줄에 한 글자만 남지 않게 (keep-all은 말풍선에서 상속, 미지원 브라우저는 그냥 줄바꿈) */
     }
 
     /* ── 입력창 ── */
@@ -752,7 +754,7 @@
     .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
     .pin-notice-body { flex: 1; min-width: 0; }
     .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
-    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; text-wrap: pretty; }
 
     /* ── "내 채팅이 고정됐어요" 배너 ── 채팅 화면 위쪽에서 슬라이드 다운, 작성자 폰에만 뜸 */
     .pin-banner {
