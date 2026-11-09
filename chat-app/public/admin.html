@@ -2275,7 +2275,15 @@
       if (detail) main.append(el('span', 'preset-detail', detail));
       const actions = el('div', 'preset-actions');
       const runBtn = el('button', '', '실행');
+      runBtn._preset = p;
       runBtn.addEventListener('click', () => runPreset(i, runBtn));
+      // 목록을 다시 그려도(✕ 삭제 확인·확인 시간 끝·투표 시간 입력) 이 항목의 [덮어쓰기?] 확인 대기는 새 버튼에 이어 준다
+      // — 안 그러면 화면은 '실행'으로 돌아갔는데 확인 대기는 옛 버튼에 남아, 다시 누르면 실행 대신 확인만 또 뜬다
+      if (overwriteArm && overwriteArm.btn._preset === p && !overwriteArm.btn.isConnected) {
+        runBtn.textContent = overwriteArm.btn.textContent;
+        runBtn.className = overwriteArm.btn.className;
+        overwriteArm.btn = runBtn;
+      }
       // [실행] 바로 옆이라 잘못 누르기 쉬워 2클릭 확인(결과 목록과 같은 패턴) — 항목 객체로 기억(다른 관리자가 목록을 바꾸면 풀림)
       const confirming = pendingPresetRemove === p;
       const removeBtn = el('button', confirming ? 'remove-btn confirming' : 'remove-btn', confirming ? '삭제?' : '✕');
