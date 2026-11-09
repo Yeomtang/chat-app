@@ -1614,16 +1614,23 @@
   }
   function blockButton(target) {
     const b = document.createElement('button');
+    const key = target.messageId != null ? 'm:' + target.messageId : 'a:' + target.answerId;
     b.className = 'mini-btn danger';
     b.textContent = '차단';
     b.title = '이 관객의 채팅·주관식 답변을 막고(본인은 모름) 최근 글을 모두 지웁니다 — 차단 목록에서 해제 가능';
+    // 항목을 다시 그려도(같은 글의 ✕ 삭제 확인·핀·체크 표시 갱신) '차단?' 확인 대기는 새 버튼에 이어 준다
+    if (blockArm && blockArm.key === key) { // 옛 버튼은 곧 새 항목으로 교체됨
+      b.textContent = '차단?';
+      b.classList.add('confirming');
+      blockArm.btn = b;
+    }
     b.onclick = (e) => {
       e.stopPropagation();
       if (!blockArm || blockArm.btn !== b) {
         disarmBlock();
         b.textContent = '차단?';
         b.classList.add('confirming');
-        blockArm = { btn: b, timer: setTimeout(disarmBlock, 3000) };
+        blockArm = { btn: b, key, timer: setTimeout(disarmBlock, 3000) };
         showOpNotice('이 관객의 채팅·답변을 막고 최근 글을 모두 지워요 — 3초 안에 한 번 더 누르면 차단');
         return;
       }
