@@ -49,7 +49,35 @@ function poolSize(theme) {
 // ── 닉네임 중복 방지 ──
 // 닉네임 자체는 클라이언트가 즉시 로컬에서 고르지만(빠른 UX),
 // 서버는 현재 접속 중인 소켓들의 닉네임을 추적해 동시 중복만 감지/교체한다.
-const activeNicknames = new Map(); // socket.id -> nickname
+const activeNicknames = new Map(); // socket.id -> nickname (이 소켓이 채팅에 쓰는 닉네임)
+
+// 닉네임 주인은 소켓이 아니라 기기(clientId) — 폰이 다른 앱을 쓰다 돌아와 재접속해도 같은 닉네임을 쓴다.
+//  - 서버가 옛 소켓 끊김을 아직 모르는 동안(핑 타임아웃 최대 수십 초) 들어온 새 소켓도 같은 주인으로 본다.
+//  - 기기의 소켓이 모두 끊겨도 NICKNAME_HOLD_MS 동안은 그 기기 몫으로 남겨 다른 관객이 가져가지 못한다.
+// 주인 키는 기기+테마('clientId|theme') — 같은 폰이 / 와 /concert 를 함께 열어도 서로의 닉네임을 풀어 버리지 않는다.
+// clientId가 없는 소켓은 'sid:소켓id'를 주인 키로 쓰고, 끊기면 바로 풀린다.
+const NICKNAME_HOLD_MS = 30 * 60 * 1000;
+const nicknameOwners = new Map(); // nickname -> 주인 키
+const ownerNicknames = new Map(); // 주인 키 -> { name, sockets: 접속 중 소켓 수, releasedAt: 모두 끊긴 시각 }
+
+function ownerKeyOf(socket, theme) { return socket.clientId ? socket.clientId + '|' + theme : 'sid:' + socket.id; }
+
+function releaseOwner(key) {
+  const rec = ownerNicknames.get(key);
+  if (!rec) return;
+  if (nicknameOwners.get(rec.name) === key) nicknameOwners.delete(rec.name);
+  ownerNicknames.delete(key);
+}
+
+function holdExpired(rec, now = Date.now()) {
+  return rec.sockets <= 0 && now - rec.releasedAt >= NICKNAME_HOLD_MS;
+}
+
+// 보존 시간이 지난 닉네임 정리(메모리 누수 방지)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, rec] of ownerNicknames) if (holdExpired(rec, now)) releaseOwner(key);
+}, 60 * 1000).unref();
 
 // ── 관객 접속자 통계 ──
 // 관객만 claimNickname을 호출한다(LED는 identify만, 관리자는 둘 다 안 함)
@@ -72,11 +100,13 @@ function broadcastAudience() {
   }, 250);
 }
 
-function isNicknameTaken(name, excludeSocketId) {
-  for (const [sid, n] of activeNicknames) {
-    if (sid !== excludeSocketId && n === name) return true;
-  }
-  return false;
+// 다른 주인(다른 기기)이 쓰고 있거나 보존 중인 닉네임인지
+function isNicknameTaken(name, ownerKey) {
+  const owner = nicknameOwners.get(name);
+  if (!owner || owner === ownerKey) return false;
+  const rec = ownerNicknames.get(owner);
+  if (!rec || holdExpired(rec)) { releaseOwner(owner); return false; }
+  return true;
 }
 
 // ── 제작진 인증 ──
@@ -671,7 +701,16 @@ io.on('connection', (socket) => {
     // 한 소켓의 clientId는 처음 정해진 값으로 고정 — 바꿔 가며 여러 번 투표하는 것 방지
     if (!socket.clientId) socket.clientId = clientId;
     socket.emit('state', publicState(socket.clientId, socket.rooms.has(SCREENS)));
+    // 핀 고정 순간 폰이 잠겨 있거나 다른 앱을 쓰느라 연결이 끊겨 있었으면 알림을 놓친다
+    // → 다시 접속했을 때 내 채팅이 아직 고정 중이면 늦게라도 알려준다(late: 폰이 이미 본 알림이면 다시 띄우지 않음)
+    const pin = appState.pinnedChat;
+    if (pin && messageAuthors.get(pin.id) === socket.clientId) {
+      socket.emit('chatPinnedYou', { id: pin.id, text: pin.text, late: true });
+    }
   });
+
+  // 연결 확인 — 폰이 다른 앱에서 돌아왔을 때 연결이 살아 있는지 바로 확인하는 용도
+  on('alive', (ack) => { if (typeof ack === 'function') ack(true); });
 
   // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
   // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
@@ -702,19 +741,26 @@ io.on('connection', (socket) => {
 
   // 닉네임 등록(동시 중복이면 같은 테마의 안 쓰는 닉네임으로 교체해 알려줌) → 확정된 닉네임 반환
   function claimFor(name, theme) {
-    if (name && !isNicknameTaken(name, socket.id)) {
-      activeNicknames.set(socket.id, name);
-      return name;
+    // 한 소켓은 처음 등록한 주인 키를 계속 쓴다(끊길 때 같은 기록의 접속 수를 줄이기 위해)
+    const key = socket._nickOwnerKey || (socket._nickOwnerKey = ownerKeyOf(socket, theme));
+    let final = name;
+    if (!final || isNicknameTaken(final, key)) {
+      let guard = 0;
+      do {
+        final = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
+        guard++;
+      } while (isNicknameTaken(final, key) && guard < poolSize(theme));
     }
-    let fresh;
-    let guard = 0;
-    do {
-      fresh = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
-      guard++;
-    } while (isNicknameTaken(fresh, socket.id) && guard < poolSize(theme));
-    activeNicknames.set(socket.id, fresh);
-    socket.emit('nicknameReassigned', fresh);
-    return fresh;
+    // 이 기기의 닉네임 기록 갱신 — 리롤 등으로 바뀌면 이전 닉네임은 풀어 준다
+    let rec = ownerNicknames.get(key);
+    if (rec && rec.name !== final && nicknameOwners.get(rec.name) === key) nicknameOwners.delete(rec.name);
+    if (!rec) { rec = { name: final, sockets: 0, releasedAt: 0 }; ownerNicknames.set(key, rec); }
+    rec.name = final;
+    if (!socket._ownsNickname) { socket._ownsNickname = true; rec.sockets++; }
+    nicknameOwners.set(final, key);
+    activeNicknames.set(socket.id, final);
+    if (final !== name) socket.emit('nicknameReassigned', final);
+    return final;
   }
 
   // 운영자(진행자/제작진) 등록 — /host 화면에서 호출. 이 소켓의 채팅은 isOperator로 표시된다.
@@ -1062,6 +1108,16 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     activeNicknames.delete(socket.id);
+    // 기기의 마지막 소켓이 끊기면 그때부터 보존 시간 시작(clientId 없는 소켓은 바로 해제)
+    if (socket._ownsNickname) {
+      const key = socket._nickOwnerKey;
+      const rec = ownerNicknames.get(key);
+      if (rec && --rec.sockets <= 0) {
+        rec.sockets = 0;
+        rec.releasedAt = Date.now();
+        if (!socket.clientId) releaseOwner(key);
+      }
+    }
     if (socket.isAudience && socket.clientId) {
       const n = (audienceSockets.get(socket.clientId) || 0) - 1;
       if (n <= 0) audienceSockets.delete(socket.clientId);

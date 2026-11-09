@@ -897,9 +897,30 @@
   }
   const clientId = getClientId();
 
-  function requestNickname() {
-    currentNickname = getNewNickname();
+  // ── 닉네임 기억 (localStorage, 테마별) ──
+  // 폰에서 다른 앱을 쓰는 동안 브라우저가 탭을 메모리에서 내리면 돌아왔을 때 페이지가 다시 열린다.
+  // 그때도 같은 닉네임·같은 화면(입장했으면 채팅방)으로 이어지게 저장해 둔다. 오래된 기록(다른 날 행사)은 버린다.
+  const SAVED_NICK_KEY = 'ledNickname:' + themeKey;
+  const SAVED_NICK_MAX_AGE = 12 * 60 * 60 * 1000;
+  function loadSavedNickname() {
+    try {
+      const v = JSON.parse(localStorage.getItem(SAVED_NICK_KEY) || 'null');
+      if (!v || typeof v.name !== 'string' || Date.now() - v.t > SAVED_NICK_MAX_AGE) return null;
+      // 단어 목록이 바뀌어 지금 풀에 없는 닉네임이면 새로 뽑는다
+      if (!PREFIXES.some(p => SUFFIXES.some(x => `${p} ${x}` === v.name))) return null;
+      return v;
+    } catch (e) { return null; }
+  }
+  function saveNickname(entered) {
+    try { localStorage.setItem(SAVED_NICK_KEY, JSON.stringify({ name: currentNickname, entered: !!entered, t: Date.now() })); } catch (e) {}
+  }
+  const savedNick = loadSavedNickname();
+  let hasEntered = false;
+
+  function requestNickname(name) {
+    currentNickname = name || getNewNickname();
     document.getElementById('nickname-display').textContent = currentNickname;
+    saveNickname(hasEntered);
 
     if (!nickSocket) {
       // clientId를 접속 시점에 함께 보낸다(끊긴 동안 누른 투표가 재접속 때 버려지지 않도록)
@@ -945,16 +966,57 @@
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
       // 관리자가 "내 채팅"을 LED에 고정했을 때만 작성자 본인에게 옴 (다른 사람 폰에는 안 옴)
-      nickSocket.on('chatPinnedYou', ({ id }) => showPinnedYou(id));
+      // late: 핀 순간 끊겨 있다가 다시 접속했을 때 오는 알림 — 이 폰에서 이미 본 핀이면 다시 띄우지 않는다
+      nickSocket.on('chatPinnedYou', ({ id, late }) => {
+        if (late && seenPinIds().includes(String(id))) return;
+        // 다른 앱을 보고 있거나 화면이 꺼져 있으면(연결은 잠시 살아 있음) 배너가 아무도 못 보는 사이 사라진다
+        // → 돌아와 화면이 다시 보일 때 띄운다
+        if (document.visibilityState === 'hidden') { pendingPinId = id; return; }
+        rememberSeenPin(id);
+        showPinnedYou(id);
+      });
     } else {
       // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
       nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
     }
   }
 
+  // 핀 알림을 이미 본 메시지 id (재접속할 때마다 같은 축하가 반복되지 않게, 최근 20개만)
+  function seenPinIds() {
+    try { return JSON.parse(localStorage.getItem('ledPinSeen') || '[]'); } catch (e) { return []; }
+  }
+  function rememberSeenPin(id) {
+    const ids = seenPinIds().filter(x => x !== String(id));
+    ids.push(String(id));
+    try { localStorage.setItem('ledPinSeen', JSON.stringify(ids.slice(-20))); } catch (e) {}
+  }
+
+  // 다른 앱을 쓰다 돌아오면 연결이 겉으로만 살아 있는 경우가 많다(서버·폰 모두 수십 초 뒤에야 알아챔).
+  // 돌아온 즉시 서버에 확인해 답이 없으면 바로 다시 연결한다 → 그 사이 놓친 채팅·핀 알림을 곧장 받는다.
+  let hiddenAt = 0;
+  let pendingPinId = null; // 화면이 안 보일 때 받은 핀 알림 — 돌아오면 띄운다
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (pendingPinId != null) {
+      const id = pendingPinId;
+      pendingPinId = null;
+      rememberSeenPin(id);
+      showPinnedYou(id);
+    }
+    if (!nickSocket || !hiddenAt || Date.now() - hiddenAt < 3000) return;
+    hiddenAt = 0;
+    if (!nickSocket.connected) { nickSocket.connect(); return; }
+    nickSocket.timeout(3000).emit('alive', (err) => {
+      if (!err) return;
+      nickSocket.disconnect();
+      nickSocket.connect();
+    });
+  });
+
   // 서버가 동시 중복을 감지해 새 닉네임을 내려주면 화면에 반영
   function applyReassignedNickname(name) {
     currentNickname = name;
+    saveNickname(hasEntered);
     const display = document.getElementById('nickname-display');
     if (display) display.textContent = name;
     const headerNick = document.getElementById('header-nickname');
@@ -1305,6 +1367,8 @@
 
     // 닉네임 요청에 쓰던 소켓을 채팅에 재사용
     socket = nickSocket;
+    hasEntered = true;
+    saveNickname(true);
 
     // UI 전환
     document.getElementById('entrance').style.display = 'none';
@@ -1445,7 +1509,9 @@
 
   // 입력창 auto-resize + 전송 버튼 활성화
   document.addEventListener('DOMContentLoaded', () => {
-    requestNickname(); // 페이지 로드 시 서버에서 첫 닉네임 배정
+    // 기억해 둔 닉네임이 있으면 그대로 쓰고, 이미 입장했던 폰이면 입장 화면 없이 채팅방으로 돌아간다
+    requestNickname(savedNick && savedNick.name);
+    if (savedNick && savedNick.entered) enterChat();
 
     const input = document.getElementById('msg-input');
     const counter = document.getElementById('char-counter');
