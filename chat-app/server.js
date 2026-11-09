@@ -789,14 +789,21 @@ io.on('connection', (socket) => {
     socket._authErrorSent = true;
     socket.emit('authError', { need });
   };
-  const onAdmin = (event, fn) => on(event, (...args) => {
-    if (role !== 'admin') return denied('admin');
-    fn(...args);
-  });
-  const onStaff = (event, fn) => on(event, (...args) => {
-    if (role !== 'admin' && role !== 'host') return denied('host');
-    fn(...args);
-  });
+  // 제작진 이벤트 공통 처리 — 마지막 인자가 함수(ack)면 결과를 { ok, reason }으로 돌려준다(콜백 없는 옛 화면은 그대로 동작).
+  // 핸들러는 거부할 때 사유 코드(문자열)를 return 한다 — 화면이 한국어 안내로 바꿔 보여 줌.
+  //  auth: 키 없음/틀림(매번 알림 — authError 이벤트는 소켓당 1번), error: 처리 중 오류
+  const staffHandler = (need, fn) => (...args) => {
+    const ack = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+    const reply = (reason) => { if (ack) ack(reason ? { ok: false, reason } : { ok: true }); };
+    const allowed = need === 'admin' ? role === 'admin' : (role === 'admin' || role === 'host');
+    if (!allowed) { denied(need); return reply('auth'); }
+    let r;
+    try { r = fn(args[0]); }
+    catch (e) { reply('error'); throw e; }
+    reply(typeof r === 'string' ? r : null);
+  };
+  const onAdmin = (event, fn) => on(event, staffHandler('admin', fn));
+  const onStaff = (event, fn) => on(event, staffHandler('host', fn));
 
   // 클라이언트 식별 (localStorage 기반 영구 ID) — 투표 중복/재접속 처리용
   on('identify', (clientId) => {
@@ -973,16 +980,16 @@ io.on('connection', (socket) => {
 
   // ── 관리자(제작진) 전용 이벤트 ──
   onAdmin('admin:startVoting', (data) => {
-    if (appState.mode === 'voting') return; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
+    if (appState.mode === 'voting') return 'votingRunning'; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
     const d = asObj(data);
     const question = cleanStr(d.question, MAX_QUESTION_LENGTH);
     const duration = cleanVotingSeconds(d.duration) ?? DEFAULT_VOTING_SECONDS;
-    if (!question) return;
+    if (!question) return 'empty';
     const type = d.type === 'choice' ? 'choice' : 'yesno';
     let options;
     if (type === 'choice') {
       options = cleanOptions(d.options);
-      if (options.length < 2) return; // 보기 2개 미만이면 무시
+      if (options.length < 2) return 'options'; // 보기 2개 미만이면 무시
     } else {
       options = ['YES', 'NO'];
     }
@@ -990,13 +997,14 @@ io.on('connection', (socket) => {
   });
 
   onAdmin('admin:endVoting', () => {
+    if (appState.mode !== 'voting') return 'mode';
     endVoting();
   });
 
   onAdmin('admin:startSubjective', (data) => {
-    if (appState.mode === 'subjective') return; // 접수 중 재시작 시 답변 초기화 방지
+    if (appState.mode === 'subjective') return 'subjectiveRunning'; // 접수 중 재시작 시 답변 초기화 방지
     const question = cleanStr(asObj(data).question, MAX_QUESTION_LENGTH);
-    if (!question) return;
+    if (!question) return 'empty';
     let maxLen = parseInt(asObj(data).maxLen, 10);
     if (!Number.isFinite(maxLen) || maxLen < 1) maxLen = MAX_ANSWER_LENGTH;
     maxLen = Math.min(MAX_ANSWER_LENGTH, maxLen); // 상한 20 (LED 가독성)
@@ -1005,24 +1013,25 @@ io.on('connection', (socket) => {
 
   onAdmin('admin:startEmoji', (data) => {
     const question = cleanStr(asObj(data).question, MAX_QUESTION_LENGTH);
-    if (!question) return;
+    if (!question) return 'empty';
     // emojis: [{emoji, label}] — 라벨(뜻)은 관객 폰 버튼에 함께 표시
     const emojiOptions = cleanEmojis(asObj(data).emojis);
-    if (emojiOptions.length < 2) return; // 이모지 2개 미만이면 무시
+    if (emojiOptions.length < 2) return 'emojis'; // 이모지 2개 미만이면 무시
     startEmoji(question, emojiOptions);
   });
 
   onAdmin('admin:endSubjective', () => {
+    if (appState.mode !== 'subjective') return 'mode';
     endSubjective();
   });
 
   // 관리자: 채팅 핀 고정 — LED 중앙에 해당 채팅을 팝업으로 표시 (채팅 모드 전용)
   onAdmin('admin:pinChat', (data) => {
-    if (appState.mode !== 'chat') return;
+    if (appState.mode !== 'chat') return 'pinMode';
     const d = asObj(data);
     const nickname = cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
     const text = maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
-    if (!text) return;
+    if (!text) return 'empty';
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
     // 운영자 채팅이면 공지 핀(LED·관객 폰 맨 위 띠). 운영자 여부는 서버 보관본 기준(지난 채팅이면 관리자가 보낸 값)
     const known = recentMessages.find(m => m.id === id) || appState.starredChats.find(m => m.id === id);
@@ -1057,7 +1066,7 @@ io.on('connection', (socket) => {
   // 메시지 내용째 보관 → 최근 채팅(50개)에서 밀려나도, 새로 연 관리자 화면에서도 체크 목록에서 바로 핀할 수 있다.
   onAdmin('admin:toggleChatStar', (data) => {
     const d = asObj(data);
-    if (typeof d.id !== 'string' || d.id.length > 64) return;
+    if (typeof d.id !== 'string' || d.id.length > 64) return 'invalid';
     const idx = appState.starredChats.findIndex(m => m.id === d.id);
     if (idx !== -1) appState.starredChats.splice(idx, 1);
     else {
@@ -1068,7 +1077,7 @@ io.on('connection', (socket) => {
         text: maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH)),
         isOperator: d.isOperator === true,
       };
-      if (!m.text) return;
+      if (!m.text) return 'empty';
       appState.starredChats.push({ id: m.id, nickname: m.nickname, text: m.text, isOperator: !!m.isOperator });
       if (appState.starredChats.length > 200) appState.starredChats.shift(); // 과도한 누적 방지
     }
@@ -1077,7 +1086,7 @@ io.on('connection', (socket) => {
 
   // 관리자: 개별 채팅 삭제 — 부적절한 메시지를 즉시 내림. 모든 화면에서 사라진다.
   onStaff('admin:deleteMessage', (id) => {
-    if (typeof id !== 'string') return;
+    if (typeof id !== 'string') return 'invalid';
     const idx = recentMessages.findIndex(m => m.id === id);
     if (idx !== -1) recentMessages.splice(idx, 1);
     chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
@@ -1096,7 +1105,7 @@ io.on('connection', (socket) => {
     socket.emit('presets', questionPresets);
   });
   onAdmin('admin:setPresets', (list) => {
-    if (!Array.isArray(list)) return;
+    if (!Array.isArray(list)) return 'invalid';
     questionPresets = list
       .slice(0, 100) // 과도한 등록 방지
       .map(cleanPreset).filter(Boolean); // 형식 검증 (문자열·길이·유형 화이트리스트)
@@ -1135,7 +1144,7 @@ io.on('connection', (socket) => {
   onAdmin('admin:toggleStar', (data) => {
     const id = data && data.id;
     const entry = appState.answerList.find(a => a.id === id);
-    if (!entry) return;
+    if (!entry) return 'notFound';
     const idx = appState.starredAnswers.indexOf(id);
     const starred = idx === -1;
     if (starred) appState.starredAnswers.push(id);
@@ -1146,9 +1155,9 @@ io.on('connection', (socket) => {
   // 관리자: 답변 픽 → LED 스포트라이트로 크게 표시 (접수 중/마감 후 모두 가능)
   onAdmin('admin:pickAnswer', (data) => {
     const id = data && data.id;
-    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return;
+    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return 'mode';
     const entry = appState.answerList.find(a => a.id === id);
-    if (!entry) return;
+    if (!entry) return 'notFound';
     if (!appState.pickedAnswers.includes(id)) appState.pickedAnswers.push(id);
     io.to(SCREENS).emit('answerPicked', { id: entry.id, text: entry.text });
   });
@@ -1176,14 +1185,15 @@ io.on('connection', (socket) => {
 
   onAdmin('admin:endingGo', (data) => {
     const index = asObj(data).index;
-    if (typeof index !== 'number' || !Number.isFinite(index)) return;
+    if (typeof index !== 'number' || !Number.isFinite(index)) return 'invalid';
+    if (appState.mode !== 'ending') return 'mode';
     endingGo(Math.floor(index));
   });
 
   // LED 연출 on/off — 화면들에 즉시 반영
   onAdmin('admin:setEffects', (data) => {
     const d = asObj(data);
-    if (typeof d.heartBurst !== 'boolean') return;
+    if (typeof d.heartBurst !== 'boolean') return 'invalid';
     appState.effects.heartBurst = d.heartBurst;
     io.to(SCREENS).emit('effectsChange', { effects: { ...appState.effects } });
   });
@@ -1200,9 +1210,9 @@ io.on('connection', (socket) => {
   // id로 지운다 — 관리자 두 명이 동시에 지우거나 20건 상한으로 밀려나도 엉뚱한 항목이 지워지지 않게(모르는 id는 무시)
   onAdmin('admin:removeResult', (data) => {
     const id = asObj(data).id;
-    if (!Number.isInteger(id)) return; // 정수 id만
+    if (!Number.isInteger(id)) return 'invalid'; // 정수 id만
     const index = resultsHistory.findIndex(e => e.id === id);
-    if (index < 0) return; // 이미 지워졌거나 밀려난 항목
+    if (index < 0) return 'notFound'; // 이미 지워졌거나 밀려난 항목
     resultsHistory.splice(index, 1);
     if (appState.mode === 'ending') {
       // 지운 결과가 지금 슬라이드보다 앞이면 한 칸 당겨서 같은 슬라이드를 유지한다

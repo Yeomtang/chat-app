@@ -261,6 +261,61 @@
     }
     .auth-notice.visible { display: flex; }
     .auth-notice span { flex: 1; min-width: 0; }
+
+    /* ── 상단 안내 띠 ── 운영진(/host)·관객 폰의 안내 띠(.notice-bar)와 같은 모양·색(블러시 팔레트 토큰).
+       연결 끊김·서버 재시작은 닫거나 다시 연결될 때까지, 조작 안내(거부 사유 등)는 3초 */
+    :root { --ink: #1e1e42; --surface: #ffffff; --warn: #d94f3d; }
+    @keyframes popIn {
+      0%   { opacity: 0; transform: scale(0.4); }
+      60%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .top-bars {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 300; /* 전체화면 카드(100) 위 */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px 0;
+      pointer-events: none; /* 띠 사이 빈 곳은 아래 화면을 그대로 누를 수 있게 */
+    }
+    .notice-bar {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 640px;
+      padding: 8px 14px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: var(--surface);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      text-align: center;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      box-shadow: 0 4px 16px rgba(30, 30, 66, 0.18);
+      pointer-events: auto;
+    }
+    .notice-bar.visible { display: flex; animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+    .notice-bar.warn { background: var(--warn); }
+    .notice-bar span { min-width: 0; }
+    .notice-bar button {
+      flex-shrink: 0;
+      background: var(--surface);
+      color: var(--ink);
+      border: none;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+    }
     .auth-notice button {
       flex-shrink: 0;
       background: #ff3b30;
@@ -585,6 +640,11 @@
 </head>
 <body>
 
+<!-- 상단 고정 안내 띠: 연결 상태(계속) · 서버 재시작(닫을 때까지) · 조작 결과 안내(3초) -->
+<div class="top-bars">
+  <div class="notice-bar" id="op-bar" role="status" aria-live="polite"></div>
+</div>
+
 <div class="wrap">
   <h1>제작진 관리 화면 (임시)</h1>
   <p class="note">정식 관리자 화면이 만들어지기 전까지 사용하는 테스트용 컨트롤 패널입니다.</p>
@@ -823,6 +883,47 @@
     sock.disconnect().connect(); // 새 키로 재접속 (auth는 접속할 때마다 staffKey를 읽음)
   }
   const socket = io({ auth: (cb) => cb({ key: staffKey }) });
+
+  // ── 조작 결과 안내 ── 서버가 admin:* 조작을 거부하면 ack로 사유 코드를 돌려준다 → 상단 띠에 3초 안내
+  const OP_REASON_TEXT = {
+    auth: '관리자 키가 없거나 틀려서 반영되지 않았어요. 위 [키 입력]으로 키를 넣어 주세요',
+    error: '서버에서 처리하다 오류가 났어요. 현재 상태를 확인해 주세요',
+    empty: '내용이 비어 있어 반영하지 않았어요',
+    options: '보기를 2개 이상 입력해 주세요',
+    emojis: '이모지를 2개 이상 입력해 주세요',
+    votingRunning: '이미 투표가 진행 중이에요. [선택형 투표 종료] 뒤에 시작해 주세요',
+    subjectiveRunning: '이미 주관식 답변을 받는 중이에요. [주관식 답변 마감] 뒤에 시작해 주세요',
+    mode: '지금 화면(모드)에서는 할 수 없는 조작이라 반영하지 않았어요 — 다른 관리자가 먼저 바꿨을 수 있어요',
+    pinMode: '핀·공지는 채팅 모드에서만 걸 수 있어요',
+    notFound: '이미 지워졌거나 찾을 수 없는 항목이에요',
+    invalid: '잘못된 값이라 반영하지 않았어요',
+  };
+  let opNoticeTimer = null;
+  function showOpNotice(text, warn = true) {
+    const bar = document.getElementById('op-bar');
+    clearTimeout(opNoticeTimer);
+    bar.textContent = text;
+    bar.classList.toggle('warn', warn);
+    bar.classList.remove('visible');
+    void bar.offsetWidth; // 연속 안내 때 팝인 다시
+    bar.classList.add('visible');
+    opNoticeTimer = setTimeout(() => bar.classList.remove('visible'), 3000);
+  }
+  // 모든 admin:* 전송에 결과 콜백을 붙인다(호출하는 곳은 그대로 socket.emit). 호출부가 콜백을 주면
+  // 거부 때 그 콜백이 먼저 받고, true를 돌려주면(직접 안내함) 기본 안내를 띄우지 않는다.
+  const rawEmit = socket.emit.bind(socket);
+  socket.emit = function (event, ...args) {
+    if (typeof event !== 'string' || !event.startsWith('admin:')) return rawEmit(event, ...args);
+    const userCb = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+    rawEmit(event, args.length ? args[0] : null, (res) => {
+      if (res && res.ok === false) {
+        if (userCb && userCb(res) === true) return;
+        if (event.startsWith('admin:get')) return; // 접속 때 자동 조회 — 키 안내는 위 빨간 안내가 맡음
+        showOpNotice(OP_REASON_TEXT[res.reason] || '반영되지 않았어요 (' + res.reason + ')');
+      } else if (userCb) userCb(res || { ok: true });
+    });
+    return socket;
+  };
   // 서버는 소켓당 authError를 1번만 보내므로, 인증될 때까지 안내를 계속 띄워 둔다.
   // state는 관리자 키로 접속한 소켓만 받으므로(admin:getState 응답) 받으면 인증된 것으로 본다.
   function setAuthNeeded(need) {
