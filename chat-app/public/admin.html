@@ -613,7 +613,7 @@
     </div>
     <div class="status-row">
       <span class="status-label">모드</span>
-      <span class="status-value"><span class="mode-badge mode-chat" id="mode-badge">CHAT</span></span>
+      <span class="status-value"><span class="mode-badge mode-chat" id="mode-badge">채팅</span></span>
     </div>
     <div class="status-row">
       <span class="status-label">질문</span>
@@ -908,8 +908,10 @@
     document.getElementById('status-audience-peak').textContent = (a.peak || 0) + '명';
   }
 
-  // 새 모드(대기·함성·엔딩)는 한글 라벨, 나머지는 기존처럼 영문 대문자 그대로
+  // 모드 배지 한글 라벨 (모르는 모드만 영문 그대로)
   const MODE_LABELS = {
+    chat: '채팅', voting: '투표 중', result: '투표 결과',
+    subjective: '주관식 접수 중', subjectiveResult: '주관식 결과', emoji: '이모지 반응 중',
     idle: '대기 화면', applause: '함성 측정 중', applauseResult: '함성 결과', ending: '엔딩',
   };
 
