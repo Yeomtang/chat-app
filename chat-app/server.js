@@ -648,6 +648,10 @@ function startEmoji(question, emojis) {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  // 숨김·작성자 기록도 같이 비운다 — 답변 id가 1부터 다시 매겨지므로 남기면 다음 답이 엉뚱하게 숨김으로 보이거나 엉뚱한 사람을 가리킴
+  appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
+  appState.answerAuthors = new Map();
   emitModeChange();
 }
 
