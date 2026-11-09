@@ -16,6 +16,8 @@ const io = new Server(server, {
 // 닉네임은 클라이언트가 로컬에서 즉시 고르지만, 동시 접속자와 겹치면 서버가 같은 테마에서 교체해준다.
 const NICKNAME_THEMES = require('./public/nickname-themes.js');
 const DEFAULT_THEME = 'office';
+// 테마 이름 검증 — 'constructor'·'__proto__' 같은 객체 기본 속성 이름이 테마로 통과하지 않게 자기 키만 인정
+const isThemeKey = (t) => typeof t === 'string' && Object.prototype.hasOwnProperty.call(NICKNAME_THEMES, t);
 
 function shuffle(arr) {
   const a = [...arr];
@@ -256,7 +258,7 @@ const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 200; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
 const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
-const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 12자 이하지만
+const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 17자 이하지만
                                 // 클라이언트가 보낸 값을 그대로 쓰므로 LED 레이아웃 보호용으로 자름
 
 // ── 비속어 필터 ── 매칭 부분을 글자 수만큼 * 로 마스킹(차단이 아니라 가림).
@@ -396,7 +398,7 @@ function computeCounts() {
   return { perOption, total };
 }
 
-// withSlides: 엔딩 슬라이드 전체는 화면(LED·관리자·운영진)에만 — 관객 폰엔 빈 목록(전송량 절약)
+// withSlides: 엔딩 슬라이드 전체는 화면(LED·관리자·운영진)에만 — 관객 폰엔 빈 목록(전송량 절약). 투표 중 집계 포함 여부도 겸함
 function publicState(forClientId, withSlides = false) {
   const myVote = forClientId != null && appState.votes[forClientId] != null
     ? appState.votes[forClientId] : null;
@@ -412,7 +414,9 @@ function publicState(forClientId, withSlides = false) {
       ? Math.max(0, appState.votingEndTime - Date.now()) : null,
     voteType: appState.voteType,
     voteOptions: appState.voteOptions,
-    counts: computeCounts(),
+    // 투표 중 집계는 화면(LED·관리자·운영진)에만 — 관객 폰이 재접속 때 받는 state로 표 수를 알 수 없게
+    counts: appState.mode === 'voting' && !withSlides
+      ? { perOption: new Array(appState.voteOptions.length).fill(0), total: 0 } : computeCounts(),
     myVote, // 내가 고른 보기 인덱스(0-based) 또는 null
     answerCount: Object.keys(appState.answers).length,
     answerMaxLen: appState.answerMaxLen,
@@ -759,16 +763,11 @@ io.on('connection', (socket) => {
   // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
   on('registerScreen', () => { socket.isScreen = true; socket.join(SCREENS); });
 
-  // 닉네임 요청 시 서버에서 고유 닉네임 배정 (레거시, 현재는 클라이언트가 즉시 로컬 배정)
-  on('requestNickname', (theme) => {
-    socket.emit('assignedNickname', assignNickname(theme));
-  });
-
   // 클라이언트가 로컬에서 즉시 고른 닉네임 등록 + 동시 중복 확인
   // payload: { name, theme } — 예전 클라이언트를 위해 문자열도 허용
   on('claimNickname', (payload) => {
     const name = typeof payload === 'string' ? payload : (payload && payload.name);
-    const theme = (payload && payload.theme && NICKNAME_THEMES[payload.theme]) ? payload.theme : DEFAULT_THEME;
+    const theme = (payload && isThemeKey(payload.theme)) ? payload.theme : DEFAULT_THEME;
     if (!name || typeof name !== 'string') return;
 
     // 관객 접속 집계 — claimNickname을 처음 보낸 소켓을 관객으로 등록(리롤로 여러 번 와도 1회만)
@@ -786,7 +785,8 @@ io.on('connection', (socket) => {
   function claimFor(name, theme) {
     // 한 소켓은 처음 등록한 주인 키를 계속 쓴다(끊길 때 같은 기록의 접속 수를 줄이기 위해)
     const key = socket._nickOwnerKey || (socket._nickOwnerKey = ownerKeyOf(socket, theme));
-    let final = name;
+    // 닉네임도 LED에 그대로 나가므로 비속어가 섞이면 풀에서 새로 배정(정상 풀 닉네임은 걸리지 않음)
+    let final = maskProfanity(name) === name ? name : '';
     if (!final || isOldSpacingNickname(final, theme) || isNicknameTaken(final, key)) {
       let guard = 0;
       do {
@@ -845,7 +845,6 @@ io.on('connection', (socket) => {
       nickname,
       text,
       isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
-      time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     };
     // 핀 알림용으로 관객 작성자만 기억(운영진 메시지는 알릴 대상 없음)
     if (!socket.isOperator && socket.clientId) rememberAuthor(message.id, socket.clientId);
@@ -874,7 +873,7 @@ io.on('connection', (socket) => {
   on('vote', (data) => {
     const idx = data && data.choice;
     if (appState.mode !== 'voting') return;
-    if (typeof idx !== 'number' || idx < 0 || idx >= appState.voteOptions.length) return;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= appState.voteOptions.length) return;
     if (!socket.clientId) return;
 
     appState.votes[socket.clientId] = idx;
@@ -964,7 +963,7 @@ io.on('connection', (socket) => {
   onAdmin('admin:pinChat', (data) => {
     if (appState.mode !== 'chat') return;
     const d = asObj(data);
-    const nickname = cleanStr(d.nickname, 30);
+    const nickname = cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
     const text = maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
     if (!text) return;
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
@@ -1048,8 +1047,6 @@ io.on('connection', (socket) => {
     socket.to(ADMINS).emit('presets', questionPresets); // 나를 제외한 다른 관리자에게 반영
   });
 
-  // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.
-  // 서버 보관본을 비워야 새로 접속하는 관객에게 옛 메시지가 history로 다시 내려가지 않는다.
   // 관리자: 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌린다.
   // 현재 접속자는 실제 열려 있는 소켓 수라 임의로 못 지운다(peak만 리셋).
   onAdmin('admin:resetAudienceStats', () => {
@@ -1057,6 +1054,8 @@ io.on('connection', (socket) => {
     io.to(ADMINS).emit('audienceStats', audienceStats());
   });
 
+  // 관리자: 채팅 기록 초기화 — 리허설 뒤 LED/관객 화면을 비우고 본 행사를 시작할 때.
+  // 서버 보관본을 비워야 새로 접속하는 관객에게 옛 메시지가 history로 다시 내려가지 않는다.
   onAdmin('admin:clearChat', () => {
     recentMessages.length = 0;
     chatQueue = [];
