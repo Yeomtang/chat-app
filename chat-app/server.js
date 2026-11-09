@@ -581,6 +581,11 @@ function startEmoji(question, emojis) {
   appState.votingDuration = null;
   appState.votingEndTime = null;
   appState.votes = {};
+  // 직전 주관식 답변이 남아 있으면 관리자 "주관식 답변 수"·답변 목록에 그대로 보이므로 비운다(투표 시작과 같음)
+  appState.answers = {};
+  appState.answerList = [];
+  appState.pickedAnswers = [];
+  appState.starredAnswers = [];
   emitModeChange();
 }
 
