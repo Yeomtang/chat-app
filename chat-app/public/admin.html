@@ -650,6 +650,7 @@
 <!-- 상단 고정 안내 띠: 연결 상태(계속) · 서버 재시작(닫을 때까지) · 조작 결과 안내(3초) -->
 <div class="top-bars">
   <div class="notice-bar" id="conn-bar" role="alert"></div>
+  <div class="notice-bar" id="boot-bar" role="alert"><span id="boot-bar-text"></span><button onclick="closeBootNotice()">닫기</button></div>
   <div class="notice-bar" id="op-bar" role="status" aria-live="polite"></div>
 </div>
 
@@ -702,6 +703,10 @@
     <div class="status-row">
       <span class="status-label">LED 채팅창</span>
       <span class="status-value" id="status-chatpaused">실시간 표시 중</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">서버 가동</span>
+      <span class="status-value" id="status-uptime">-</span>
     </div>
     <!-- 대기 화면(입장 QR) 전환 — 지금 모드를 보는 곳에서 바로. 대기 화면 중에는 [채팅으로 돌아가기]로 바뀜 -->
     <button class="btn btn-secondary" id="idle-btn" onclick="showIdleNow()">대기 화면 띄우기</button>
@@ -965,7 +970,6 @@
       onServerInfo(res || {});
     });
   }
-  let onServerInfo = () => {}; // 서버 재시작 알림이 덮어씀
   setInterval(heartbeat, 2000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) heartbeat(); });
   socket.on('connect', () => { everConnected = true; pingSentAt = null; serverStale = false; renderConn(); heartbeat(); });
@@ -976,6 +980,49 @@
     renderConn();
   });
   renderConn();
+
+  // ── 서버 재시작 알림 · 가동 시간 ── 서버는 실행마다 고유 bootId를 준다(state·serverTime).
+  // 이 브라우저가 마지막으로 본 bootId(localStorage, 12시간 안)와 다르면 재시작된 것 → 기록이 초기화됐다고 닫을 때까지 알린다.
+  const BOOT_STORE = 'serverBoot';
+  const BOOT_REMEMBER_MS = 12 * 60 * 60 * 1000;
+  let serverInfo = null; // { bootId, startedAt }
+  const hhmm = (ms) => new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  // 이 화면을 열기 전에 마지막으로 본 bootId — 화면을 연 뒤에는 이 화면이 직접 본 값과 비교(다른 탭이 저장값을 먼저 바꿔도 놓치지 않게)
+  let prevBootId = null;
+  try {
+    const seen = JSON.parse(localStorage.getItem(BOOT_STORE) || 'null');
+    if (seen && typeof seen.bootId === 'string' && Date.now() - (seen.seenAt || 0) < BOOT_REMEMBER_MS) prevBootId = seen.bootId;
+  } catch {}
+  function onServerInfo(info) {
+    if (!info || typeof info.bootId !== 'string') return;
+    if (serverInfo && serverInfo.bootId === info.bootId) return renderUptime();
+    const prev = serverInfo ? serverInfo.bootId : prevBootId;
+    serverInfo = { bootId: info.bootId, startedAt: info.startedAt };
+    if (prev && prev !== info.bootId) {
+      document.getElementById('boot-bar-text').textContent =
+        `서버가 ${hhmm(info.startedAt)}에 다시 시작됐어요 — 채팅·결과 기록이 초기화됐어요`;
+      const bar = document.getElementById('boot-bar');
+      bar.classList.remove('visible');
+      void bar.offsetWidth;
+      bar.classList.add('visible');
+    }
+    rememberBoot();
+    renderUptime();
+  }
+  function rememberBoot() {
+    if (!serverInfo) return;
+    try { localStorage.setItem(BOOT_STORE, JSON.stringify({ bootId: serverInfo.bootId, seenAt: Date.now() })); } catch {}
+  }
+  function closeBootNotice() { document.getElementById('boot-bar').classList.remove('visible'); }
+  function renderUptime() {
+    const el = document.getElementById('status-uptime');
+    if (!serverInfo || typeof serverInfo.startedAt !== 'number') { el.textContent = '-'; return; }
+    const now = serverNow() != null ? serverNow() : Date.now();
+    const min = Math.max(0, Math.floor((now - serverInfo.startedAt) / 60000));
+    const dur = min < 60 ? `${min}분` : `${Math.floor(min / 60)}시간 ${min % 60}분`;
+    el.textContent = `${dur} (${hhmm(serverInfo.startedAt)} 시작)`;
+  }
+  setInterval(() => { renderUptime(); rememberBoot(); }, 30000);
 
   // 모든 admin:* 전송에 결과 콜백을 붙인다(호출하는 곳은 그대로 socket.emit). 호출부가 콜백을 주면
   // 거부 때 그 콜백이 먼저 받고, true를 돌려주면(직접 안내함) 기본 안내를 띄우지 않는다.
@@ -1047,6 +1094,7 @@
 
   socket.on('state', (state) => {
     setAuthNeeded(false);
+    if (state) onServerInfo(state.server);
     currentState = state;
     syncVoteDeadline(state);
     renderState();

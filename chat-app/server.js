@@ -221,6 +221,8 @@ const isLegacyHost = (host) => LEGACY_HOSTS.includes(String(host || '').split(':
 // ── 서버 상태 확인 (/health) ── Render health check·행사 전 점검용. 가볍게: 키·개인정보·채팅 내용 없이 숫자만.
 // 옛 주소 리다이렉트보다 먼저 둔다(상태 확인은 어느 주소로 와도 그 서버 자신의 상태를 답함)
 const SERVER_STARTED_AT = Date.now(); // 서버(프로세스) 시작 시각 — 재시작 알림·가동 시간 표시에도 쓴다
+// 이번 실행의 고유 값 — 관리자 화면이 다시 연결됐을 때 이 값이 바뀌었으면 '서버가 다시 시작됨(기록 초기화)'을 알린다
+const BOOT_ID = crypto.randomBytes(6).toString('hex');
 app.get('/health', (req, res) => {
   const screens = io.sockets.adapter.rooms.get(SCREENS);
   res.set('Cache-Control', 'no-store');
@@ -491,6 +493,7 @@ function publicState(forClientId, withSlides = false) {
       ? { index: appState.endingIndex, slides: withSlides ? endingSlides() : [] }
       : { index: 0, slides: [] },
     resultsCount: resultsHistory.length,
+    server: { bootId: BOOT_ID, startedAt: SERVER_STARTED_AT }, // 재시작 알림·가동 시간 (관리자 화면)
   };
 }
 
@@ -830,7 +833,7 @@ io.on('connection', (socket) => {
   on('alive', (ack) => { if (typeof ack === 'function') ack(true); });
 
   // 서버 시계·응답 확인 — 관리자 화면이 몇 초마다 물어 '서버 응답 없음'을 알아채고, 조작에 붙일 서버 기준 시각을 맞춘다
-  on('serverTime', (ack) => { if (typeof ack === 'function') ack({ now: Date.now() }); });
+  on('serverTime', (ack) => { if (typeof ack === 'function') ack({ now: Date.now(), bootId: BOOT_ID, startedAt: SERVER_STARTED_AT }); });
 
   // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
   // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
