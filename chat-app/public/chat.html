@@ -344,6 +344,12 @@
       word-break: keep-all;
       overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 보기도 카드 폭 안에서 줄바꿈 */
       text-wrap: balance;      /* 마지막 줄에 한 글자만 남지 않게 줄 길이를 고르게 */
+      /* 같은 줄 카드끼리 헤더 높이가 같아지도록 남는 높이는 헤더(보기 색)가 가져가고, 이름은 그 안에서 세로 가운데.
+         본문(%) 높이는 고정 → 옆 보기 이름이 두 줄 이상이어도 이름 가운데·숫자 줄이 같은 높이에 옴 */
+      flex: 1 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
     }
     /* 띄어쓰기 없는 긴 덩어리(12자+)만: 글자마다 줄바꿈 기회를 줘야 balance가 줄 길이를 고르게 나눔
        (keep-all이면 마지막 줄에 '로' 한 글자). 같은 보기의 다른 어절은 keep-all 그대로 */
@@ -351,7 +357,7 @@
 
     .vote-btn-body {
       background: var(--bg-soft); /* 흰 카드 위에서도 본문이 상자처럼 읽히도록 살짝 톤 다운 */
-      flex: 1; /* 옆 카드 보기가 두 줄로 꺾여 카드가 늘어나도 본문이 바닥까지 차게(흰 띠 방지) */
+      flex: none; /* 높이 고정 — 카드가 늘어난 만큼은 헤더가 채움(흰 띠 없음, 숫자 줄 정렬) */
       min-height: 62px;
       display: flex;
       align-items: center;
@@ -1170,6 +1176,9 @@
       b.className = 'vote-btn';
       const head = document.createElement('span');
       head.className = 'vote-btn-head';
+      const name = document.createElement('span'); // 헤더 안 한 덩어리(세로 가운데 정렬 대상 — 글자 조각이 flex 항목으로 흩어지지 않게)
+      name.className = 'vote-btn-name';
+      head.appendChild(name);
       // 12자 넘게 붙은 덩어리만 span.long-word(글자 단위 줄바꿈), 나머지는 그대로 — 사용자 글이라 textContent로만 넣음
       String(label).split(/(\S{12,})/).forEach((part, k) => {
         if (!part) return;
@@ -1177,8 +1186,8 @@
           const run = document.createElement('span');
           run.className = 'long-word';
           run.textContent = part;
-          head.appendChild(run);
-        } else head.appendChild(document.createTextNode(part));
+          name.appendChild(run);
+        } else name.appendChild(document.createTextNode(part));
       });
       const body = document.createElement('span');
       body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
