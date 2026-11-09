@@ -6,7 +6,7 @@
   <title>LED 채팅 화면</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="/led-fx.css?v=20261021b"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
+  <link rel="stylesheet" href="/led-fx.css?v=20261109-led"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -313,50 +313,57 @@
       100% { opacity: 1; transform: scale(1); }
     }
 
-    /* 질문 카드: 흰 카드 위쪽 중앙에 네이비 배지가 걸쳐진 형태 */
+    /* 질문 카드: 질문(어절 단위 등장) 아래에 타이머 원 (시안 2) */
     #voting-question-card {
       position: relative;
       display: inline-block;
       max-width: 100%;
       background: var(--surface);
       border-radius: calc(18px * var(--u));
-      padding: calc(26px * var(--u)) calc(30px * var(--u)) calc(22px * var(--u));
+      padding: calc(22px * var(--u)) calc(30px * var(--u)) calc(22px * var(--u));
       box-shadow: var(--shadow);
     }
 
+    /* 타이머 원 (시안 2): 주황 원 + 네이비 숫자 → 마지막 5초 경고색 맥박 → 0이면 네이비 "마감" */
     #voting-timer {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translate(-50%, -50%);
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: calc(56px * var(--u));
-      height: calc(56px * var(--u));
-      border-radius: 50%;
-      background: var(--ink);
-      color: #fff;
-      font-size: calc(20px * var(--u));
+      margin-top: calc(16px * var(--u));
+      min-width: calc(88px * var(--u));
+      height: calc(88px * var(--u));
+      padding: 0 calc(10px * var(--u));
+      border-radius: calc(88px * var(--u));
+      background: var(--orange);
+      color: var(--ink);
+      font-size: calc(34px * var(--u));
       font-weight: 700;
+      font-variant-numeric: tabular-nums;
       transition: background-color 0.4s ease, color 0.4s ease;
     }
 
-    /* 마지막 5초: 경고색 + 1초 맥박 (LedFx.timer가 .hot 토글).
-       transform이 위치 잡기(translate)에 쓰이므로 맥박 키프레임에도 함께 적는다 */
+    /* 마지막 5초: 경고색 + 1초 맥박 (LedFx.timer가 .hot 토글) */
     #voting-timer.hot {
       background: var(--warn);
       color: var(--surface);
       animation: timerPulse 1s ease-in-out infinite;
     }
 
+    /* 마감 (LedFx.timer.done) */
+    #voting-timer.done {
+      background: var(--ink);
+      color: var(--surface);
+      font-size: calc(26px * var(--u));
+      animation: none;
+    }
+
     @keyframes timerPulse {
-      0%, 100% { transform: translate(-50%, -50%) scale(1); }
-      50%      { transform: translate(-50%, -50%) scale(1.12); }
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.12); }
     }
 
     #voting-question {
-      font-size: calc(22px * var(--u));
+      font-size: calc(28px * var(--u));
       font-weight: 700;
       color: var(--ink);
       line-height: 1.4;
@@ -543,8 +550,8 @@
   <div id="voting-layer">
     <div id="voting-question-wrap">
       <div id="voting-question-card">
-        <div id="voting-timer">30</div>
         <div id="voting-question"></div>
+        <div id="voting-timer">30</div>
       </div>
     </div>
     <div id="voting-canvas-wrap">
@@ -565,8 +572,8 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/vendor/qrcode.js?v=20261021b"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
-<script src="/led-fx.js?v=20261021b"></script>
+<script src="/vendor/qrcode.js?v=20261109-led"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
+<script src="/led-fx.js?v=20261109-led"></script>
 <script>
   // 세로형(2:3) 설정 — 동작(소켓·모드 전환·연출 배선)은 led-fx.js의 LedFx.page 공용
   LedFx.page.start({
