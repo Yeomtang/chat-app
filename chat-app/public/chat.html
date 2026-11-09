@@ -238,6 +238,27 @@
       z-index: 60;
     }
 
+    /* 타이머 게이지: 남은 시간만큼 줄어드는 막대 — 숫자와 같은 마감 시각(서버 기준)으로 움직인다.
+       채움은 transform(scaleX) 한 번의 linear 전환으로 처리해 폰 부담 없이 매끄럽게. 마지막 5초는 숫자 배지와 같이 경고색 */
+    .timer-gauge {
+      display: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 100px;
+      background: var(--bg-soft);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .timer-gauge.active { display: block; }
+    .timer-gauge-fill {
+      width: 100%;
+      height: 100%;
+      background: var(--ink);
+      transform-origin: left center;
+      will-change: transform;
+    }
+    .timer-gauge.hot .timer-gauge-fill { background: var(--warn); }
+
     #voting-question-phone {
       font-size: 19px;
       font-weight: 700;
@@ -781,6 +802,7 @@
     <div id="voting-card">
       <div id="voting-timer-phone">30</div>
       <div id="voting-question-phone"></div>
+      <div class="timer-gauge" id="voting-timer-gauge"><div class="timer-gauge-fill"></div></div>
       <!-- 보기 버튼/비율은 질문 유형(YES/NO·N지선다)에 맞춰 JS가 동적 생성 -->
       <div id="voting-buttons"></div>
       <div id="voting-ratio">
@@ -972,7 +994,7 @@
   let voteTypeCur = 'yesno';// 'yesno' | 'choice'
   let answerMax = 20;       // 현재 주관식 최대 글자수
   let phoneTimerInterval = null;
-  let phoneVotingEndTime = null;
+  let phoneVoteDeadline = null; // performance.now() 기준 마감 시각 (서버가 보낸 남은 ms로 계산)
 
   let myAnswerDone = false; // 주관식 답변 완료 여부 (1인 1회)
 
@@ -1127,7 +1149,7 @@
     if (state.mode === 'voting') {
       timerEl.style.display = 'inline-flex';
       resultReact.classList.remove('active');
-      startPhoneTimer(state.votingEndTime);
+      startPhoneTimer(state);
     } else if (state.mode === 'result') {
       timerEl.style.display = 'none';
       resultReact.classList.add('active'); // 결과에 붐업/붐따로 반응
@@ -1212,8 +1234,12 @@
     });
   }
 
-  function startPhoneTimer(endTime) {
-    phoneVotingEndTime = endTime;
+  // 서버가 보낸 남은 시간(votingRemainMs)을 받은 순간의 performance.now()에 더해 마감 시각을 잡는다.
+  // 서버의 votingEndTime을 이 기기 시계(Date.now())로 빼면 폰·PC마다 시계 차이만큼 LED와 어긋났음.
+  function startPhoneTimer(state) {
+    const remainMs = Math.max(0, Number(state.votingRemainMs) || 0);
+    phoneVoteDeadline = performance.now() + remainMs;
+    startTimerGauge(remainMs, (Number(state.votingDuration) || 0) * 1000);
     if (phoneTimerInterval) clearInterval(phoneTimerInterval);
     phoneTimerInterval = setInterval(updatePhoneTimerDisplay, 200);
     updatePhoneTimerDisplay();
@@ -1223,15 +1249,37 @@
     if (phoneTimerInterval) clearInterval(phoneTimerInterval);
     phoneTimerInterval = null;
     document.getElementById('voting-timer-phone').classList.remove('hot');
+    stopTimerGauge();
   }
 
   function updatePhoneTimerDisplay() {
-    if (!phoneVotingEndTime) return;
-    const remain = Math.max(0, Math.ceil((phoneVotingEndTime - Date.now()) / 1000));
+    if (phoneVoteDeadline == null) return;
+    const remain = Math.max(0, Math.ceil((phoneVoteDeadline - performance.now()) / 1000));
     const timerEl = document.getElementById('voting-timer-phone');
     timerEl.textContent = remain;
-    // 마지막 5초만 경고색 + 맥박 (0에서는 멈춤)
-    timerEl.classList.toggle('hot', remain > 0 && remain <= 5);
+    // 마지막 5초만 경고색 + 맥박 (0에서는 멈춤) — 게이지도 같은 시점에 경고색
+    const hotNow = remain > 0 && remain <= 5;
+    timerEl.classList.toggle('hot', hotNow);
+    document.getElementById('voting-timer-gauge').classList.toggle('hot', hotNow);
+  }
+
+  // ── 타이머 게이지 ── 남은 시간 비율(remainMs/totalMs)에서 0까지 linear로 줄어든다.
+  // 상태를 받을 때마다 현재 비율로 다시 맞추므로 재접속·늦게 들어온 관객도 숫자와 같은 위치.
+  function startTimerGauge(remainMs, totalMs) {
+    const gauge = document.getElementById('voting-timer-gauge');
+    const fill = gauge.firstElementChild;
+    const frac = totalMs > 0 ? Math.min(1, Math.max(0, remainMs / totalMs)) : 0;
+    gauge.classList.add('active');
+    fill.style.transition = 'none';
+    fill.style.transform = `scaleX(${frac})`;
+    void fill.offsetWidth; // 시작 위치를 먼저 그린 뒤 전환 시작
+    fill.style.transition = `transform ${Math.max(0, remainMs)}ms linear, background-color 0.4s`;
+    fill.style.transform = 'scaleX(0)';
+  }
+  function stopTimerGauge() {
+    const gauge = document.getElementById('voting-timer-gauge');
+    gauge.classList.remove('active', 'hot');
+    gauge.firstElementChild.style.transition = 'none';
   }
 
   // ── 리액션 (하트/붐업/붐따) ──

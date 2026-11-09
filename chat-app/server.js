@@ -116,6 +116,13 @@ const MAX_OPTION_LENGTH = 40;    // 객관식 보기 라벨 상한
 const MAX_EMOJI_LENGTH = 16;     // 이모지(ZWJ 조합 포함) 상한
 const MAX_EMOJI_LABEL_LENGTH = 30;
 const MAX_VOTING_SECONDS = 600;  // setTimeout 한계 초과로 즉시 종료되는 것 방지
+const MIN_VOTING_SECONDS = 5;
+const DEFAULT_VOTING_SECONDS = 30;
+// 투표 시간(초) 정리 — 숫자가 아니면 null(호출부가 기본값 결정), 범위 밖이면 5~600으로 맞춤
+function cleanVotingSeconds(v) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? Math.min(MAX_VOTING_SECONDS, Math.max(MIN_VOTING_SECONDS, n)) : null;
+}
 
 function cleanOptions(list) {
   return (Array.isArray(list) ? list : [])
@@ -136,6 +143,11 @@ function cleanPreset(p) {
   const type = PRESET_TYPES.includes(o.type) ? o.type : 'yesno';
   const out = { text, type };
   if (type === 'choice') out.options = cleanOptions(o.options);
+  // 선택형(YES/NO·객관식) 투표 시간 — 없으면(예전 프리셋) 실행 시 관리자 화면의 기본 시간을 쓴다
+  if (type === 'yesno' || type === 'choice') {
+    const sec = cleanVotingSeconds(o.duration);
+    if (sec != null) out.duration = sec;
+  }
   if (type === 'emoji') out.emojis = cleanEmojis(o.emojis);
   if (type === 'subjective') {
     const n = parseInt(o.maxLen, 10);
@@ -351,6 +363,11 @@ function publicState(forClientId, withSlides = false) {
     question: appState.question,
     votingDuration: appState.votingDuration,
     votingEndTime: appState.votingEndTime,
+    // 남은 시간(ms)을 서버 시계로 계산해 보낸다 — 화면마다 기기 시계가 달라(LED PC·관리자 PC·폰)
+    // votingEndTime - 각자의 Date.now()로 계산하면 같은 질문인데 남은 초가 제각각이 되던 문제 해결.
+    // 클라이언트는 받은 순간의 performance.now() + votingRemainMs 를 마감 시각으로 쓴다.
+    votingRemainMs: appState.mode === 'voting' && appState.votingEndTime
+      ? Math.max(0, appState.votingEndTime - Date.now()) : null,
     voteType: appState.voteType,
     voteOptions: appState.voteOptions,
     counts: computeCounts(),
@@ -830,7 +847,7 @@ io.on('connection', (socket) => {
     if (appState.mode === 'voting') return; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
     const d = asObj(data);
     const question = cleanStr(d.question, MAX_QUESTION_LENGTH);
-    const duration = Math.min(MAX_VOTING_SECONDS, Math.max(5, parseInt(d.duration, 10) || 30));
+    const duration = cleanVotingSeconds(d.duration) ?? DEFAULT_VOTING_SECONDS;
     if (!question) return;
     const type = d.type === 'choice' ? 'choice' : 'yesno';
     let options;
