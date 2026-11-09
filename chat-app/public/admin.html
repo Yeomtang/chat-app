@@ -346,7 +346,8 @@
     .answer-item.picked { background: #e9f9ed; }
     .answer-item.picked .pick-btn { background: #34c759; }
 
-    .answer-item .star-btn {
+    /* 별표(답변 후보)·체크(채팅 즐겨찾기) 공용 — LED에는 나가지 않는 관리자용 표시 */
+    .star-btn {
       background: none;
       border: none;
       font-size: 18px;
@@ -357,7 +358,7 @@
       line-height: 1;
     }
 
-    .answer-item.starred .star-btn { color: #ff9f0a; }
+    .starred > .star-btn { color: #ff9f0a; }
     .answer-item.starred { background: #fff8e6; }
     .answer-item.starred.picked { background: #e9f9ed; }
 
@@ -425,7 +426,7 @@
 
     body.answers-fullscreen #answers-card .answer-list {
       flex: 1;
-      max-height: none;
+      max-height: none !important; /* 넓은 화면용 46vh 상한보다 우선 */
     }
 
     body.answers-fullscreen #answers-expand-btn {
@@ -436,8 +437,8 @@
     /* 전체화면 중 뒤 배경 스크롤 잠금 */
     body.answers-fullscreen { overflow: hidden; }
 
-    /* ── 실시간 채팅 뷰 / 핀 ── */
-    #pin-status-row {
+    /* ── 실시간 채팅 뷰 / 핀 ── 핀·공지 상태 줄은 채팅 목록 아래(최신 채팅 바로 밑)에 둔다 */
+    .pin-status-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -445,10 +446,10 @@
       background: #f2f2f7;
       border-radius: 10px;
       padding: 8px 12px;
-      margin-bottom: 10px;
+      margin-top: 8px;
     }
 
-    #pin-status-text {
+    .pin-status-text {
       font-size: 13px;
       color: #8e8e93;
       flex: 1;
@@ -458,10 +459,10 @@
       white-space: nowrap;
     }
 
-    #pin-status-row.pinned { background: #fff3cd; }
-    #pin-status-row.pinned #pin-status-text { color: #946c00; font-weight: 600; }
+    .pin-status-row.pinned { background: #fff3cd; }
+    .pin-status-row.pinned .pin-status-text { color: #946c00; font-weight: 600; }
 
-    #unpin-btn {
+    .unpin-btn {
       background: #1c1c1e;
       color: #fff;
       border: none;
@@ -473,7 +474,7 @@
       flex-shrink: 0;
     }
 
-    #unpin-btn:disabled { opacity: 0.35; cursor: default; }
+    .unpin-btn:disabled { opacity: 0.35; cursor: default; }
 
     .chat-feed {
       display: flex;
@@ -505,7 +506,20 @@
     .chat-item .chat-del:hover { background: #ff3b30; color: #fff; }
 
     .chat-item:hover { background: #e5e5ea; }
+    .chat-item.starred { background: #fff8e6; }
     .chat-item.pinned { background: #fff3cd; }
+
+    /* 운영진 채팅 — 핀하면 공지(맨 위 띠)로 고정됨을 알 수 있게 표시 */
+    .chat-item .chat-op-badge {
+      display: inline-block;
+      background: #1e1e42;
+      color: #fff;
+      border-radius: 6px;
+      padding: 1px 6px;
+      margin-right: 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
 
     .chat-item .chat-nick {
       font-size: 11px;
@@ -535,7 +549,7 @@
 
     body.chat-fullscreen #chat-card .chat-feed {
       flex: 1;
-      max-height: none;
+      max-height: none !important; /* 넓은 화면용 46vh 상한(!important)보다 우선 — 목록이 화면을 채우고 핀 줄은 맨 아래 */
     }
 
     body.chat-fullscreen #chat-expand-btn { background: #1c1c1e; color: #fff; }
@@ -718,16 +732,21 @@
       <span>실시간 채팅 — 클릭하면 LED에 핀 고정</span>
       <button class="expand-btn" id="chat-expand-btn" onclick="toggleChatFullscreen()">전체화면</button>
     </h2>
-    <p class="note" style="margin-bottom: 10px;">진행자/패널이 언급할 채팅을 클릭하면 LED 중앙에 팝업으로 고정됩니다. 다른 채팅을 클릭하면 교체되고, [핀 내리기]로 해제합니다.</p>
-    <div id="pin-status-row">
-      <span id="pin-status-text">핀 고정된 채팅 없음</span>
-      <button id="unpin-btn" onclick="unpinChat()" disabled>핀 내리기</button>
-    </div>
+    <p class="note" style="margin-bottom: 10px;">진행자/패널이 언급할 채팅을 클릭하면 LED 중앙에 팝업으로 고정됩니다. 다른 채팅을 클릭하면 교체되고, [핀 내리기]로 해제합니다. <b>운영진</b> 채팅을 클릭하면 공지처럼 LED·관객 폰 맨 위에 고정됩니다. 좋은 글은 ☆로 체크해 두면 [☆ 체크만]에서 모아 보고 바로 핀할 수 있습니다(관리자 화면끼리 공유).</p>
     <div class="answer-toolbar">
       <input type="text" id="chat-search" placeholder="채팅 내용·닉네임 검색">
+      <button id="chat-starred-only-btn" onclick="toggleChatStarredOnly()">☆ 체크만</button>
     </div>
     <div class="chat-feed" id="chat-feed">
       <div class="empty-hint">아직 채팅이 없습니다</div>
+    </div>
+    <div class="pin-status-row" id="notice-status-row">
+      <span class="pin-status-text" id="notice-status-text">공지로 고정된 운영진 채팅 없음</span>
+      <button class="unpin-btn" id="unnotice-btn" onclick="unpinNotice()" disabled>공지 내리기</button>
+    </div>
+    <div class="pin-status-row" id="pin-status-row">
+      <span class="pin-status-text" id="pin-status-text">핀 고정된 채팅 없음</span>
+      <button class="unpin-btn" id="unpin-btn" onclick="unpinChat()" disabled>핀 내리기</button>
     </div>
     <div class="chat-actions">
       <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
@@ -880,6 +899,7 @@
     renderCounts();
     renderChatPaused();
     pinnedChatMsg = currentState.pinnedChat || null;
+    pinnedNoticeMsg = currentState.pinnedNotice || null;
     renderPinStatus();
     renderChatFeed();
     renderApplause();
@@ -1202,8 +1222,11 @@
   }
 
   // ── 실시간 채팅 피드 / 핀 고정 ──
-  let chatFeedItems = [];   // {id, nickname, text}
+  let chatFeedItems = [];   // {id, nickname, text, isOperator}
   let pinnedChatMsg = null;
+  let pinnedNoticeMsg = null; // 공지로 고정된 운영진 채팅 (LED·관객 폰 맨 위 띠)
+  let starredChats = [];      // 체크(즐겨찾기)한 채팅 — 서버가 관리자 화면끼리 공유 [{id, nickname, text, isOperator}]
+  let chatStarredOnly = false; // "체크만 보기" 토글
   const MAX_FEED = 300;
 
   socket.on('history', (messages) => {
@@ -1243,7 +1266,9 @@
 
   socket.on('chatDeleted', (id) => {
     chatFeedItems = chatFeedItems.filter(m => m.id !== id);
-    if (pinnedChatMsg && pinnedChatMsg.id === id) { pinnedChatMsg = null; renderPinStatus(); }
+    if (pinnedChatMsg && pinnedChatMsg.id === id) pinnedChatMsg = null;
+    if (pinnedNoticeMsg && pinnedNoticeMsg.id === id) pinnedNoticeMsg = null;
+    renderPinStatus();
     renderChatFeed();
   });
 
@@ -1253,8 +1278,34 @@
     renderChatFeed();
   });
 
+  socket.on('noticePinned', (data) => {
+    pinnedNoticeMsg = (data && data.message) || null;
+    renderPinStatus();
+    renderChatFeed();
+  });
+
+  socket.on('chatStars', (list) => {
+    starredChats = Array.isArray(list) ? list : [];
+    renderChatFeed();
+  });
+
+  // 운영진 채팅이면 서버가 공지 핀(맨 위 띠)으로, 관객 채팅이면 가운데 핀으로 고정한다
   function pinChat(msg) {
-    socket.emit('admin:pinChat', { id: msg.id, nickname: msg.nickname, text: msg.text });
+    socket.emit('admin:pinChat', { id: msg.id, nickname: msg.nickname, text: msg.text, isOperator: !!msg.isOperator });
+  }
+
+  function toggleChatStar(msg) {
+    socket.emit('admin:toggleChatStar', { id: msg.id, nickname: msg.nickname, text: msg.text, isOperator: !!msg.isOperator });
+  }
+
+  function toggleChatStarredOnly() {
+    chatStarredOnly = !chatStarredOnly;
+    document.getElementById('chat-starred-only-btn').classList.toggle('on', chatStarredOnly);
+    renderChatFeed();
+  }
+
+  function unpinNotice() {
+    socket.emit('admin:unpinNotice');
   }
 
   // 개별 채팅 삭제 — 모든 화면에서 즉시 사라짐(되돌릴 수 없음)
@@ -1268,31 +1319,28 @@
   }
 
   function renderPinStatus() {
-    const row = document.getElementById('pin-status-row');
-    const txt = document.getElementById('pin-status-text');
-    const btn = document.getElementById('unpin-btn');
-    if (pinnedChatMsg) {
-      row.classList.add('pinned');
-      txt.textContent = `📌 ${pinnedChatMsg.nickname}: ${pinnedChatMsg.text}`;
-      btn.disabled = false;
-    } else {
-      row.classList.remove('pinned');
-      txt.textContent = '핀 고정된 채팅 없음';
-      btn.disabled = true;
-    }
+    setPinRow('pin-status-row', 'pin-status-text', 'unpin-btn', pinnedChatMsg, '📌', '핀 고정된 채팅 없음');
+    setPinRow('notice-status-row', 'notice-status-text', 'unnotice-btn', pinnedNoticeMsg, '📢 공지', '공지로 고정된 운영진 채팅 없음');
+  }
+  function setPinRow(rowId, textId, btnId, msg, icon, emptyText) {
+    document.getElementById(rowId).classList.toggle('pinned', !!msg);
+    document.getElementById(textId).textContent = msg ? `${icon} ${msg.nickname}: ${msg.text}` : emptyText;
+    document.getElementById(btnId).disabled = !msg;
   }
 
   function renderChatFeed() {
     const feed = document.getElementById('chat-feed');
-    if (chatFeedItems.length === 0) {
-      feed.innerHTML = '<div class="empty-hint">아직 채팅이 없습니다</div>';
+    // 체크만 보기: 서버가 보관한 체크 목록(최근 채팅에서 밀려난 글도 포함)
+    const source = chatStarredOnly ? starredChats : chatFeedItems;
+    if (source.length === 0) {
+      feed.innerHTML = `<div class="empty-hint">${chatStarredOnly ? '체크한 채팅이 없습니다 — 채팅 왼쪽 ☆를 눌러 체크하세요' : '아직 채팅이 없습니다'}</div>`;
       return;
     }
     // 검색어가 있으면 닉네임·본문에 포함된 것만
     const kw = chatSearchKeyword;
     const items = kw
-      ? chatFeedItems.filter(m => (m.text || '').toLowerCase().includes(kw) || (m.nickname || '').toLowerCase().includes(kw))
-      : chatFeedItems;
+      ? source.filter(m => (m.text || '').toLowerCase().includes(kw) || (m.nickname || '').toLowerCase().includes(kw))
+      : source;
     if (items.length === 0) {
       feed.innerHTML = '<div class="empty-hint">검색 결과가 없습니다</div>';
       return;
@@ -1300,16 +1348,31 @@
     // 맨 아래에 있을 때만 새 채팅을 따라간다. 위로 스크롤해 읽는 중이거나 검색 중이면 위치 유지.
     const atBottom = !kw && feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10;
     const prevTop = feed.scrollTop;
+    const starredSet = new Set(starredChats.map(m => m.id));
+    const pinnedIds = [pinnedChatMsg, pinnedNoticeMsg].filter(Boolean).map(m => m.id);
     feed.innerHTML = '';
     items.forEach((m) => {
       const item = document.createElement('div');
-      item.className = 'chat-item' + (pinnedChatMsg && pinnedChatMsg.id === m.id ? ' pinned' : '');
+      item.className = 'chat-item'
+        + (starredSet.has(m.id) ? ' starred' : '')
+        + (pinnedIds.includes(m.id) ? ' pinned' : '');
+      const star = document.createElement('button');
+      star.className = 'star-btn';
+      star.textContent = starredSet.has(m.id) ? '★' : '☆';
+      star.title = '좋은 글 체크 (LED에 나가지 않음, 관리자끼리 공유)';
+      star.onclick = (e) => { e.stopPropagation(); toggleChatStar(m); };
       const body = document.createElement('div');
       body.className = 'chat-body';
-      body.title = 'LED에 핀 고정';
+      body.title = m.isOperator ? 'LED·관객 폰 맨 위에 공지로 고정' : 'LED에 핀 고정';
       const nick = document.createElement('div');
       nick.className = 'chat-nick';
-      nick.textContent = m.nickname;
+      if (m.isOperator) {
+        const badge = document.createElement('span');
+        badge.className = 'chat-op-badge';
+        badge.textContent = '운영진 · 공지';
+        nick.appendChild(badge);
+      }
+      nick.appendChild(document.createTextNode(m.nickname || ''));
       const text = document.createElement('div');
       text.className = 'chat-text';
       text.textContent = m.text;
@@ -1321,6 +1384,7 @@
       del.textContent = '✕';
       del.title = '이 채팅 삭제';
       del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
+      item.appendChild(star);
       item.appendChild(body);
       item.appendChild(del);
       feed.appendChild(item);

@@ -1564,6 +1564,47 @@
     };
   }
 
+  // ── 운영진 공지 핀 ── 관리자가 운영진 채팅을 핀하면 화면 맨 위 띠로 고정 (일반 채팅 핀과 별개, 함께 떠 있을 수 있음)
+  // layer: .fx-notice 요소. show(message|null) — 같은 공지가 다시 오면 그대로 둔다.
+  const NOTICE_OUT_MS = 400;
+  function createNotice(layer) {
+    let key = null;
+    let outTimer = null;
+    return {
+      show(message) {
+        const k = message ? JSON.stringify([message.id, message.nickname, message.text]) : null;
+        if (k === key) return;
+        key = k;
+        clearTimeout(outTimer);
+        if (!message) {
+          if (!layer.classList.contains('on')) return;
+          layer.classList.remove('on');
+          layer.classList.add('leaving');
+          outTimer = setTimeout(() => { layer.classList.remove('leaving'); layer.textContent = ''; }, prefersReduced() ? 0 : NOTICE_OUT_MS);
+          return;
+        }
+        layer.textContent = '';
+        const icon = document.createElement('span');
+        icon.className = 'fx-notice-icon';
+        icon.textContent = '📢';
+        icon.setAttribute('aria-hidden', 'true');
+        const body = document.createElement('div');
+        body.className = 'fx-notice-body';
+        const nick = document.createElement('div');
+        nick.className = 'fx-notice-nick';
+        nick.textContent = message.nickname || '';
+        const text = document.createElement('div');
+        text.className = 'fx-notice-text';
+        text.textContent = message.text || '';
+        body.append(nick, text);
+        layer.append(icon, body);
+        layer.classList.remove('on', 'leaving');
+        void layer.offsetWidth; // 교체 때도 팝인 재시작
+        layer.classList.add('on');
+      },
+    };
+  }
+
   // ══════════════════════════════════
   //  대기 화면 (시안 11) · 엔딩 "오늘의 결과" (시안 12) · 함성 미터 (시안 5)
   // ══════════════════════════════════
@@ -2358,6 +2399,7 @@
     lift: { create: createLift, LIFT },
     spotlight: { create: createPickSpotlight, PICK },
     pin: { create: createChatPin, PIN },
+    notice: { create: createNotice },
     qr: { draw: drawQr, QUIET: QR_QUIET },
     idle: { create: createIdle, IDLE },
     ending: { create: createEnding },
@@ -3038,6 +3080,7 @@
 
       // 채팅 일시정지 상태는 모드와 별개로 항상 서버 값을 따른다(관리자 화면에서 제어)
       if (state.chatPaused) pauseChat(); else resumeChat();
+      noticeFx.show(state.mode === 'chat' ? state.pinnedNotice : null); // 운영진 공지 띠는 채팅 화면에서만
 
       // 결과 화면에서 "같은" 결과가 다시 오면(재전송) 진행 중인 연출·막대를 끊지 않는다.
       // (끊긴 사이 다른 투표가 끝났다면 내용이 달라 새로 그림)
@@ -3296,6 +3339,12 @@
 
     socket.on('chatPinned', (data) => {
       pinFx.show(data && data.message, true);
+    });
+
+    // ── 운영진 공지 핀 (관리자가 운영진 채팅을 핀) — 화면 맨 위 띠 ──
+    const noticeFx = LedFx.notice.create(document.getElementById('notice-pin'));
+    socket.on('noticePinned', (data) => {
+      noticeFx.show(currentMode === 'chat' ? (data && data.message) : null);
     });
 
     // 접속(재접속 포함)할 때마다 상태를 다시 받고 화면 전용 이벤트를 구독한다
