@@ -762,6 +762,15 @@ function rememberAuthor(id, clientId) {
   if (messageAuthors.size > MAX_MESSAGE_AUTHORS) messageAuthors.delete(messageAuthors.keys().next().value);
 }
 
+// ── 진행 중인 질문 보호 ── 결과가 아직 기록되지 않은 진행 중 모드(투표·주관식 접수·이모지 반응·함성 측정)에서
+// 다른 질문 시작·채팅 복귀·대기 화면·엔딩 시작은 관리자 화면이 확인을 받고 force: true를 붙였을 때만 실행한다.
+// (관리자 두 명이 동시에 조작해도, 한쪽 화면이 늦게 갱신됐어도 진행 중인 질문이 모르는 새 끝나지 않게)
+// 결과 화면(result·subjectiveResult·applauseResult)·대기·엔딩·채팅에서는 그대로 1클릭.
+const ACTIVE_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+function overwriteBlocked(data) {
+  return ACTIVE_MODES.includes(appState.mode) && asObj(data).force !== true;
+}
+
 // 관리자 조작 유효 시간 — 이보다 늦게 도착한 조작은 실행하지 않는다(화면이 보낸 시각 _t가 있을 때만 검사, 옛 화면은 그대로)
 const STALE_ADMIN_MS = 6000;
 
@@ -1006,6 +1015,7 @@ io.on('connection', (socket) => {
     } else {
       options = ['YES', 'NO'];
     }
+    if (overwriteBlocked(d)) return 'busy';
     startVoting(question, options, duration, type);
   });
 
@@ -1021,6 +1031,7 @@ io.on('connection', (socket) => {
     let maxLen = parseInt(asObj(data).maxLen, 10);
     if (!Number.isFinite(maxLen) || maxLen < 1) maxLen = MAX_ANSWER_LENGTH;
     maxLen = Math.min(MAX_ANSWER_LENGTH, maxLen); // 상한 20 (LED 가독성)
+    if (overwriteBlocked(data)) return 'busy';
     startSubjective(question, maxLen);
   });
 
@@ -1030,6 +1041,7 @@ io.on('connection', (socket) => {
     // emojis: [{emoji, label}] — 라벨(뜻)은 관객 폰 버튼에 함께 표시
     const emojiOptions = cleanEmojis(asObj(data).emojis);
     if (emojiOptions.length < 2) return 'emojis'; // 이모지 2개 미만이면 무시
+    if (overwriteBlocked(data)) return 'busy';
     startEmoji(question, emojiOptions);
   });
 
@@ -1175,11 +1187,13 @@ io.on('connection', (socket) => {
     io.to(SCREENS).emit('answerPicked', { id: entry.id, text: entry.text });
   });
 
-  onAdmin('admin:returnToChat', () => {
+  onAdmin('admin:returnToChat', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     returnToChat();
   });
 
-  onAdmin('admin:showIdle', () => {
+  onAdmin('admin:showIdle', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     showIdle();
   });
 
@@ -1189,10 +1203,12 @@ io.on('connection', (socket) => {
     const seconds = Number.isFinite(n)
       ? Math.min(MAX_APPLAUSE_SECONDS, Math.max(MIN_APPLAUSE_SECONDS, n))
       : 10;
+    if (overwriteBlocked(data)) return 'busy';
     startApplause(seconds);
   });
 
-  onAdmin('admin:startEnding', () => {
+  onAdmin('admin:startEnding', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     startEnding();
   });
 

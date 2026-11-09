@@ -235,6 +235,8 @@
       font-size: 16px;
       padding: 4px 6px;
     }
+    /* [실행] 덮어쓰기 확인 상태(진행 중인 질문이 있을 때 2클릭) — 삭제 확인과 같은 빨간 버튼 */
+    .preset-item button.confirming { background: #ff3b30; white-space: nowrap; }
     /* 삭제 2클릭 확인 상태 — 짧은 문구로 줄 폭을 거의 바꾸지 않는다 */
     .preset-item .remove-btn.confirming {
       background: #ff3b30;
@@ -771,7 +773,7 @@
     <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
     <label id="duration-label">투표 시간 (초) — 선택형 전용</label>
     <input type="number" id="duration-input" value="30" min="5" max="600" oninput="renderPresets()"> <!-- 시간 없는 예전 프리셋 목록의 초 표시도 함께 갱신 -->
-    <button class="btn btn-primary" onclick="startQuestionNow()">질문 시작</button>
+    <button class="btn btn-primary" id="question-start-btn" onclick="startQuestionNow()">질문 시작</button>
   </div>
 
   <!-- 엔딩 · 오늘의 결과 -->
@@ -1175,6 +1177,7 @@
     endBtn.disabled = currentState.mode !== 'voting';
     subjEndBtn.disabled = currentState.mode !== 'subjective';
     returnBtn.disabled = currentState.mode === 'chat';
+    syncOverwriteArm();
     renderIdleBtn();
 
     if (timerInterval) clearTimeout(timerInterval);
@@ -1220,7 +1223,8 @@
   function startApplauseNow() {
     const n = parseInt(document.getElementById('applause-seconds').value, 10);
     const seconds = Number.isFinite(n) ? n : 10;
-    socket.emit('admin:startApplause', { seconds });
+    const btn = document.getElementById('applause-start-btn');
+    guardedRun(btn, 'admin:startApplause', (force) => socket.emit('admin:startApplause', { seconds, force }, busyHandler(btn)));
   }
 
   // ── 엔딩 · 오늘의 결과 ──
@@ -1273,7 +1277,8 @@
   }
 
   function startEndingNow() {
-    socket.emit('admin:startEnding');
+    const btn = document.getElementById('ending-start-btn');
+    guardedRun(btn, 'admin:startEnding', (force) => socket.emit('admin:startEnding', { force }, busyHandler(btn)));
   }
 
   // 삭제 확인 대기 중인 결과 id — 목록이 다시 그려져도(다른 관리자의 변경 등) 그 항목이 남아 있으면 유지
@@ -1366,36 +1371,70 @@
     socket.emit('admin:setEffects', { heartBurst: !on });
   }
 
-  // ── 대기 화면 버튼 (현재 상태 카드) ──
-  // 서버 showIdle은 진행 중인 질문을 결과 기록 없이 바로 끝낸다 → 질문 진행 중에는 2단 확인(결과 기록 비우기와 같은 패턴).
-  // 결과 화면·엔딩은 이미 기록된 뒤라 바로 전환. 대기 화면 중에는 [채팅으로 돌아가기].
-  const IDLE_CONFIRM_MODES = ['voting', 'subjective', 'emoji', 'applause'];
-  let idleConfirming = false, idleConfirmTimer = null;
+  // ── 진행 중인 질문 덮어쓰기 확인 ── 투표·주관식 접수·이모지 반응·함성 측정 중에 다른 질문 시작·채팅 복귀·대기 화면·엔딩 시작을
+  // 누르면 결과 기록 없이 끝나므로 3초 안에 한 번 더 눌러야 실행한다(결과 기록 비우기와 같은 2클릭 패턴).
+  // 서버도 force 없이는 'busy'로 거부 → 다른 관리자가 먼저 시작해 이 화면이 아직 모르는 경우도 같은 확인으로 이어진다.
+  // 결과 화면·대기·엔딩·채팅에서는 확인 없이 1클릭.
+  const ACTIVE_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+  const ACTIVE_ENDS = {
+    voting: '진행 중인 투표가 기록 없이 끝나요', subjective: '진행 중인 주관식 질문이 기록 없이 끝나요',
+    emoji: '진행 중인 이모지 반응이 끝나요', applause: '진행 중인 함성 측정이 기록 없이 끝나요',
+  };
+  // 이미 같은 종류가 진행 중이면 서버가 덮어쓰기 자체를 막으므로(표·답변 초기화 방지) 확인 없이 보내 사유 안내를 받는다
+  const SAME_KIND_BLOCKED = { voting: 'admin:startVoting', subjective: 'admin:startSubjective' };
+  let overwriteArm = null; // { btn, text, cls, mode, question, timer }
+  function disarmOverwrite() {
+    if (!overwriteArm) return;
+    const a = overwriteArm;
+    overwriteArm = null;
+    clearTimeout(a.timer);
+    a.btn.textContent = a.text;
+    a.btn.className = a.cls;
+    if (a.btn.id === 'idle-btn') renderIdleBtn();
+  }
+  function armOverwrite(btn, byOther) {
+    disarmOverwrite();
+    const mode = currentState ? currentState.mode : null;
+    const what = ACTIVE_ENDS[mode] || '진행 중인 질문이 기록 없이 끝나요';
+    overwriteArm = { btn, text: btn.textContent, cls: btn.className, mode, question: currentState && currentState.question };
+    if (btn.classList.contains('btn')) { // 넓은 버튼: 버튼 안에 안내
+      btn.textContent = `${what} · 한 번 더 누르면 실행`;
+      btn.className = 'btn btn-danger';
+    } else { // 목록의 작은 [실행]: 짧게, 자세한 안내는 상단 띠
+      btn.textContent = '덮어쓰기?';
+      btn.classList.add('confirming');
+    }
+    showOpNotice((byOther ? '다른 관리자가 시작한 질문이 진행 중이에요. ' : '') + `${what} — 3초 안에 한 번 더 누르면 실행해요`);
+    overwriteArm.timer = setTimeout(disarmOverwrite, 3000);
+  }
+  // send(force): 실제 전송. 서버가 busy로 거부하면(이 화면이 모르던 진행 중 질문) 그 버튼을 확인 상태로 바꾼다
+  function guardedRun(btn, event, send) {
+    if (overwriteArm && overwriteArm.btn === btn && btn.isConnected) { disarmOverwrite(); send(true); return; }
+    const mode = currentState ? currentState.mode : 'chat';
+    if (ACTIVE_MODES.includes(mode) && SAME_KIND_BLOCKED[mode] !== event) { armOverwrite(btn, false); return; }
+    send(false);
+  }
+  const busyHandler = (btn) => (res) => {
+    if (res && res.reason === 'busy') { armOverwrite(btn, true); return true; }
+  };
+  // 모드·질문이 바뀌면(다른 관리자 조작·자동 마감) 확인 대기를 풀어, 보지 못한 다른 질문을 덮어쓰지 않게
+  function syncOverwriteArm() {
+    if (!overwriteArm || !currentState) return;
+    if (currentState.mode !== overwriteArm.mode || currentState.question !== overwriteArm.question) disarmOverwrite();
+  }
+
+  // ── 대기 화면 버튼 (현재 상태 카드) ── 대기 화면 중에는 [채팅으로 돌아가기]
   function renderIdleBtn() {
     const btn = document.getElementById('idle-btn');
+    if (overwriteArm && overwriteArm.btn === btn) return; // 확인 대기 중 문구 유지
     const mode = currentState ? currentState.mode : 'chat';
-    if (!IDLE_CONFIRM_MODES.includes(mode)) { idleConfirming = false; clearTimeout(idleConfirmTimer); }
-    if (mode === 'idle') {
-      btn.textContent = '대기 화면 중 · 채팅으로 돌아가기';
-      btn.className = 'btn btn-primary';
-    } else {
-      btn.textContent = idleConfirming ? '진행 중인 질문이 끝나요 · 한 번 더 누르면 대기 화면' : '대기 화면 띄우기';
-      btn.className = 'btn ' + (idleConfirming ? 'btn-danger' : 'btn-secondary');
-    }
+    btn.textContent = mode === 'idle' ? '대기 화면 중 · 채팅으로 돌아가기' : '대기 화면 띄우기';
+    btn.className = 'btn ' + (mode === 'idle' ? 'btn-primary' : 'btn-secondary');
   }
   function showIdleNow() {
-    const mode = currentState ? currentState.mode : 'chat';
-    if (mode === 'idle') { socket.emit('admin:returnToChat'); return; }
-    if (IDLE_CONFIRM_MODES.includes(mode) && !idleConfirming) {
-      idleConfirming = true;
-      renderIdleBtn();
-      idleConfirmTimer = setTimeout(() => { idleConfirming = false; renderIdleBtn(); }, 3000);
-      return;
-    }
-    clearTimeout(idleConfirmTimer);
-    idleConfirming = false;
-    renderIdleBtn();
-    socket.emit('admin:showIdle');
+    const btn = document.getElementById('idle-btn');
+    const event = currentState && currentState.mode === 'idle' ? 'admin:returnToChat' : 'admin:showIdle';
+    guardedRun(btn, event, (force) => socket.emit(event, { force }, busyHandler(btn)));
   }
 
   // ── 주관식 답변 목록 / 픽 ──
@@ -1858,19 +1897,21 @@
     }).filter(Boolean);
   }
 
-  // 유형에 맞는 시작 이벤트 발송 (즉석/사전등록 공용). opts는 이미 파싱된 값.
-  function emitStart(type, question, opts, duration) {
+  // 유형에 맞는 시작 이벤트 발송 (즉석/사전등록 공용). opts는 이미 파싱된 값. btn: 누른 버튼(덮어쓰기 확인 표시용)
+  function emitStart(type, question, opts, duration, btn) {
+    let event, payload;
     if (type === 'choice') {
       if (!opts.options || opts.options.length < 2) { alert('보기를 2개 이상 입력해주세요 (/로 구분)'); return; }
-      socket.emit('admin:startVoting', { question, type: 'choice', options: opts.options, duration });
+      event = 'admin:startVoting'; payload = { question, type: 'choice', options: opts.options, duration };
     } else if (type === 'subjective') {
-      socket.emit('admin:startSubjective', { question, maxLen: opts.maxLen || 20 });
+      event = 'admin:startSubjective'; payload = { question, maxLen: opts.maxLen || 20 };
     } else if (type === 'emoji') {
       if (!opts.emojis || opts.emojis.length < 2) { alert('이모지+뜻을 2개 이상 입력해주세요 (/로 구분)'); return; }
-      socket.emit('admin:startEmoji', { question, emojis: opts.emojis });
+      event = 'admin:startEmoji'; payload = { question, emojis: opts.emojis };
     } else {
-      socket.emit('admin:startVoting', { question, duration }); // yesno
+      event = 'admin:startVoting'; payload = { question, duration }; // yesno
     }
+    guardedRun(btn, event, (force) => socket.emit(event, force ? { ...payload, force: true } : payload, busyHandler(btn)));
   }
 
   // 이모지 반응 질문 기본 보기 (공연 [9]번 고정 세트) — 유형 선택 시 자동 채움
@@ -1912,7 +1953,7 @@
       options: parseOptions(document.getElementById('question-options').value),
       emojis: parseEmojiOptions(document.getElementById('question-options').value),
       maxLen: parseInt(document.getElementById('question-maxlen').value, 10) || 20,
-    }, duration);
+    }, duration, document.getElementById('question-start-btn'));
   }
 
   function endVotingNow() {
@@ -1924,7 +1965,8 @@
   }
 
   function returnToChatNow() {
-    socket.emit('admin:returnToChat');
+    const btn = document.getElementById('return-btn');
+    guardedRun(btn, 'admin:returnToChat', (force) => socket.emit('admin:returnToChat', { force }, busyHandler(btn)));
   }
 
   // ── 질문 사전 등록 (로컬 저장, 순서대로 실행) ──
@@ -1964,7 +2006,7 @@
       if (detail) main.append(el('span', 'preset-detail', detail));
       const actions = el('div', 'preset-actions');
       const runBtn = el('button', '', '실행');
-      runBtn.addEventListener('click', () => runPreset(i));
+      runBtn.addEventListener('click', () => runPreset(i, runBtn));
       const removeBtn = el('button', 'remove-btn', '✕');
       removeBtn.addEventListener('click', () => removePreset(i));
       actions.append(runBtn, removeBtn);
@@ -2022,11 +2064,11 @@
     refreshLenHints();
   }
 
-  function runPreset(i) {
+  function runPreset(i, btn) {
     const p = presets[i];
     // 프리셋에 저장한 시간 우선, 없으면(예전 프리셋) 즉석 질문 칸의 시간
     const duration = votingSeconds(p.duration) ?? votingSeconds(document.getElementById('duration-input').value) ?? 30;
-    emitStart(p.type, p.text, { options: p.options, emojis: p.emojis, maxLen: p.maxLen }, duration);
+    emitStart(p.type, p.text, { options: p.options, emojis: p.emojis, maxLen: p.maxLen }, duration, btn);
   }
 
   function removePreset(i) {
