@@ -217,6 +217,25 @@ function cleanPreset(p) {
 const CANONICAL_ORIGIN = 'https://chat-app-s6y2.onrender.com';
 const LEGACY_HOSTS = ['chat-app-6kl5.onrender.com'];
 const isLegacyHost = (host) => LEGACY_HOSTS.includes(String(host || '').split(':')[0].toLowerCase());
+
+// ── 서버 상태 확인 (/health) ── Render health check·행사 전 점검용. 가볍게: 키·개인정보·채팅 내용 없이 숫자만.
+// 옛 주소 리다이렉트보다 먼저 둔다(상태 확인은 어느 주소로 와도 그 서버 자신의 상태를 답함)
+const SERVER_STARTED_AT = Date.now(); // 서버(프로세스) 시작 시각 — 재시작 알림·가동 시간 표시에도 쓴다
+// 이번 실행의 고유 값 — 관리자 화면이 다시 연결됐을 때 이 값이 바뀌었으면 '서버가 다시 시작됨(기록 초기화)'을 알린다
+const BOOT_ID = crypto.randomBytes(6).toString('hex');
+app.get('/health', (req, res) => {
+  const screens = io.sockets.adapter.rooms.get(SCREENS);
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    uptime: Math.round((Date.now() - SERVER_STARTED_AT) / 1000), // 초
+    mode: appState.mode,
+    audience: audienceSockets.size,
+    screens: screens ? screens.size : 0, // LED + 관리자 + 운영진 화면 소켓 수
+    startedAt: new Date(SERVER_STARTED_AT).toISOString(),
+  });
+});
+
 app.use((req, res, next) => {
   if (isLegacyHost(req.headers.host)) return res.redirect(301, CANONICAL_ORIGIN + req.originalUrl);
   next();
@@ -331,6 +350,10 @@ const appState = {
   answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
+  answerAuthors: new Map(), // 답변 id -> 작성 관객 clientId (서버 전용, 밖으로 보내지 않음) — [이 사람 차단]용
+  hiddenAnswers: [],      // 관리자가 [숨김]한 답변 id — LED 흘림·워드클라우드·결과 기록·엔딩·폰 클라우드에서 뺀다(되돌리기 가능)
+  hiddenKeys: new Set(),  // [같은 답 모두 숨김]한 묶음 키 — 이후 들어오는 같은 답도 처음부터 숨김
+  subjectiveResultId: null, // 이번 주관식 마감 때 기록한 결과 id — 마감 뒤 숨김을 바꾸면 그 기록도 다시 집계
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
   emojiOptions: [],       // 이모지 반응 질문 보기: [{emoji, label}] (라벨=뜻, 관객 폰에 표시)
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
@@ -384,9 +407,37 @@ function resultsSummaryList() {
   return resultsHistory.map(e => ({ id: e.id, kind: e.kind, question: e.question, summary: resultSummary(e) }));
 }
 
-// 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
-function emitResults() {
-  io.to(ADMINS).emit('results', resultsSummaryList());
+// 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제·복원) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
+// resultsFull: 원본 기록 전체(최대 20건) — 관리자 화면의 [결과 내보내기]·브라우저 백업용
+function emitResults(target) {
+  const t = target || io.to(ADMINS);
+  t.emit('results', resultsSummaryList());
+  t.emit('resultsFull', resultsHistory.map((e) => ({ ...e })));
+}
+
+// 브라우저 백업에서 되살리는 결과 한 건 검증 — 관리자 화면이 보낸 값이므로 recordResult가 만드는 모양 그대로만 받는다
+const MAX_RESULT_COUNT = 1000000;
+function cleanResultEntry(e) {
+  const o = asObj(e);
+  const question = cleanStr(o.question, MAX_QUESTION_LENGTH);
+  if (!question) return null;
+  const count = (v) => (Number.isInteger(v) && v >= 0 && v <= MAX_RESULT_COUNT ? v : null);
+  if (o.kind === 'vote') {
+    const voteType = o.voteType === 'choice' ? 'choice' : 'yesno';
+    const options = voteType === 'yesno' ? ['YES', 'NO'] : cleanOptions(o.options);
+    if (options.length < 2 || !Array.isArray(o.perOption) || o.perOption.length !== options.length) return null;
+    const perOption = o.perOption.map(count);
+    if (perOption.some((n) => n == null)) return null;
+    return { kind: 'vote', question, voteType, options, perOption, total: perOption.reduce((a, b) => a + b, 0) };
+  }
+  if (o.kind === 'subjective') {
+    const top = (Array.isArray(o.top) ? o.top : []).slice(0, 4)
+      .map((t) => ({ word: maskProfanity(cleanStr(asObj(t).word, MAX_ANSWER_LENGTH)), count: count(asObj(t).count) }))
+      .filter((t) => t.word && t.count >= 1)
+      .sort((a, b) => b.count - a.count);
+    return { kind: 'subjective', question, top, answerCount: count(o.answerCount) ?? top.reduce((a, t) => a + t.count, 0) };
+  }
+  return null;
 }
 
 // 주관식 답변 묶음 키 — 같은 답으로 칠 표기 차이만 지운다: 유니코드 호환 정규화(NFKC), 공백 전부, 문장부호·기호·이모지
@@ -407,7 +458,9 @@ function answerKey(text) {
 // key는 LED가 흘러가던 답변을 자기 단어로 모을 때 같은 묶음을 찾는 데 쓴다 (subjectiveAnswer에도 같은 key)
 function computeCloud() {
   const groups = new Map(); // 묶음 키 -> { key, count, forms: Map(표기 -> 개수), first: 처음 들어온 순서 }
+  const hidden = new Set(appState.hiddenAnswers);
   appState.answerList.forEach((a, order) => {
+    if (hidden.has(a.id)) return; // 숨긴 답은 집계에서 뺀다
     const form = String(a.text).replace(/\s+/g, ' ').trim();
     if (!form) return;
     const key = answerKey(form);
@@ -459,7 +512,7 @@ function publicState(forClientId, withSlides = false) {
     counts: appState.mode === 'voting' && !withSlides
       ? { perOption: new Array(appState.voteOptions.length).fill(0), total: 0 } : computeCounts(),
     myVote, // 내가 고른 보기 인덱스(0-based) 또는 null
-    answerCount: Object.keys(appState.answers).length,
+    answerCount: appState.answerList.length, // 차단된 관객이 보낸(조용히 버린) 답은 세지 않음
     answerMaxLen: appState.answerMaxLen,
     emojiOptions: appState.emojiOptions,
     myAnswered: forClientId ? !!appState.answers[forClientId] : null,
@@ -479,6 +532,7 @@ function publicState(forClientId, withSlides = false) {
       ? { index: appState.endingIndex, slides: withSlides ? endingSlides() : [] }
       : { index: 0, slides: [] },
     resultsCount: resultsHistory.length,
+    server: { bootId: BOOT_ID, startedAt: SERVER_STARTED_AT }, // 재시작 알림·가동 시간 (관리자 화면)
   };
 }
 
@@ -564,6 +618,9 @@ function startVoting(question, options, duration, type) {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
+  appState.answerAuthors = new Map();
   emitModeChange();
 
   appState.timerHandle = setTimeout(() => {
@@ -612,19 +669,30 @@ function startSubjective(question, maxLen) {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
+  appState.answerAuthors = new Map();
   emitModeChange();
+}
+
+// 결과 기록·엔딩에 쓰는 주관식 집계 — 숨긴 답은 뺀다
+function visibleAnswerCount() {
+  const hidden = new Set(appState.hiddenAnswers);
+  return appState.answerList.filter((a) => !hidden.has(a.id)).length;
+}
+function subjectiveSummary() {
+  return {
+    // 엔딩은 3위까지 보여 주지만, 3위가 4위와 동률인지("공동 3위") 알 수 있게 4개까지 기록
+    top: computeCloud().slice(0, 4).map(({ word, count }) => ({ word, count })),
+    answerCount: visibleAnswerCount(),
+  };
 }
 
 function endSubjective() {
   if (appState.mode !== 'subjective') return;
   appState.mode = 'subjectiveResult';
-  recordResult({
-    kind: 'subjective',
-    question: appState.question,
-    // 엔딩은 3위까지 보여 주지만, 3위가 4위와 동률인지("공동 3위") 알 수 있게 4개까지 기록
-    top: computeCloud().slice(0, 4).map(({ word, count }) => ({ word, count })),
-    answerCount: Object.keys(appState.answers).length,
-  });
+  recordResult({ kind: 'subjective', question: appState.question, ...subjectiveSummary() });
+  appState.subjectiveResultId = resultSeq;
   emitModeChange(); // cloud 포함됨
   emitResults();
 }
@@ -667,9 +735,26 @@ function resetQuestionState() {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
+  appState.answerAuthors = new Map();
   appState.answerMaxLen = MAX_ANSWER_LENGTH;
   appState.emojiOptions = [];
   resetSpecialState();
+}
+
+// 주관식 답변 숨김 반영 — 화면(LED·관리자)에 알리고, 마감 뒤면 결과 기록·클라우드를 다시 집계
+function setAnswersHidden(ids, hide) {
+  const set = new Set(appState.hiddenAnswers);
+  const changed = ids.filter((id) => set.has(id) !== hide);
+  if (!changed.length) return;
+  changed.forEach((id) => (hide ? set.add(id) : set.delete(id)));
+  appState.hiddenAnswers = [...set];
+  io.to(SCREENS).emit('answerHidden', { ids: changed, hidden: hide });
+  if (appState.mode !== 'subjectiveResult') return;
+  const rec = resultsHistory.find((e) => e.id === appState.subjectiveResultId);
+  if (rec) { Object.assign(rec, subjectiveSummary()); emitResults(); }
+  emitModeChange(); // LED·폰 워드클라우드 다시 그림
 }
 
 // 함성·엔딩 상태 초기화 — 질문 시작 등 다른 모드로 넘어갈 때 남은 값이 섞이지 않게
@@ -744,6 +829,32 @@ function endingGo(index) {
   emitModeChange();
 }
 
+// ── 관객 차단 ── clientId 기준(서버 메모리, 재시작 시 초기화). 관리자 화면엔 clientId 대신 차단 번호(b1…)만 보낸다
+const MAX_BLOCKED = 500;
+const blockedClients = new Map(); // clientId -> { id, nickname, sample, at, deleted }
+let blockSeq = 0;
+function isBlocked(clientId) { return !!clientId && blockedClients.has(clientId); }
+function emitBlockList(target) {
+  (target || io.to(ADMINS)).emit('blockList', [...blockedClients.values()].map((r) => ({ ...r })));
+}
+
+// 채팅 한 건 삭제 — 보관본·전송 대기열·핀·체크 목록에서 빼고 모든 화면에 알림 (개별 삭제·차단 일괄 삭제 공용)
+// except: 알리지 않을 방 — 차단 일괄 삭제 때 차단된 본인 화면에서는 글이 사라지지 않게(티 안 나게)
+function deleteChatMessage(id, except) {
+  const idx = recentMessages.findIndex(m => m.id === id);
+  if (idx !== -1) recentMessages.splice(idx, 1);
+  chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
+  if (appState.pinnedChat && appState.pinnedChat.id === id) {  // 핀된 걸 지우면 핀도 해제
+    appState.pinnedChat = null;
+    io.to(SCREENS).emit('chatPinned', { message: null });
+  }
+  if (appState.pinnedNotice && appState.pinnedNotice.id === id) clearPinnedNotice();
+  const starIdx = appState.starredChats.findIndex(m => m.id === id);
+  if (starIdx !== -1) { appState.starredChats.splice(starIdx, 1); emitChatStars(); } // 지운 글은 체크 목록에서도 뺌
+  (except ? io.except(except) : io).emit('chatDeleted', id);
+}
+const clientRoom = (clientId) => 'c:' + clientId; // 기기(clientId)별 방 — 차단된 본인 탭에만 보내거나 빼고 보낼 때
+
 // ── 핀 알림용 작성자 기록 ── 메시지 id → 작성 관객 clientId (외부로 보내지 않음, 오래된 것부터 버림)
 const MAX_MESSAGE_AUTHORS = 500;
 const messageAuthors = new Map();
@@ -751,6 +862,18 @@ function rememberAuthor(id, clientId) {
   messageAuthors.set(id, clientId);
   if (messageAuthors.size > MAX_MESSAGE_AUTHORS) messageAuthors.delete(messageAuthors.keys().next().value);
 }
+
+// ── 진행 중인 질문 보호 ── 결과가 아직 기록되지 않은 진행 중 모드(투표·주관식 접수·이모지 반응·함성 측정)에서
+// 다른 질문 시작·채팅 복귀·대기 화면·엔딩 시작은 관리자 화면이 확인을 받고 force: true를 붙였을 때만 실행한다.
+// (관리자 두 명이 동시에 조작해도, 한쪽 화면이 늦게 갱신됐어도 진행 중인 질문이 모르는 새 끝나지 않게)
+// 결과 화면(result·subjectiveResult·applauseResult)·대기·엔딩·채팅에서는 그대로 1클릭.
+const ACTIVE_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+function overwriteBlocked(data) {
+  return ACTIVE_MODES.includes(appState.mode) && asObj(data).force !== true;
+}
+
+// 관리자 조작 유효 시간 — 이보다 늦게 도착한 조작은 실행하지 않는다(화면이 보낸 시각 _t가 있을 때만 검사, 옛 화면은 그대로)
+const STALE_ADMIN_MS = 6000;
 
 // 접속 시 인증 키로 역할 결정 — 관객은 키 없이 그대로 접속(audience)
 function isValidClientId(v) { return typeof v === 'string' && v.length > 0 && v.length <= 64; }
@@ -770,6 +893,7 @@ io.on('connection', (socket) => {
   const role = socket.data.role;
   if (role === 'admin') socket.join([SCREENS, ADMINS]);
   else if (role === 'host') socket.join(SCREENS);
+  if (socket.clientId) socket.join(clientRoom(socket.clientId));
 
   // 핸들러 예외가 서버 전체를 죽이지 않도록 모든 이벤트를 감싼다
   const on = (event, fn) => socket.on(event, (...args) => {
@@ -782,20 +906,32 @@ io.on('connection', (socket) => {
     socket._authErrorSent = true;
     socket.emit('authError', { need });
   };
-  const onAdmin = (event, fn) => on(event, (...args) => {
-    if (role !== 'admin') return denied('admin');
-    fn(...args);
-  });
-  const onStaff = (event, fn) => on(event, (...args) => {
-    if (role !== 'admin' && role !== 'host') return denied('host');
-    fn(...args);
-  });
+  // 제작진 이벤트 공통 처리 — 마지막 인자가 함수(ack)면 결과를 { ok, reason }으로 돌려준다(콜백 없는 옛 화면은 그대로 동작).
+  // 핸들러는 거부할 때 사유 코드(문자열)를 return 한다 — 화면이 한국어 안내로 바꿔 보여 줌.
+  //  auth: 키 없음/틀림(매번 알림 — authError 이벤트는 소켓당 1번), error: 처리 중 오류
+  //  stale: 관리자 화면이 보낸 시각(서버 시계 기준 추정, 두 번째 인자 { _t })보다 STALE_ADMIN_MS 넘게 늦게 도착한 조작 —
+  //         와이파이 먹통·재연결 버퍼로 한참 뒤에 도착한 [실행]이 뒤늦게 LED를 바꾸지 않게 버린다
+  const staffHandler = (need, fn) => (...args) => {
+    const ack = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+    const reply = (reason) => { if (ack) ack(reason ? { ok: false, reason } : { ok: true }); };
+    const allowed = need === 'admin' ? role === 'admin' : (role === 'admin' || role === 'host');
+    if (!allowed) { denied(need); return reply('auth'); }
+    const sentAt = asObj(args[1])._t;
+    if (typeof sentAt === 'number' && Number.isFinite(sentAt) && Date.now() - sentAt > STALE_ADMIN_MS) return reply('stale');
+    let r;
+    try { r = fn(args[0]); }
+    catch (e) { reply('error'); throw e; }
+    if (r && typeof r === 'object') { if (ack) ack({ ok: true, ...r }); return; } // 성공 + 결과 정보(삭제한 글 수 등)
+    reply(typeof r === 'string' ? r : null);
+  };
+  const onAdmin = (event, fn) => on(event, staffHandler('admin', fn));
+  const onStaff = (event, fn) => on(event, staffHandler('host', fn));
 
   // 클라이언트 식별 (localStorage 기반 영구 ID) — 투표 중복/재접속 처리용
   on('identify', (clientId) => {
     if (!isValidClientId(clientId)) return;
     // 한 소켓의 clientId는 처음 정해진 값으로 고정 — 바꿔 가며 여러 번 투표하는 것 방지
-    if (!socket.clientId) socket.clientId = clientId;
+    if (!socket.clientId) { socket.clientId = clientId; socket.join(clientRoom(clientId)); }
     socket.emit('state', publicState(socket.clientId, socket.rooms.has(SCREENS)));
     // 핀 고정 순간 폰이 잠겨 있거나 다른 앱을 쓰느라 연결이 끊겨 있었으면 알림을 놓친다
     // → 다시 접속했을 때 내 채팅이 아직 고정 중이면 늦게라도 알려준다(late: 폰이 이미 본 알림이면 다시 띄우지 않음)
@@ -807,6 +943,9 @@ io.on('connection', (socket) => {
 
   // 연결 확인 — 폰이 다른 앱에서 돌아왔을 때 연결이 살아 있는지 바로 확인하는 용도
   on('alive', (ack) => { if (typeof ack === 'function') ack(true); });
+
+  // 서버 시계·응답 확인 — 관리자 화면이 몇 초마다 물어 '서버 응답 없음'을 알아채고, 조작에 붙일 서버 기준 시각을 맞춘다
+  on('serverTime', (ack) => { if (typeof ack === 'function') ack({ now: Date.now(), bootId: BOOT_ID, startedAt: SERVER_STARTED_AT }); });
 
   // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
   // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
@@ -866,7 +1005,7 @@ io.on('connection', (socket) => {
   // 새 연결에 최근 메시지 전송 — 관객·LED는 최근 50개, 관리자·운영진은 최근 300개
   // (관리자가 새로고침해도 추적하던 글이 피드에서 사라지지 않게)
   socket.emit('history', role === 'admin' || role === 'host' ? recentMessages : recentMessages.slice(-MAX_MESSAGES));
-  if (role === 'admin') emitChatStars(socket); // 체크한 채팅(관리자끼리 공유) 복원
+  if (role === 'admin') { emitChatStars(socket); emitBlockList(socket); } // 체크한 채팅·차단 목록(관리자끼리 공유) 복원
 
   // 채팅 메시지 (채팅·대기·엔딩 모드에서 허용)
   // ack(선택): 보낸 사람에게 결과를 알려준다 — { ok: true } 또는 { ok: false, reason: 'mode'|'rate'|'empty' }
@@ -896,6 +1035,11 @@ io.on('connection', (socket) => {
       text,
       isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
     };
+    // 차단된 관객: 본인 화면에만 보낸 것처럼 보여 주고(티 안 나게) LED·다른 관객·관리자에게는 보내지 않는다
+    if (!socket.isOperator && isBlocked(socket.clientId)) {
+      io.to(clientRoom(socket.clientId)).emit('chat', message);
+      return reply({ ok: true });
+    }
     // 핀 알림용으로 관객 작성자만 기억(운영진 메시지는 알릴 대상 없음)
     if (!socket.isOperator && socket.clientId) rememberAuthor(message.id, socket.clientId);
     recentMessages.push(message);
@@ -953,70 +1097,82 @@ io.on('connection', (socket) => {
     const text = maskProfanity(raw); // 비속어 * 처리
 
     appState.answers[socket.clientId] = text;
+    // 차단된 관객: 받은 것처럼 답하고(티 안 나게) 목록·LED·집계에는 넣지 않는다
+    if (isBlocked(socket.clientId)) { socket.emit('answerAccepted'); return; }
     const entry = { id: appState.answerList.length + 1, text };
     appState.answerList.push(entry);
+    appState.answerAuthors.set(entry.id, socket.clientId);
+    const key = answerKey(text);
+    const hidden = appState.hiddenKeys.has(key); // 묶음째 숨긴 답과 같은 답 → 처음부터 숨김(LED에 흘리지 않음)
+    if (hidden) appState.hiddenAnswers.push(entry.id);
     // LED 흘려보내기 + 관리자 목록/카운트용 (익명: 텍스트만 공개)
     io.to(SCREENS).emit('subjectiveAnswer', {
       id: entry.id,
       text,
-      key: answerKey(text), // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
-      answerCount: Object.keys(appState.answers).length,
+      key, // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
+      hidden, // true면 LED는 흘리지 않고 관리자 목록엔 숨김으로 표시
+      answerCount: appState.answerList.length,
     });
     socket.emit('answerAccepted'); // 본인 확인용
   });
 
   // ── 관리자(제작진) 전용 이벤트 ──
   onAdmin('admin:startVoting', (data) => {
-    if (appState.mode === 'voting') return; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
+    if (appState.mode === 'voting') return 'votingRunning'; // 진행 중 재시작(중복 클릭·관리자 여러 명) 시 표 초기화 방지
     const d = asObj(data);
     const question = cleanStr(d.question, MAX_QUESTION_LENGTH);
     const duration = cleanVotingSeconds(d.duration) ?? DEFAULT_VOTING_SECONDS;
-    if (!question) return;
+    if (!question) return 'empty';
     const type = d.type === 'choice' ? 'choice' : 'yesno';
     let options;
     if (type === 'choice') {
       options = cleanOptions(d.options);
-      if (options.length < 2) return; // 보기 2개 미만이면 무시
+      if (options.length < 2) return 'options'; // 보기 2개 미만이면 무시
     } else {
       options = ['YES', 'NO'];
     }
+    if (overwriteBlocked(d)) return 'busy';
     startVoting(question, options, duration, type);
   });
 
   onAdmin('admin:endVoting', () => {
+    if (appState.mode !== 'voting') return 'mode';
     endVoting();
   });
 
   onAdmin('admin:startSubjective', (data) => {
-    if (appState.mode === 'subjective') return; // 접수 중 재시작 시 답변 초기화 방지
+    if (appState.mode === 'subjective') return 'subjectiveRunning'; // 접수 중 재시작 시 답변 초기화 방지
     const question = cleanStr(asObj(data).question, MAX_QUESTION_LENGTH);
-    if (!question) return;
+    if (!question) return 'empty';
     let maxLen = parseInt(asObj(data).maxLen, 10);
     if (!Number.isFinite(maxLen) || maxLen < 1) maxLen = MAX_ANSWER_LENGTH;
     maxLen = Math.min(MAX_ANSWER_LENGTH, maxLen); // 상한 20 (LED 가독성)
+    if (overwriteBlocked(data)) return 'busy';
     startSubjective(question, maxLen);
   });
 
   onAdmin('admin:startEmoji', (data) => {
     const question = cleanStr(asObj(data).question, MAX_QUESTION_LENGTH);
-    if (!question) return;
+    if (!question) return 'empty';
     // emojis: [{emoji, label}] — 라벨(뜻)은 관객 폰 버튼에 함께 표시
     const emojiOptions = cleanEmojis(asObj(data).emojis);
-    if (emojiOptions.length < 2) return; // 이모지 2개 미만이면 무시
+    if (emojiOptions.length < 2) return 'emojis'; // 이모지 2개 미만이면 무시
+    if (overwriteBlocked(data)) return 'busy';
     startEmoji(question, emojiOptions);
   });
 
   onAdmin('admin:endSubjective', () => {
+    if (appState.mode !== 'subjective') return 'mode';
     endSubjective();
   });
 
   // 관리자: 채팅 핀 고정 — LED 중앙에 해당 채팅을 팝업으로 표시 (채팅 모드 전용)
   onAdmin('admin:pinChat', (data) => {
-    if (appState.mode !== 'chat') return;
+    if (appState.mode !== 'chat') return 'pinMode';
     const d = asObj(data);
     const nickname = cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
     const text = maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
-    if (!text) return;
+    if (!text) return 'empty';
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
     // 운영자 채팅이면 공지 핀(LED·관객 폰 맨 위 띠). 운영자 여부는 서버 보관본 기준(지난 채팅이면 관리자가 보낸 값)
     const known = recentMessages.find(m => m.id === id) || appState.starredChats.find(m => m.id === id);
@@ -1051,7 +1207,7 @@ io.on('connection', (socket) => {
   // 메시지 내용째 보관 → 최근 채팅(300개)에서 밀려나도, 새로 연 관리자 화면에서도 체크 목록에서 바로 핀할 수 있다.
   onAdmin('admin:toggleChatStar', (data) => {
     const d = asObj(data);
-    if (typeof d.id !== 'string' || d.id.length > 64) return;
+    if (typeof d.id !== 'string' || d.id.length > 64) return 'invalid';
     const idx = appState.starredChats.findIndex(m => m.id === d.id);
     if (idx !== -1) appState.starredChats.splice(idx, 1);
     else {
@@ -1062,7 +1218,7 @@ io.on('connection', (socket) => {
         text: maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH)),
         isOperator: d.isOperator === true,
       };
-      if (!m.text) return;
+      if (!m.text) return 'empty';
       appState.starredChats.push({ id: m.id, nickname: m.nickname, text: m.text, isOperator: !!m.isOperator });
       if (appState.starredChats.length > 200) appState.starredChats.shift(); // 과도한 누적 방지
     }
@@ -1071,18 +1227,52 @@ io.on('connection', (socket) => {
 
   // 관리자: 개별 채팅 삭제 — 부적절한 메시지를 즉시 내림. 모든 화면에서 사라진다.
   onStaff('admin:deleteMessage', (id) => {
-    if (typeof id !== 'string') return;
-    const idx = recentMessages.findIndex(m => m.id === id);
-    if (idx !== -1) recentMessages.splice(idx, 1);
-    chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
-    if (appState.pinnedChat && appState.pinnedChat.id === id) {  // 핀된 걸 지우면 핀도 해제
-      appState.pinnedChat = null;
-      io.to(SCREENS).emit('chatPinned', { message: null });
+    if (typeof id !== 'string') return 'invalid';
+    deleteChatMessage(id);
+  });
+
+  // 관리자: 관객 차단 — { messageId } (채팅 항목) 또는 { answerId } (주관식 답변 항목)로 작성자를 찾는다(clientId는 화면에 보내지 않음).
+  // 차단된 관객의 채팅·주관식 답변은 서버가 조용히 버린다(본인 화면엔 보낸 것처럼). 투표·하트·이모지 반응은 그대로 둔다
+  // (내용이 없는 1인 1표·속도 제한 반응이라 화면에 글이 노출될 위험이 없음). 최근 글은 모두 지우고(chatDeleted), 이번 질문의 답도 숨긴다.
+  onAdmin('admin:blockClient', (data) => {
+    const d = asObj(data);
+    let cid = null, nickname = '', sample = '';
+    if (typeof d.messageId === 'string') {
+      cid = messageAuthors.get(d.messageId) || null;
+      const m = recentMessages.find((x) => x.id === d.messageId);
+      nickname = m ? m.nickname : cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
+      sample = m ? m.text : maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
+    } else if (Number.isInteger(d.answerId)) {
+      cid = appState.answerAuthors.get(d.answerId) || null;
+      const a = appState.answerList.find((x) => x.id === d.answerId);
+      sample = a ? a.text : '';
+    } else return 'invalid';
+    if (!cid) return 'noAuthor'; // 오래돼 작성자 기록이 없거나(최근 500개 밖·재시작 전) 운영진 글
+    if (!nickname) for (const s of io.sockets.sockets.values()) if (s.clientId === cid && activeNicknames.get(s.id)) { nickname = activeNicknames.get(s.id); break; }
+    let rec = blockedClients.get(cid);
+    if (!rec) {
+      rec = { id: 'b' + (++blockSeq), nickname: nickname || '(닉네임 모름)', sample: cleanStr(sample, 40), at: Date.now(), deleted: 0 };
+      blockedClients.set(cid, rec);
+      if (blockedClients.size > MAX_BLOCKED) blockedClients.delete(blockedClients.keys().next().value);
     }
-    if (appState.pinnedNotice && appState.pinnedNotice.id === id) clearPinnedNotice();
-    const starIdx = appState.starredChats.findIndex(m => m.id === id);
-    if (starIdx !== -1) { appState.starredChats.splice(starIdx, 1); emitChatStars(); } // 지운 글은 체크 목록에서도 뺌
-    io.emit('chatDeleted', id);
+    // 최근 글 일괄 삭제 — 작성자 기록(최근 500개)에 남은 그 사람 글 전부
+    let deleted = 0;
+    for (const [id, c] of [...messageAuthors]) if (c === cid) { deleteChatMessage(id, clientRoom(cid)); messageAuthors.delete(id); deleted++; }
+    rec.deleted += deleted;
+    // 이번 주관식 질문에 낸 답도 숨김
+    const answerIds = [...appState.answerAuthors].filter(([, c]) => c === cid).map(([id]) => id);
+    let hidden = 0;
+    if (answerIds.length && (appState.mode === 'subjective' || appState.mode === 'subjectiveResult')) { setAnswersHidden(answerIds, true); hidden = answerIds.length; }
+    emitBlockList();
+    return { deleted, hidden };
+  });
+
+  onAdmin('admin:unblockClient', (data) => {
+    const id = asObj(data).id;
+    for (const [cid, rec] of blockedClients) {
+      if (rec.id === id) { blockedClients.delete(cid); emitBlockList(); return; }
+    }
+    return 'notFound';
   });
 
   // 관리자: 질문 사전 등록 목록 조회/저장 — 다른 관리자 PC와 실시간 공유
@@ -1090,7 +1280,7 @@ io.on('connection', (socket) => {
     socket.emit('presets', questionPresets);
   });
   onAdmin('admin:setPresets', (list) => {
-    if (!Array.isArray(list)) return;
+    if (!Array.isArray(list)) return 'invalid';
     questionPresets = list
       .slice(0, 100) // 과도한 등록 방지
       .map(cleanPreset).filter(Boolean); // 형식 검증 (문자열·길이·유형 화이트리스트)
@@ -1117,19 +1307,36 @@ io.on('connection', (socket) => {
   });
 
   // 관리자: 답변 전체 목록 요청 (제작진이 훑어보고 픽하기 위함)
+  // key: 같은 답 묶음 키(워드클라우드와 같은 규칙) — [같은 답 모두 숨김]용
   onAdmin('admin:getAnswers', () => {
     socket.emit('answerList', {
-      answers: appState.answerList,
+      answers: appState.answerList.map((a) => ({ id: a.id, text: a.text, key: answerKey(a.text) })),
       picked: appState.pickedAnswers,
       starred: appState.starredAnswers,
+      hidden: appState.hiddenAnswers,
     });
+  });
+
+  // 관리자: 주관식 답변 숨김/되돌리기 — { id, hidden, sameKey }  sameKey: 같은 묶음(answerKey)의 답 전체
+  // 숨긴 답은 LED 흘림 대기열·화면에서 바로 빠지고(answerHidden), 워드클라우드·결과 기록·엔딩·폰 클라우드 집계에서 제외.
+  // 마감 뒤(subjectiveResult)에 바꾸면 이번 결과 기록과 화면의 클라우드도 다시 집계해 보낸다.
+  onAdmin('admin:hideAnswer', (data) => {
+    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return 'mode';
+    const d = asObj(data);
+    const entry = appState.answerList.find((a) => a.id === d.id);
+    if (!entry) return 'notFound';
+    const hide = d.hidden !== false;
+    const key = answerKey(entry.text);
+    const ids = (d.sameKey === true ? appState.answerList.filter((a) => answerKey(a.text) === key) : [entry]).map((a) => a.id);
+    if (d.sameKey === true) { if (hide) appState.hiddenKeys.add(key); else appState.hiddenKeys.delete(key); } // 묶음째면 앞으로 올 같은 답도
+    setAnswersHidden(ids, hide);
   });
 
   // 관리자: 별표(후보) 토글 — 작가 1차 선별용, 모든 관리자 화면에 공유
   onAdmin('admin:toggleStar', (data) => {
     const id = data && data.id;
     const entry = appState.answerList.find(a => a.id === id);
-    if (!entry) return;
+    if (!entry) return 'notFound';
     const idx = appState.starredAnswers.indexOf(id);
     const starred = idx === -1;
     if (starred) appState.starredAnswers.push(id);
@@ -1140,18 +1347,21 @@ io.on('connection', (socket) => {
   // 관리자: 답변 픽 → LED 스포트라이트로 크게 표시 (접수 중/마감 후 모두 가능)
   onAdmin('admin:pickAnswer', (data) => {
     const id = data && data.id;
-    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return;
+    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return 'mode';
     const entry = appState.answerList.find(a => a.id === id);
-    if (!entry) return;
+    if (!entry) return 'notFound';
+    if (appState.hiddenAnswers.includes(id)) return 'hidden'; // 숨긴 답은 LED에 크게 띄우지 않음
     if (!appState.pickedAnswers.includes(id)) appState.pickedAnswers.push(id);
     io.to(SCREENS).emit('answerPicked', { id: entry.id, text: entry.text });
   });
 
-  onAdmin('admin:returnToChat', () => {
+  onAdmin('admin:returnToChat', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     returnToChat();
   });
 
-  onAdmin('admin:showIdle', () => {
+  onAdmin('admin:showIdle', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     showIdle();
   });
 
@@ -1161,23 +1371,26 @@ io.on('connection', (socket) => {
     const seconds = Number.isFinite(n)
       ? Math.min(MAX_APPLAUSE_SECONDS, Math.max(MIN_APPLAUSE_SECONDS, n))
       : 10;
+    if (overwriteBlocked(data)) return 'busy';
     startApplause(seconds);
   });
 
-  onAdmin('admin:startEnding', () => {
+  onAdmin('admin:startEnding', (data) => {
+    if (overwriteBlocked(data)) return 'busy';
     startEnding();
   });
 
   onAdmin('admin:endingGo', (data) => {
     const index = asObj(data).index;
-    if (typeof index !== 'number' || !Number.isFinite(index)) return;
+    if (typeof index !== 'number' || !Number.isFinite(index)) return 'invalid';
+    if (appState.mode !== 'ending') return 'mode';
     endingGo(Math.floor(index));
   });
 
   // LED 연출 on/off — 화면들에 즉시 반영
   onAdmin('admin:setEffects', (data) => {
     const d = asObj(data);
-    if (typeof d.heartBurst !== 'boolean') return;
+    if (typeof d.heartBurst !== 'boolean') return 'invalid';
     appState.effects.heartBurst = d.heartBurst;
     io.to(SCREENS).emit('effectsChange', { effects: { ...appState.effects } });
   });
@@ -1194,9 +1407,9 @@ io.on('connection', (socket) => {
   // id로 지운다 — 관리자 두 명이 동시에 지우거나 20건 상한으로 밀려나도 엉뚱한 항목이 지워지지 않게(모르는 id는 무시)
   onAdmin('admin:removeResult', (data) => {
     const id = asObj(data).id;
-    if (!Number.isInteger(id)) return; // 정수 id만
+    if (!Number.isInteger(id)) return 'invalid'; // 정수 id만
     const index = resultsHistory.findIndex(e => e.id === id);
-    if (index < 0) return; // 이미 지워졌거나 밀려난 항목
+    if (index < 0) return 'notFound'; // 이미 지워졌거나 밀려난 항목
     resultsHistory.splice(index, 1);
     if (appState.mode === 'ending') {
       // 지운 결과가 지금 슬라이드보다 앞이면 한 칸 당겨서 같은 슬라이드를 유지한다
@@ -1210,7 +1423,20 @@ io.on('connection', (socket) => {
 
   // 관리자: 결과 기록 요약 목록 조회 (화면 로드 시)
   onAdmin('admin:getResults', () => {
-    socket.emit('results', resultsSummaryList());
+    emitResults(socket);
+  });
+
+  // 관리자: 브라우저에 백업해 둔 결과 기록 복원 — 서버 재시작으로 기록이 비었을 때만(있으면 섞이지 않게 거부)
+  onAdmin('admin:restoreResults', (data) => {
+    if (resultsHistory.length) return 'notEmpty';
+    const list = asObj(data).results;
+    if (!Array.isArray(list)) return 'invalid';
+    const cleaned = list.slice(-MAX_RESULTS).map(cleanResultEntry).filter(Boolean);
+    if (!cleaned.length) return 'invalid';
+    cleaned.forEach(recordResult);
+    if (appState.mode === 'ending') endingGo(appState.endingIndex);
+    else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
+    emitResults();
   });
 
   // 함성 레벨 (LED → 서버) — 측정 중에만, 운영진 키로 접속해 registerScreen한 화면 소켓만, 소켓당 초당 15회까지
