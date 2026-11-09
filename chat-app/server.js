@@ -269,7 +269,8 @@ function persistPresets() {
   catch (e) { console.error('프리셋 저장 실패:', e.message); }
 }
 let questionPresets = loadPresets();
-const MAX_MESSAGES = 50;
+const MAX_MESSAGES = 50;        // 관객·LED에게 주는 최근 채팅 수(history)
+const MAX_STAFF_MESSAGES = 300; // 서버 보관 상한 — 관리자·운영진 화면은 새로고침·재연결 때 이만큼 받는다(목록 상한과 같음)
 const MAX_CHAT_LENGTH = 200; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 const MAX_OPERATOR_CHAT_LENGTH = 100; // 운영진(/host) 채팅 상한 — 화면 입력칸과 같게
 
@@ -860,8 +861,9 @@ io.on('connection', (socket) => {
     socket.isOperator = true;
   });
 
-  // 새 연결에 최근 메시지 전송
-  socket.emit('history', recentMessages);
+  // 새 연결에 최근 메시지 전송 — 관객·LED는 최근 50개, 관리자·운영진은 최근 300개
+  // (관리자가 새로고침해도 추적하던 글이 피드에서 사라지지 않게)
+  socket.emit('history', role === 'admin' || role === 'host' ? recentMessages : recentMessages.slice(-MAX_MESSAGES));
   if (role === 'admin') emitChatStars(socket); // 체크한 채팅(관리자끼리 공유) 복원
 
   // 채팅 메시지 (채팅·대기·엔딩 모드에서 허용)
@@ -895,7 +897,7 @@ io.on('connection', (socket) => {
     // 핀 알림용으로 관객 작성자만 기억(운영진 메시지는 알릴 대상 없음)
     if (!socket.isOperator && socket.clientId) rememberAuthor(message.id, socket.clientId);
     recentMessages.push(message);
-    if (recentMessages.length > MAX_MESSAGES) recentMessages.shift();
+    if (recentMessages.length > MAX_STAFF_MESSAGES) recentMessages.shift();
     broadcastChat(message);
     reply({ ok: true });
   });
@@ -1044,14 +1046,14 @@ io.on('connection', (socket) => {
   });
 
   // 관리자: 채팅 체크(즐겨찾기) 토글 — 좋은 글을 모아 두고 나중에 핀. LED·관객엔 안 보임, 관리자 화면끼리 공유.
-  // 메시지 내용째 보관 → 최근 채팅(50개)에서 밀려나도, 새로 연 관리자 화면에서도 체크 목록에서 바로 핀할 수 있다.
+  // 메시지 내용째 보관 → 최근 채팅(300개)에서 밀려나도, 새로 연 관리자 화면에서도 체크 목록에서 바로 핀할 수 있다.
   onAdmin('admin:toggleChatStar', (data) => {
     const d = asObj(data);
     if (typeof d.id !== 'string' || d.id.length > 64) return;
     const idx = appState.starredChats.findIndex(m => m.id === d.id);
     if (idx !== -1) appState.starredChats.splice(idx, 1);
     else {
-      // 서버 보관본(최근 50개)에 있으면 그 내용을, 밀려난 지난 채팅이면 관리자 화면이 보낸 내용을 쓴다
+      // 서버 보관본(최근 300개)에 있으면 그 내용을, 밀려난 지난 채팅이면 관리자 화면이 보낸 내용을 쓴다
       const m = recentMessages.find(x => x.id === d.id) || {
         id: d.id,
         nickname: cleanStr(d.nickname, MAX_NICKNAME_LENGTH),
