@@ -3698,11 +3698,14 @@
       el.className = 'reaction-float';
       el.textContent = text;
       el.style.left = (8 + Math.random() * 80) + '%';   // 랜덤 가로 위치
-      const size = Math.round(28 + Math.random() * 26);
+      // 크기·떠오르는 높이·흔들림은 화면 배율(--u)을 따름 — 설계 기준 화면(세로 800·가로 1040 폭)에선 예전과 같은 28~54px·140px
+      const u = uScale;
+      const size = Math.round((28 + Math.random() * 26) * u);
+      const rise = 140 * u;
       const H = reactionLayer.clientHeight;
       if (votingLayer.classList.contains('active') && belowQ && H) {
-        // 질문 화면: 떠오르는 높이(140px)만큼 띄워 질문 카드 글자를 가리지 않게 — 카드 아래 ~ 화면 아래 사이
-        const min = belowQ + 140 + size, max = Math.max(min, H * 0.9 - size);
+        // 질문 화면: 떠오르는 높이만큼 띄워 질문 카드 글자를 가리지 않게 — 카드 아래 ~ 화면 아래 사이
+        const min = belowQ + rise + size, max = Math.max(min, H * 0.9 - size);
         el.style.top = Math.min(max, min + Math.random() * (max - min)) + 'px';
       } else {
         el.style.top = (25 + Math.random() * 60) + '%';   // 랜덤 세로 위치
@@ -3710,11 +3713,11 @@
       el.style.fontSize = size + 'px'; // 랜덤 크기
       reactionLayer.appendChild(el);
 
-      const driftX = Math.random() * 60 - 30; // 좌우로 살짝 흔들리며 상승
+      const driftX = (Math.random() * 60 - 30) * u; // 좌우로 살짝 흔들리며 상승
       el.animate([
         { transform: 'translate(0, 0) scale(0)', opacity: 0 },
-        { transform: `translate(${driftX * 0.3}px, -25px) scale(1.2)`, opacity: 1, offset: 0.15 },
-        { transform: `translate(${driftX}px, -140px) scale(1)`, opacity: 0 },
+        { transform: `translate(${driftX * 0.3}px, ${-25 * u}px) scale(1.2)`, opacity: 1, offset: 0.15 },
+        { transform: `translate(${driftX}px, ${-rise}px) scale(1)`, opacity: 0 },
       ], {
         duration: 1800 + Math.random() * 700,
         easing: 'ease-out',
