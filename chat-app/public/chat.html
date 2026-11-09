@@ -766,8 +766,8 @@
     <div id="input-area">
       <button class="react-btn" id="react-heart" onclick="sendReaction('heart')">❤️</button>
       <button class="react-btn" id="react-thumbs" onclick="sendReaction('thumbs')">👍</button>
-      <textarea id="msg-input" placeholder="메시지 입력..." rows="1" maxlength="100"></textarea>
-      <span id="char-counter">0/100</span>
+      <textarea id="msg-input" placeholder="메시지 입력..." rows="1" maxlength="200"></textarea>
+      <span id="char-counter">0/200</span>
       <button id="send-btn" onclick="sendMessage()" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
@@ -1419,7 +1419,7 @@
       showNotice('연결이 끊겨 보내지 못했어요. 연결되면 다시 보내주세요.', { warn: true });
       return;
     }
-    const sent = text.slice(0, 100);
+    const sent = text.slice(0, MAX_CHAT_LENGTH);
     // 서버가 결과를 알려준다 — 거절되면 이유를 안내하고 보내려던 내용을 되살린다
     socket.timeout(5000).emit('chat', { nickname: currentNickname, text: sent }, (err, res) => {
       if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
@@ -1441,11 +1441,12 @@
     counter.classList.remove('visible', 'limit');
   }
 
+  const MAX_CHAT_LENGTH = 200; // 서버 server.js MAX_CHAT_LENGTH와 같게 유지
+
   // 입력창 auto-resize + 전송 버튼 활성화
   document.addEventListener('DOMContentLoaded', () => {
     requestNickname(); // 페이지 로드 시 서버에서 첫 닉네임 배정
 
-    const MAX_CHAT_LENGTH = 100;
     const input = document.getElementById('msg-input');
     const counter = document.getElementById('char-counter');
     input.addEventListener('input', () => {

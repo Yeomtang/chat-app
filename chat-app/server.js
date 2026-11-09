@@ -201,7 +201,7 @@ function persistPresets() {
 }
 let questionPresets = loadPresets();
 const MAX_MESSAGES = 50;
-const MAX_CHAT_LENGTH = 100; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
+const MAX_CHAT_LENGTH = 200; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 
 const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
 const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 12자 이하지만
