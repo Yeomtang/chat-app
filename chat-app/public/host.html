@@ -160,10 +160,14 @@
     }
     .mode-hint-timer {
       flex-shrink: 0;
+      min-width: 3em;    /* 고정 폭(최대 '600초') — 초가 줄어 자릿수가 바뀌어도 질문 문구 칸 폭·말줄임 위치가 흔들리지 않게 */
+      text-align: right;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
       color: var(--ink);
     }
+    .mode-hint-timer:empty { display: none; } /* 투표 중이 아닐 땐 자리도 비우지 않음 */
 
     #chat-header {
       background: var(--surface);
