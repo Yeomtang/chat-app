@@ -212,6 +212,7 @@
     #messages {
       flex: 1;
       overflow-y: auto;
+      overflow-anchor: none; /* 오래된 채팅을 뺄 때 스크롤 보정은 JS가 직접(trimMessages) — 브라우저 자동 보정과 겹치지 않게 */
       padding: 12px 16px;
       display: flex;
       flex-direction: column;
@@ -588,12 +589,14 @@
         // 운영진이 위로 스크롤해 삭제하는 중이면 딸려 내려가지 않게, 맨 아래일 때만 따라감
         const atBottom = isNearBottom();
         addMessage(msg);
+        trimMessages(atBottom);
         if (atBottom) scrollToBottom();
       });
       // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
       nickSocket.on('chatBatch', (list) => {
         const atBottom = isNearBottom();
         list.forEach(addMessage);
+        trimMessages(atBottom);
         if (atBottom) scrollToBottom();
       });
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
@@ -773,6 +776,19 @@
       group.appendChild(del);
     }
     messages.appendChild(group);
+  }
+
+  // 목록 DOM 상한 — 최근 MAX_LIST개만 남기고 오래된 것부터 뺌(채팅이 몰려도 화면이 무거워지지 않게).
+  // 위로 올려 읽는(삭제하려는) 중이면 보던 채팅이 제자리에 머물도록 뺀 높이만큼 스크롤 보정
+  const MAX_LIST = 300;
+  function trimMessages(atBottom) {
+    const box = document.getElementById('messages');
+    const extra = box.children.length - MAX_LIST;
+    if (extra <= 0) return;
+    const anchor = atBottom ? null : box.children[extra]; // 맨 아래면 어차피 맨 아래로 — 위치를 재지 않음(레이아웃 강제 계산 줄임)
+    const before = anchor ? anchor.offsetTop : 0;
+    for (let i = 0; i < extra; i++) box.firstElementChild.remove();
+    if (anchor) box.scrollTop -= before - anchor.offsetTop;
   }
 
   function scrollToBottom() {
