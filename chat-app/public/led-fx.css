@@ -762,6 +762,15 @@
   display: flex;
   animation: fxNoticeOut 0.4s ease forwards;
 }
+/* 채팅 레이어 안(헤더 바로 아래)에 끼워 넣는 배치 — 헤더를 덮지 않고, 띠가 있는 동안 아래 채팅 영역이 그만큼 내려가 가려지지 않는다 */
+.fx-notice.fx-notice-flow {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  flex-shrink: 0;
+  margin: calc(12px * var(--u)) calc(20px * var(--u)) 0;
+}
 @keyframes fxNoticeOut { to { opacity: 0; transform: translateY(calc(-12px * var(--u))); } }
 .fx-notice-icon {
   flex-shrink: 0;

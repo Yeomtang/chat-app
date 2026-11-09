@@ -509,6 +509,10 @@
     .chat-item:hover { background: #e5e5ea; }
     .chat-item.starred { background: #fff8e6; }
     .chat-item.pinned { background: #fff3cd; }
+    /* 질문·결과·대기·엔딩 중(채팅 모드가 아닐 때)은 핀·공지 불가 — 눌리는 것처럼 보이지 않게 (서버도 채팅 모드에서만 받음) */
+    .chat-feed.pin-locked .chat-item { cursor: default; }
+    .chat-feed.pin-locked .chat-item:not(.starred):not(.pinned):hover { background: #f2f2f7; }
+    .chat-feed.pin-locked .chat-item .chat-body { opacity: 0.55; }
 
     /* 채팅 항목 배지 공용 — 운영진(핀하면 공지 띠) / 지금 고정 중(체크 표시와 배경색이 비슷해 글자로 구분) */
     .chat-item .chat-op-badge,
@@ -621,6 +625,16 @@
       <span class="status-label">LED 채팅창</span>
       <span class="status-value" id="status-chatpaused">실시간 표시 중</span>
     </div>
+    <!-- 대기 화면(입장 QR) 전환 — 지금 모드를 보는 곳에서 바로. 대기 화면 중에는 [채팅으로 돌아가기]로 바뀜 -->
+    <button class="btn btn-secondary" id="idle-btn" onclick="showIdleNow()">대기 화면 띄우기</button>
+  </div>
+
+  <!-- 진행 제어 (현재 상태 바로 아래) -->
+  <div class="card">
+    <h2>진행 제어</h2>
+    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>선택형 투표 종료</button>
+    <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
+    <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
   </div>
 
   <!-- 질문 미리 등록 -->
@@ -671,30 +685,8 @@
     <label id="question-maxlen-label" style="display:none">최대 글자수 (1~20)</label>
     <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
     <label id="duration-label">투표 시간 (초) — 선택형 전용</label>
-    <input type="number" id="duration-input" value="30" min="5" max="600">
+    <input type="number" id="duration-input" value="30" min="5" max="600" oninput="renderPresets()"> <!-- 시간 없는 예전 프리셋 목록의 초 표시도 함께 갱신 -->
     <button class="btn btn-primary" onclick="startQuestionNow()">질문 시작</button>
-  </div>
-
-  <div class="card">
-    <h2>진행 제어</h2>
-    <button class="btn btn-danger" id="end-btn" onclick="endVotingNow()" disabled>선택형 투표 종료</button>
-    <button class="btn btn-danger" id="subj-end-btn" onclick="endSubjectiveNow()" disabled>주관식 답변 마감 (워드클라우드 표시)</button>
-    <button class="btn btn-secondary" id="return-btn" onclick="returnToChatNow()" disabled>채팅 모드로 복귀</button>
-    <button class="btn btn-secondary" id="idle-btn" onclick="showIdleNow()">대기 화면 띄우기</button>
-  </div>
-
-  <!-- 함성 미터 -->
-  <div class="card">
-    <h2>함성 미터</h2>
-    <label>측정 시간 (초, 5~30)</label>
-    <input type="number" id="applause-seconds" value="10" min="5" max="30">
-    <button class="btn btn-primary" id="applause-start-btn" onclick="startApplauseNow()">함성 미터 시작</button>
-    <div class="meter-bar"><div class="meter-fill" id="applause-bar-fill"></div></div>
-    <div class="status-row">
-      <span class="status-label">최고 함성</span>
-      <span class="status-value" id="applause-peak">0%</span>
-    </div>
-    <p class="note" style="margin: 10px 0 0;">LED 중 한 대를 /led?mic=1&amp;key=운영진키 로 열고 마이크를 허용해야 측정됩니다.</p>
   </div>
 
   <!-- 엔딩 · 오늘의 결과 -->
@@ -724,6 +716,20 @@
   <div class="card">
     <h2>연출 설정</h2>
     <button class="btn btn-secondary" id="effects-heartburst-btn" onclick="toggleHeartBurst()">하트 폭발 연출 끄기</button>
+  </div>
+
+  <!-- 함성 미터 -->
+  <div class="card">
+    <h2>함성 미터</h2>
+    <label>측정 시간 (초, 5~30)</label>
+    <input type="number" id="applause-seconds" value="10" min="5" max="30">
+    <button class="btn btn-primary" id="applause-start-btn" onclick="startApplauseNow()">함성 미터 시작</button>
+    <div class="meter-bar"><div class="meter-fill" id="applause-bar-fill"></div></div>
+    <div class="status-row">
+      <span class="status-label">최고 함성</span>
+      <span class="status-value" id="applause-peak">0%</span>
+    </div>
+    <p class="note" style="margin: 10px 0 0;">LED 중 한 대를 /led?mic=1&amp;key=운영진키 로 열고 마이크를 허용해야 측정됩니다.</p>
   </div>
 
   </div><!-- /admin-col 왼쪽 -->
@@ -916,11 +922,10 @@
     const endBtn = document.getElementById('end-btn');
     const subjEndBtn = document.getElementById('subj-end-btn');
     const returnBtn = document.getElementById('return-btn');
-    const idleBtn = document.getElementById('idle-btn');
     endBtn.disabled = currentState.mode !== 'voting';
     subjEndBtn.disabled = currentState.mode !== 'subjective';
     returnBtn.disabled = currentState.mode === 'chat';
-    idleBtn.disabled = currentState.mode === 'idle';
+    renderIdleBtn();
 
     if (timerInterval) clearTimeout(timerInterval);
     timerInterval = null;
@@ -1111,7 +1116,35 @@
     socket.emit('admin:setEffects', { heartBurst: !on });
   }
 
+  // ── 대기 화면 버튼 (현재 상태 카드) ──
+  // 서버 showIdle은 진행 중인 질문을 결과 기록 없이 바로 끝낸다 → 질문 진행 중에는 2단 확인(결과 기록 비우기와 같은 패턴).
+  // 결과 화면·엔딩은 이미 기록된 뒤라 바로 전환. 대기 화면 중에는 [채팅으로 돌아가기].
+  const IDLE_CONFIRM_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+  let idleConfirming = false, idleConfirmTimer = null;
+  function renderIdleBtn() {
+    const btn = document.getElementById('idle-btn');
+    const mode = currentState ? currentState.mode : 'chat';
+    if (!IDLE_CONFIRM_MODES.includes(mode)) { idleConfirming = false; clearTimeout(idleConfirmTimer); }
+    if (mode === 'idle') {
+      btn.textContent = '대기 화면 중 · 채팅으로 돌아가기';
+      btn.className = 'btn btn-primary';
+    } else {
+      btn.textContent = idleConfirming ? '진행 중인 질문이 끝나요 · 한 번 더 누르면 대기 화면' : '대기 화면 띄우기';
+      btn.className = 'btn ' + (idleConfirming ? 'btn-danger' : 'btn-secondary');
+    }
+  }
   function showIdleNow() {
+    const mode = currentState ? currentState.mode : 'chat';
+    if (mode === 'idle') { socket.emit('admin:returnToChat'); return; }
+    if (IDLE_CONFIRM_MODES.includes(mode) && !idleConfirming) {
+      idleConfirming = true;
+      renderIdleBtn();
+      idleConfirmTimer = setTimeout(() => { idleConfirming = false; renderIdleBtn(); }, 3000);
+      return;
+    }
+    clearTimeout(idleConfirmTimer);
+    idleConfirming = false;
+    renderIdleBtn();
     socket.emit('admin:showIdle');
   }
 
@@ -1341,8 +1374,12 @@
     document.getElementById(btnId).disabled = !msg;
   }
 
+  // 핀·공지는 채팅 모드에서만 (서버 admin:pinChat 규칙과 같음). 질문 시작·결과·대기·엔딩 중엔 잠금
+  function isPinLocked() { return !!currentState && currentState.mode !== 'chat'; }
+
   function renderChatFeed() {
     const feed = document.getElementById('chat-feed');
+    feed.classList.toggle('pin-locked', isPinLocked());
     // 체크만 보기: 서버가 보관한 체크 목록(최근 채팅에서 밀려난 글도 포함)
     // 체크 목록은 체크한 순서가 아니라 채팅이 올라온 순서로 (id = "시각-순번")
     const source = chatStarredOnly ? starredChats.slice().sort(compareChatId) : chatFeedItems;
@@ -1364,6 +1401,7 @@
     const prevTop = feed.scrollTop;
     const starredSet = new Set(starredChats.map(m => m.id));
     const pinnedIds = [pinnedChatMsg, pinnedNoticeMsg].filter(Boolean).map(m => m.id);
+    const pinLocked = isPinLocked();
     feed.innerHTML = '';
     items.forEach((m) => {
       const item = document.createElement('div');
@@ -1377,7 +1415,8 @@
       star.onclick = (e) => { e.stopPropagation(); toggleChatStar(m); };
       const body = document.createElement('div');
       body.className = 'chat-body';
-      body.title = m.isOperator ? 'LED·관객 폰 맨 위에 공지로 고정' : 'LED에 핀 고정';
+      body.title = pinLocked ? '질문·결과 중에는 핀·공지를 걸 수 없어요 (채팅 모드에서만)'
+        : (m.isOperator ? 'LED·관객 폰 맨 위에 공지로 고정' : 'LED에 핀 고정');
       const nick = document.createElement('div');
       nick.className = 'chat-nick';
       if (m.isOperator) {
@@ -1398,7 +1437,7 @@
       text.textContent = m.text;
       body.appendChild(nick);
       body.appendChild(text);
-      body.onclick = () => pinChat(m);
+      body.onclick = () => { if (!isPinLocked()) pinChat(m); };
       const del = document.createElement('button');
       del.className = 'chat-del';
       del.textContent = '✕';
@@ -1563,9 +1602,9 @@
       if (p.type === 'choice' && Array.isArray(p.options)) detail = p.options.join(' / ');
       else if (p.type === 'emoji' && Array.isArray(p.emojis)) detail = p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ');
       else if (p.type === 'subjective' && p.maxLen) detail = `${p.maxLen}자 이내`;
-      // 선택형은 투표 시간도 표시 — 시간이 없는 예전 프리셋은 즉석 질문 칸의 시간으로 실행
+      // 선택형은 투표 시간도 표시 — 시간이 없는 예전 프리셋은 즉석 질문 칸의 시간(비면 30초)으로 실행되므로 그 초를 보여 준다
       if (p.type === 'yesno' || p.type === 'choice') {
-        const sec = p.duration ? `${p.duration}초` : '기본 시간(즉석 질문 칸)';
+        const sec = `${p.duration || (votingSeconds(document.getElementById('duration-input').value) ?? 30)}초`;
         detail = detail ? `${detail} · ${sec}` : sec;
       }
       // 프리셋 문구는 사용자 입력이므로 innerHTML이 아닌 textContent로만 넣는다(XSS 방지)

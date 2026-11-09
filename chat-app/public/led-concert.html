@@ -540,8 +540,6 @@
   <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
   <div id="chat-pin"></div>
 
-  <!-- 운영진 공지 핀 (관리자가 운영진 채팅을 핀하면 맨 위 띠, LedFx.notice) -->
-  <div id="notice-pin" class="fx-notice" role="status"></div>
 
   <!-- 대기 화면 · 엔딩 "오늘의 결과" · 함성 미터 (모양·움직임은 LedFx.idle / ending / applause) -->
   <div id="idle-layer" class="fx-screen fx-idle fx-wide"></div>
@@ -590,6 +588,7 @@
     // 보기 라벨: 2줄까지 줄바꿈 → 19px(세로형 800 기준 15px과 같은 비율)까지 축소 → 말줄임 (장평 압축 없음)
     boxLabel: { maxPx: () => 24, minPx: 19 },
     audiencePath: '/concert', // 대기 화면 QR = 콘서트 테마 관객 주소
+    notice: false, // 운영진 공지 띠는 가로형 LED에 띄우지 않음 (세로형 LED·관객 폰·운영진 화면만)
   });
 </script>
 </body>

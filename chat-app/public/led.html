@@ -518,6 +518,9 @@
       <div class="title">Live Chat</div>
     </div>
 
+    <!-- 운영진 공지 핀 (관리자가 운영진 채팅을 핀하면 헤더 바로 아래 띠, LedFx.notice) — 채팅 영역을 덮지 않고 밀어 내린다 -->
+    <div id="notice-pin" class="fx-notice fx-notice-flow" role="status"></div>
+
     <div id="led-messages"></div>
 
     <div id="led-footer">
@@ -537,9 +540,6 @@
 
   <!-- 채팅 핀 팝업 (배경 반투명, 뒤에서 채팅은 계속 흐름) -->
   <div id="chat-pin"></div>
-
-  <!-- 운영진 공지 핀 (관리자가 운영진 채팅을 핀하면 맨 위 띠, LedFx.notice) -->
-  <div id="notice-pin" class="fx-notice" role="status"></div>
 
   <!-- 대기 화면 · 엔딩 "오늘의 결과" · 함성 미터 (모양·움직임은 LedFx.idle / ending / applause) -->
   <div id="idle-layer" class="fx-screen fx-idle"></div>

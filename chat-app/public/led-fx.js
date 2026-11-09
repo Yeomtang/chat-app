@@ -3593,8 +3593,10 @@
       pinFx.show(data && data.message, true);
     });
 
-    // ── 운영진 공지 핀 (관리자가 운영진 채팅을 핀) — 화면 맨 위 띠 ──
-    const noticeFx = LedFx.notice.create(document.getElementById('notice-pin'));
+    // ── 운영진 공지 핀 (관리자가 운영진 채팅을 핀) — 세로형은 헤더 바로 아래 띠 ──
+    // cfg.notice === false(가로형 콘서트 LED)면 받아도 표시하지 않는다 (사용자 결정: 세로형 LED·관객 폰·운영진 화면만)
+    const noticeEl = document.getElementById('notice-pin');
+    const noticeFx = cfg.notice === false || !noticeEl ? { show() {} } : LedFx.notice.create(noticeEl);
     socket.on('noticePinned', (data) => {
       noticeFx.show(currentMode === 'chat' ? (data && data.message) : null);
     });

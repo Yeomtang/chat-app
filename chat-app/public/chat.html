@@ -238,6 +238,32 @@
       z-index: 60;
     }
 
+    /* ── 내 공 미니 원 (시안 1 "내 표 피드백") ── 보기마다 작은 공 덩어리, 내 표만 같은 색 빛 번짐(숨쉬기) + 가운데 흰 점.
+       다른 공은 보기마다 같은 개수의 옅은 장식 공 — 투표 중 표 수·비율은 폰에 보내지 않으므로(서버는 집계를 화면에만 보냄) 드러나지 않는다 */
+    .vote-mini {
+      display: none;
+      width: 100%;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .vote-mini.active { display: flex; }
+    .vote-mini-canvas {
+      display: block;
+      width: 100%;
+      height: 112px;
+      border-radius: 14px;
+      background: var(--bg-soft);
+    }
+    .vote-mini-hint {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-soft);
+      text-align: center;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+
     /* 타이머 게이지: 남은 시간만큼 줄어드는 막대 — 숫자와 같은 마감 시각(서버 기준)으로 움직인다.
        채움은 transform(scaleX) 한 번의 linear 애니메이션(Web Animations)으로 처리해 폰 부담 없이 매끄럽게. 마지막 5초는 숫자 배지와 같이 경고색 */
     .timer-gauge {
@@ -848,6 +874,11 @@
       <div class="timer-gauge" id="voting-timer-gauge"><div class="timer-gauge-fill"></div></div>
       <!-- 보기 버튼/비율은 질문 유형(YES/NO·N지선다)에 맞춰 JS가 동적 생성 -->
       <div id="voting-buttons"></div>
+      <!-- 내 공 미니 원 (투표 중에만, 시안 1) — 그리기는 VoteMini -->
+      <div class="vote-mini" id="vote-mini">
+        <canvas class="vote-mini-canvas" id="vote-mini-canvas" aria-hidden="true"></canvas>
+        <div class="vote-mini-hint" id="vote-mini-hint">투표하면 내 공이 여기 들어가요</div>
+      </div>
       <div id="voting-ratio">
         <div class="ratio-bar" id="ratio-bar"></div>
         <div class="ratio-text" id="ratio-text"></div>
@@ -1299,7 +1330,139 @@
 
     updateVoteUI();
     if (showRatio) updateRatio(state.counts, voteTypeCur);
+    // 미니 원은 투표 중에만 (결과에선 비율 막대가 대신함). 같은 질문이면 공 배치를 유지
+    if (state.mode === 'voting') {
+      VoteMini.show(voteKey(state), voteOptions, voteTypeCur);
+      VoteMini.pick(myVote, false); // 재접속·재로드: 서버가 기억한 내 표를 애니메이션 없이 복원
+    } else {
+      VoteMini.hide();
+    }
   }
+  function voteKey(state) { return JSON.stringify([state.question, state.voteOptions, state.votingDuration]); }
+
+  // ══════════════════════════════════
+  //  내 공 미니 원 (시안 1) — LED 2지선다 원형 공 덩어리와 같은 방식(해바라기 배치 + 겹침 풀기 + 중심으로 당김)을 폰 크기로.
+  //  다른 공은 보기마다 같은 개수의 옅은 장식 공(실제 표 수 아님 — 투표 중 비율은 비공개). 내 공만 진한 색 + 빛 번짐(숨쉬기) + 흰 점.
+  //  동작 줄이기 설정이면 커지기·밀려나기·숨쉬기 없이 바로 자리 잡은 모습만.
+  // ══════════════════════════════════
+  const VoteMini = (() => {
+    const wrap = document.getElementById('vote-mini');
+    const canvas = document.getElementById('vote-mini-canvas');
+    const hint = document.getElementById('vote-mini-hint');
+    const ctx = canvas.getContext('2d');
+    const GROW_MS = 900, PULL = 0.012, GAP = 1.06, SPACING = 1.19;
+    const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let key = null, clusters = [], styles = [], mineAt = null, raf = null, W = 0, H = 0, R = 7;
+    const cssVar = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
+
+    function layout(n) {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = canvas.clientWidth; H = canvas.clientHeight; // 카드 등장(scale) 중에도 실제 크기 (getBoundingClientRect는 변형 반영)
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const cols = n <= 4 ? n : 3, rows = Math.ceil(n / cols);
+      R = n <= 2 ? 7 : n <= 4 ? 5.5 : 4.5;
+      const per = n <= 2 ? 14 : n <= 4 ? 9 : 6; // 보기마다 같은 개수 (비율이 드러나지 않게)
+      return Array.from({ length: n }, (_, i) => {
+        const col = i % cols, row = Math.floor(i / cols);
+        const inRow = Math.min(cols, n - row * cols);
+        const cx = W * (col + 0.5 + (cols - inRow) / 2) / cols, cy = H * (row + 0.5) / rows;
+        const balls = [];
+        for (let k = 0; k < per; k++) {
+          const a = k * 2.39996, r = R * 2 * SPACING * Math.sqrt(k + 0.5) / 2;
+          balls.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), r: R, born: -1e9, mine: false });
+        }
+        return { cx, cy, balls };
+      });
+    }
+    function radius(b, now) { return b.born < 0 || reduce() ? R : R * (1 - Math.pow(1 - Math.min(1, (now - b.born) / GROW_MS), 3)); }
+    function relax(c, now, k) {
+      for (const b of c.balls) { b.x += (c.cx - b.x) * PULL * k; b.y += (c.cy - b.y) * PULL * k; b.r = radius(b, now); }
+      for (let it = 0; it < 3; it++) {
+        for (let a = 0; a < c.balls.length; a++) for (let d = a + 1; d < c.balls.length; d++) {
+          const p = c.balls[a], q = c.balls[d];
+          if (p.r === 0 || q.r === 0) continue;
+          let dx = q.x - p.x, dy = q.y - p.y, dist = Math.hypot(dx, dy);
+          const min = (p.r + q.r) * GAP;
+          if (dist >= min) continue;
+          if (dist < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; dist = Math.hypot(dx, dy); }
+          const push = (min - dist) * 0.5 * 0.35;
+          p.x -= dx / dist * push; p.y -= dy / dist * push; q.x += dx / dist * push; q.y += dy / dist * push;
+        }
+      }
+    }
+    function dot(x, y, r, color) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
+    function draw(now) {
+      ctx.clearRect(0, 0, W, H);
+      let mine = null, mineColor = null;
+      clusters.forEach((c, i) => {
+        const s = styles[i % styles.length];
+        relax(c, now, 1);
+        for (const b of c.balls) {
+          if (b.mine) { mine = b; mineColor = s.strong; continue; }
+          if (b.r > 0) dot(b.x, b.y, b.r, s.strong + '4d'); // 다른 공: 같은 색 30% (보기 구분은 되고 내 공보다 한참 옅게)
+        }
+      });
+      if (mine && mine.r > 0) {
+        const breathe = reduce() ? 1 : 1 + 0.18 * Math.sin(now / 520);
+        const halo = mine.r * 2.6 * breathe;
+        const g = ctx.createRadialGradient(mine.x, mine.y, mine.r * 0.8, mine.x, mine.y, halo);
+        g.addColorStop(0, mineColor + '73'); g.addColorStop(1, mineColor + '00'); // 같은 색 45% → 0% 빛 번짐
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(mine.x, mine.y, halo, 0, Math.PI * 2); ctx.fill();
+        dot(mine.x, mine.y, mine.r * 1.1, mineColor);
+        dot(mine.x, mine.y, mine.r * 0.38, cssVar('--surface', '#ffffff'));
+      }
+    }
+    function loop(now) {
+      draw(now);
+      // 숨쉬기 때문에 내 공이 있으면 계속, 동작 줄이기면 자리 잡을 때까지만
+      const settling = clusters.some(c => c.balls.some(b => now - b.born < GROW_MS + 1500));
+      raf = (mineAt != null && !reduce()) || settling ? requestAnimationFrame(loop) : null;
+    }
+    function kick() { if (!raf) raf = requestAnimationFrame(loop); }
+    function settleNow() { // 동작 줄이기·복원: 겹침 풀기를 한 번에 끝낸 모습
+      for (let i = 0; i < 120; i++) clusters.forEach(c => relax(c, performance.now(), 1));
+    }
+    // 투표 카드가 막 보이기 시작할 때(처음엔 크기 0)·화면 회전 때 다시 배치 — 내 공은 그대로 복원
+    new ResizeObserver(() => {
+      if (!key || !canvas.clientWidth) return;
+      const m = mineAt;
+      clusters = layout(clusters.length);
+      mineAt = null;
+      if (m != null) api.pick(m, false); else draw(performance.now());
+    }).observe(canvas);
+    const api = {
+      show(k, options, type) {
+        wrap.classList.add('active');
+        if (k === key && clusters.length === options.length) return;
+        key = k; mineAt = null;
+        styles = voteStyles(type);
+        clusters = layout(options.length);
+        hint.textContent = '투표하면 내 공이 여기 들어가요';
+        draw(performance.now());
+      },
+      // choice: 보기 인덱스(null이면 무시). animate=false면 커지는 연출 없이 바로 자리
+      pick(choice, animate) {
+        if (choice == null || !clusters[choice] || choice === mineAt) return;
+        clusters.forEach(c => { c.balls = c.balls.filter(b => !b.mine); }); // 표를 바꾸면 이전 쪽 내 공은 빠짐
+        const c = clusters[choice];
+        const a = Math.random() * Math.PI * 2;
+        c.balls.push({ x: c.cx + Math.cos(a) * 1.5, y: c.cy + Math.sin(a) * 1.5, r: 0, born: animate && !reduce() ? performance.now() : -1e9, mine: true });
+        mineAt = choice;
+        hint.textContent = '빛나는 공이 내 공이에요';
+        if (!animate || reduce()) settleNow();
+        draw(performance.now());
+        kick();
+      },
+      hide() {
+        wrap.classList.remove('active');
+        key = null; mineAt = null; clusters = [];
+        if (raf) cancelAnimationFrame(raf);
+        raf = null;
+      },
+    };
+    return api;
+  })();
 
   // ── 주관식 답변 제출 ──
   function submitAnswer() {
@@ -1449,6 +1612,7 @@
     myVote = choice; // 보기 인덱스
     updateVoteUI();
     nickSocket.emit('vote', { choice });
+    VoteMini.pick(choice, true); // 미니 원: 내 공이 가운데에서 커지며 기존 공을 밀어냄
     flyVoteBall(choice); // 비율은 숨기고, 날아가는 공 + 토스트로만 "반영됨"을 알림
   }
 
