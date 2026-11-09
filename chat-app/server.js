@@ -32,6 +32,15 @@ for (const [key, t] of Object.entries(NICKNAME_THEMES)) {
   nicknamePools[key] = { list: shuffle(t.prefixes.flatMap(p => t.suffixes.map(s => `${p} ${s}`))), index: 0 };
 }
 
+// 띄어쓰기 교정(fix/nickname) 전 옛 표기 닉네임 판별 — 공백을 뺀 글자는 지금 풀의 닉네임과 같은데 표기가 다른 것.
+// (예: '퇴근못한 3년차' ↔ '퇴근 못 한 3년 차') 옛 페이지·옛 저장값이 다시 등록하려 하면 새 닉네임으로 바꿔 준다.
+const nicknameCanon = {};
+for (const [key, pool] of Object.entries(nicknamePools)) nicknameCanon[key] = new Set(pool.list.map(n => n.replace(/\s+/g, '')));
+function isOldSpacingNickname(name, theme) {
+  const canon = nicknameCanon[theme] || nicknameCanon[DEFAULT_THEME];
+  return canon.has(name.replace(/\s+/g, '')) && !(nicknamePools[theme] || nicknamePools[DEFAULT_THEME]).list.includes(name);
+}
+
 function assignNickname(theme) {
   const pool = nicknamePools[theme] || nicknamePools[DEFAULT_THEME];
   if (pool.index >= pool.list.length) {
@@ -778,7 +787,7 @@ io.on('connection', (socket) => {
     // 한 소켓은 처음 등록한 주인 키를 계속 쓴다(끊길 때 같은 기록의 접속 수를 줄이기 위해)
     const key = socket._nickOwnerKey || (socket._nickOwnerKey = ownerKeyOf(socket, theme));
     let final = name;
-    if (!final || isNicknameTaken(final, key)) {
+    if (!final || isOldSpacingNickname(final, theme) || isNicknameTaken(final, key)) {
       let guard = 0;
       do {
         final = assignNickname(theme); // 교체 닉네임도 반드시 같은 테마에서
