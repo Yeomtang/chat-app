@@ -610,7 +610,7 @@
       <span class="status-label">최고 동시 접속</span>
       <span class="status-value">
         <span id="status-audience-peak">0명</span>
-        <button class="stat-reset-btn" onclick="resetAudienceStats()">초기화</button>
+        <button class="stat-reset-btn" id="stat-reset-btn" onclick="resetAudienceStats()">초기화</button>
       </span>
     </div>
     <div class="status-row">
@@ -775,7 +775,7 @@
     </div>
     <div class="chat-actions">
       <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
-      <button class="btn btn-danger" onclick="clearChat()">채팅 초기화</button>
+      <button class="btn btn-danger" id="clear-chat-btn" onclick="clearChat()">채팅 초기화</button>
     </div>
   </div>
 
@@ -1332,16 +1332,32 @@
   // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 — 한 번에 붙임
   socket.on('chatBatch', (list) => addChats(Array.isArray(list) ? list : []));
 
-  // 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌림 (리허설 뒤 본 행사 전)
-  function resetAudienceStats() {
-    if (!confirm('최고 동시 접속 기록을 초기화할까요?')) return;
-    socket.emit('admin:resetAudienceStats');
+  // 버튼 2클릭 확인 — confirm()은 떠 있는 동안 화면 갱신(채팅·상태 수신)이 멈추므로 쓰지 않는다(결과 기록 비우기와 같은 패턴).
+  // 첫 클릭에 버튼 글자가 확인 문구로 바뀌고, 3초 안에 한 번 더 누르면 실행
+  const twoClickTimers = {};
+  function twoClick(btnId, confirmText, run) {
+    const btn = document.getElementById(btnId);
+    if (!twoClickTimers[btnId]) {
+      const label = btn.textContent;
+      btn.textContent = confirmText;
+      twoClickTimers[btnId] = setTimeout(() => { delete twoClickTimers[btnId]; btn.textContent = label; }, 3000);
+      btn.dataset.label = label;
+      return;
+    }
+    clearTimeout(twoClickTimers[btnId]);
+    delete twoClickTimers[btnId];
+    btn.textContent = btn.dataset.label;
+    run();
   }
 
-  // 채팅 초기화 — 되돌릴 수 없으므로 확인 후 실행
+  // 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌림 (리허설 뒤 본 행사 전)
+  function resetAudienceStats() {
+    twoClick('stat-reset-btn', '한 번 더', () => socket.emit('admin:resetAudienceStats'));
+  }
+
+  // 채팅 초기화 — LED와 관객 화면의 채팅을 모두 지움(되돌릴 수 없음)
   function clearChat() {
-    if (!confirm('LED와 관객 화면의 채팅을 모두 지웁니다.\n되돌릴 수 없습니다. 진행할까요?')) return;
-    socket.emit('admin:clearChat');
+    twoClick('clear-chat-btn', '한 번 더 누르면 모든 채팅이 지워집니다', () => socket.emit('admin:clearChat'));
   }
 
   socket.on('chatCleared', () => {
