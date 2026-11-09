@@ -568,6 +568,9 @@
   // ── 객관식 3지 이상: 막대 경주 (시안 4) ──
   // 막대가 흔들리며 자라 중간에 순위가 바뀌다가, 3.2초 뒤 정렬된 결과로 확정
   const RACE_MS = 3200;
+  // 막대 경주 중 순위 바꾸기 조건 — 매 프레임 바꾸면 접전일 때 행이 오가다 한자리에 겹쳐 보임(비율 숫자 섞임)
+  const RACE_SWAP_PCT = 1.5;  // 뒤 행이 앞 행보다 이만큼(%p) 앞서야 자리를 바꿈
+  const RACE_SWAP_GAP = 550;  // 직전 자리바꿈 후 이 시간(ms) 안엔 다시 바꾸지 않음 (행 이동 전환 0.5초가 끝난 뒤)
 
   // 글자 배율 단계(--fx-bar-s): 행이 칸에 다 안 들어가면 한 단계씩 줄임. 0.75 = 보기 이름 15px(세로형 800 기준) — 이보다 작게는 안 줄임
   const BAR_STEPS = [1, 0.92, 0.84, 0.75];
@@ -639,7 +642,10 @@
       scaleMax = Math.max(10, maxPct * 1.12); // 1위 막대가 트랙을 거의 채우게
       top = sum.top;
       winners = sum.total ? sum.top : [];
-      const wobbleAmp = maxPct * 0.26;
+      // 흔들림 폭: 중간에 순위가 뒤집히는 재미용. 접전(이웃 순위 차 3%p 미만)이면 줄여 자리바꿈이 잦지 않게
+      const sorted = pcts.slice().sort((x, y) => y - x);
+      const tight = sorted.some((v, i) => i > 0 && sorted[i - 1] - v < 3);
+      const wobbleAmp = maxPct * (tight ? 0.16 : 0.26);
       // 최종 순서: 득표 내림차순, 같으면 보기 순서
       const finalOrder = pcts.map((v, i) => [sum.per[i] || 0, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map((x) => x[1]);
 
@@ -672,12 +678,20 @@
       container.classList.remove('fx-instant');
       container.classList.add('active');
       const t0 = performance.now();
+      let order = labels.map((_, i) => i), swappedAt = -Infinity;
       const frame = (now) => {
         const t = (now - t0) / RACE_MS;
-        if (t >= 1) { raf = null; place(pcts, finalOrder, true); return; }
+        if (t >= 1) { raf = null; place(pcts, finalOrder, true); return; } // 확정 순위 = 실제 득표 순위
         // 보기마다 다른 흔들림 → 중간에 순위가 뒤집혔다가 제자리로
         const vals = pcts.map((v, i) => Math.max(0, v * ease(t) + Math.sin(t * Math.PI * 2.2 + i * 1.7) * wobbleAmp * (1 - t) * ease(t)));
-        const order = vals.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map((x) => x[1]);
+        // 순위 바꾸기(히스테리시스): 바로 위 행보다 RACE_SWAP_PCT 이상 앞설 때만, 직전 자리바꿈 후 RACE_SWAP_GAP 지난 뒤에만
+        if (now - swappedAt >= RACE_SWAP_GAP) {
+          const next = order.slice();
+          for (let j = 1; j < next.length; j++) {
+            for (let k = j; k > 0 && vals[next[k]] - vals[next[k - 1]] >= RACE_SWAP_PCT; k--) [next[k - 1], next[k]] = [next[k], next[k - 1]];
+          }
+          if (next.some((v, j) => v !== order[j])) { order = next; swappedAt = now; }
+        }
         place(vals, order, false);
         raf = requestAnimationFrame(frame);
       };
