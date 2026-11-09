@@ -187,6 +187,9 @@ function cleanEmojis(list) {
     .map(o => ({ emoji: cleanStr(asObj(o).emoji, MAX_EMOJI_LENGTH), label: cleanStr(asObj(o).label, MAX_EMOJI_LABEL_LENGTH) }))
     .filter(o => o.emoji).slice(0, 6);
 }
+// 주관식 답변 글자 수 상한 (LED 가독성 보호). cleanPreset이 쓰므로 loadPresets() 호출보다 먼저 선언해야 한다
+// (아래에 두면 주관식 프리셋이 있을 때 서버 시작 시 TDZ 오류로 목록이 비어 버림)
+const MAX_ANSWER_LENGTH = 20;
 const PRESET_TYPES = ['yesno', 'choice', 'subjective', 'emoji'];
 // 프리셋은 파일에 저장되고 모든 관리자 화면에 그려지므로 형식을 엄격히 맞춘다
 function cleanPreset(p) {
@@ -270,7 +273,6 @@ const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 200; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
 const MAX_OPERATOR_CHAT_LENGTH = 100; // 운영진(/host) 채팅 상한 — 화면 입력칸과 같게
 
-const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
 const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 17자 이하지만
                                 // 클라이언트가 보낸 값을 그대로 쓰므로 LED 레이아웃 보호용으로 자름
 
