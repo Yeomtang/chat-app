@@ -151,6 +151,7 @@ body {
   font-weight: 400;
   color: var(--ink);
   line-height: 1.45;
+  text-wrap: pretty; /* 채팅: 마지막 줄에 한 글자만 남지 않게 (미지원 시 그냥 줄바꿈) */
 }
 
 /* 하단 입력 표시 영역 (장식용) */
@@ -366,6 +367,7 @@ body {
   line-height: 1.4;
   word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
   overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
+  text-wrap: balance;        /* 질문류: 줄 길이를 고르게 (짧은 마지막 줄 방지, 줄 수는 그대로) */
 }
 
 /* 공 상자·막대 영역: 위 끝은 JS가 질문 카드 실제 아래 끝에 맞춤(layoutBelowQuestion), 아래는 화면 여백만.
@@ -464,6 +466,7 @@ body {
   box-shadow: 0 calc(20px * var(--u)) calc(60px * var(--u)) rgba(0, 0, 0, 0.25);
   word-break: keep-all;
   overflow-wrap: break-word;
+  text-wrap: balance; /* 답변 카드: 줄 길이를 고르게 */
 }
 
 /* 픽한 답변이 화면에 흐르고 있지 않을 때만 팝인 (흐르던 답변은 카드로 늘어남 — LedFx.spotlight) */

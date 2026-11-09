@@ -6,8 +6,8 @@
   <title>LED 채팅 화면 (콘서트 4:3)</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="/led-fx.css?v=20261109-audit"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
-  <link rel="stylesheet" href="/led-page.css?v=20261109-audit"> <!-- LED 페이지 공용 스타일(세로형 값) — 가로형은 아래 <style>에서 다른 값만 덮어씀 -->
+  <link rel="stylesheet" href="/led-fx.css?v=20261109-recs"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
+  <link rel="stylesheet" href="/led-page.css?v=20261109-recs"> <!-- LED 페이지 공용 스타일(세로형 값) — 가로형은 아래 <style>에서 다른 값만 덮어씀 -->
   <style>
     /* 가로형 전용 — 공용 LED 스타일(led-page.css, 세로형 값)에서 다른 값만 덮어쓴다 */
     :root {
@@ -130,7 +130,7 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/vendor/qrcode.js?v=20261109-int"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
-<script src="/led-fx.js?v=20261109-audit"></script>
+<script src="/led-fx.js?v=20261109-recs"></script>
 <script>
   // 가로형(4:3) 설정 — 동작(소켓·모드 전환·연출 배선)은 led-fx.js의 LedFx.page 공용
   LedFx.page.start({
@@ -143,6 +143,9 @@
     boxLabel: { maxPx: () => 24, minPx: 19 },
     audiencePath: '/concert', // 대기 화면 QR = 콘서트 테마 관객 주소
     notice: false, // 운영진 공지 띠는 가로형 LED에 띄우지 않음 (세로형 LED·관객 폰·운영진 화면만)
+    // 질문: 최대 3줄 → 넘치면 28px(세로형 기본 크기, 논리 px)까지 축소 → 그래도 넘치면 3줄째 끝 말줄임.
+    // 공 상자·막대는 화면 높이의 36% 이상 확보(긴 질문이 상자를 밀어내 결과 막대가 겹치던 문제)
+    question: { maxLines: 3, minPx: 28, minAreaRatio: 0.36 },
   });
 </script>
 </body>

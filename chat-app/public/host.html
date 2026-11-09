@@ -160,10 +160,14 @@
     }
     .mode-hint-timer {
       flex-shrink: 0;
+      min-width: 3em;    /* 고정 폭(최대 '600초') — 초가 줄어 자릿수가 바뀌어도 질문 문구 칸 폭·말줄임 위치가 흔들리지 않게 */
+      text-align: right;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
       color: var(--ink);
     }
+    .mode-hint-timer:empty { display: none; } /* 투표 중이 아닐 땐 자리도 비우지 않음 */
 
     #chat-header {
       background: var(--surface);
@@ -208,6 +212,7 @@
     #messages {
       flex: 1;
       overflow-y: auto;
+      overflow-anchor: none; /* 오래된 채팅을 뺄 때 스크롤 보정은 JS가 직접(trimMessages) — 브라우저 자동 보정과 겹치지 않게 */
       padding: 12px 16px;
       display: flex;
       flex-direction: column;
@@ -262,6 +267,7 @@
 
     .msg-text {
       color: var(--ink);
+      text-wrap: pretty; /* 채팅: 마지막 줄에 한 글자만 남지 않게 (관객 폰과 같음) */
     }
 
     /* ── 입력창 ── */
@@ -377,7 +383,7 @@
     .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
     .pin-notice-body { flex: 1; min-width: 0; }
     .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
-    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; text-wrap: pretty; }
 
     /* ── 키 없음/틀림 안내 ── 입장·채팅 화면 어디서든 보이도록 상단 고정, 인증될 때까지 유지 */
     .auth-notice {
@@ -583,12 +589,14 @@
         // 운영진이 위로 스크롤해 삭제하는 중이면 딸려 내려가지 않게, 맨 아래일 때만 따라감
         const atBottom = isNearBottom();
         addMessage(msg);
+        trimMessages(atBottom);
         if (atBottom) scrollToBottom();
       });
       // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
       nickSocket.on('chatBatch', (list) => {
         const atBottom = isNearBottom();
         list.forEach(addMessage);
+        trimMessages(atBottom);
         if (atBottom) scrollToBottom();
       });
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
@@ -768,6 +776,19 @@
       group.appendChild(del);
     }
     messages.appendChild(group);
+  }
+
+  // 목록 DOM 상한 — 최근 MAX_LIST개만 남기고 오래된 것부터 뺌(채팅이 몰려도 화면이 무거워지지 않게).
+  // 위로 올려 읽는(삭제하려는) 중이면 보던 채팅이 제자리에 머물도록 뺀 높이만큼 스크롤 보정
+  const MAX_LIST = 300;
+  function trimMessages(atBottom) {
+    const box = document.getElementById('messages');
+    const extra = box.children.length - MAX_LIST;
+    if (extra <= 0) return;
+    const anchor = atBottom ? null : box.children[extra]; // 맨 아래면 어차피 맨 아래로 — 위치를 재지 않음(레이아웃 강제 계산 줄임)
+    const before = anchor ? anchor.offsetTop : 0;
+    for (let i = 0; i < extra; i++) box.firstElementChild.remove();
+    if (anchor) box.scrollTop -= before - anchor.offsetTop;
   }
 
   function scrollToBottom() {

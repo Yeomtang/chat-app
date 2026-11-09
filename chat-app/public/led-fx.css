@@ -70,7 +70,8 @@
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
+  /* 이름 칸 = 가장 긴 이름의 실제 폭(JS가 --fx-bar-labw로, 최대 32%) — 이름이 짧아도 묶음이 오른쪽으로 쏠리지 않고 가운데 */
+  grid-template-columns: var(--fx-bar-labw, minmax(0, 32%)) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
   gap: calc(16px * var(--u));
   align-items: center;
   transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -155,6 +156,7 @@
   text-align: center;
   word-break: keep-all;
   overflow-wrap: break-word; /* 20자 답변이 큰 글씨로 커졌을 때 화면 밖으로 나가지 않게 */
+  text-wrap: balance;        /* 두 줄로 꺾인 긴 답이 "…노래 / 듣기"처럼 짧은 끝줄이 되지 않게 (잰 줄바꿈을 그대로 고정) */
   max-width: 100%;
   opacity: 0;
 }
@@ -162,27 +164,32 @@
 .fx-cloud.placed .fx-cloud-word {
   position: absolute;
   max-width: none;
-  transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(var(--s, 1));
-  transition: opacity 0.6s ease, font-size 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* 자리(left/top) = 단어 가운데. 기준점을 왼쪽 위(0 0)로 두고 translate(-50%)를 맨 안쪽에 — 그래야 도착 팝인·통통(scale 속성)도
+     단어 가운데를 기준으로 커진다 (기준점이 상자 가운데면 scale 속성이 단어를 (배율-1)×반폭만큼 왼쪽 위로 끌고 감) */
+  transform-origin: 0 0;
+  transform: rotate(var(--rot, 0deg)) scale(var(--s, 1)) translate(-50%, -50%);
+  /* 글자 크기 전환은 목표를 넘지 않는 곡선 — 튀는 곡선이면 커지는 도중 최종 크기보다 커져 이웃 단어·화면 끝을 넘음 */
+  transition: opacity 0.6s ease, font-size 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .fx-cloud-word.in { opacity: 1; }
 .fx-cloud-word.in.dim { opacity: 0.22; } /* 1등 비추는 동안 나머지 */
 
-/* 첫 도착 = 공용 popIn 모양 / 이후 도착 = 한 번 통통 / 다 모이면 은은하게 둥실 (scale·translate 개별 속성이라 기울기·배율과 겹치지 않음) */
+/* 첫 도착 = 공용 popIn 모양 / 이후 도착 = 한 번 통통 / 다 모이면 은은하게 둥실 (scale·translate 개별 속성이라 기울기·배율과 겹치지 않음).
+   부푸는 배율(--pop 최대 1.05, --bump 최대 1.18)은 JS가 단어마다 이웃·영역 여유만큼으로 줄임 */
 .fx-cloud-word.pop { animation: fxCloudPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 .fx-cloud-word.bump { animation: fxCloudBump 0.45s ease; }
 .fx-cloud-word.bob { animation: fxCloudBob var(--bd, 5s) ease-in-out var(--bdl, 0s) infinite; }
 
 @keyframes fxCloudPop {
   0%   { opacity: 0; scale: 0.4; }
-  60%  { opacity: 1; scale: 1.05; }
+  60%  { opacity: 1; scale: var(--pop, 1.05); }
   100% { opacity: 1; scale: 1; }
 }
 
 @keyframes fxCloudBump {
   0%   { scale: 1; }
-  40%  { scale: 1.18; }
+  40%  { scale: var(--bump, 1.18); }
   100% { scale: 1; }
 }
 
@@ -460,6 +467,7 @@
   color: var(--ink);
   max-width: 100%;
   overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 질문도 화면 안에서 줄바꿈 (넘치면 JS가 줄 수 제한 + "…") */
+  text-wrap: balance;      /* 질문류: 줄 길이를 고르게 */
 }
 
 .fx-end-rows {
@@ -471,7 +479,8 @@
 
 .fx-end-row {
   display: grid;
-  grid-template-columns: minmax(0, 30%) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-ek));
+  /* 이름 칸 = 이 장에서 가장 긴 이름의 실제 폭(JS가 --fx-end-labw로, 최대 30%) — 결과 막대와 같은 방식으로 묶음을 가운데에 */
+  grid-template-columns: var(--fx-end-labw, minmax(0, 30%)) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-ek));
   gap: calc(18px * var(--u));
   align-items: center;
   font-size: calc(26px * var(--u) * var(--fx-ek));
@@ -511,6 +520,7 @@
 
 .fx-end-big {
   overflow-wrap: anywhere;
+  text-wrap: balance;
   font-size: calc(64px * var(--u) * var(--fx-ek));
   font-weight: 700;
   line-height: 1.2;

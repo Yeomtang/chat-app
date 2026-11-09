@@ -52,6 +52,10 @@
       line-height: 1.5;
     }
 
+    /* 입력칸 바로 아래 글자 수 안내 (.note 변형) — 권장 길이를 넘으면 은은한 주황으로만 알림(입력은 막지 않음) */
+    .note.len-hint { margin: -4px 0 10px; }
+    .note.len-hint.over { color: #c46a00; }
+
     .card {
       background: #fff;
       border-radius: 14px;
@@ -316,6 +320,7 @@
       gap: 6px;
       max-height: 320px;
       overflow-y: auto;
+      overflow-anchor: none; /* 오래된 항목을 뺄 때 스크롤 보정은 JS가 직접(브라우저 자동 보정과 겹치면 두 번 밀림, Safari는 자동 보정 없음) */
     }
 
     .answer-item {
@@ -487,6 +492,7 @@
       gap: 6px;
       max-height: 300px;
       overflow-y: auto;
+      overflow-anchor: none; /* 오래된 항목을 뺄 때 스크롤 보정은 JS가 직접 (답변 목록과 같음) */
     }
 
     .chat-item {
@@ -666,6 +672,7 @@
       </select>
       <button onclick="addPreset()">추가</button>
     </div>
+    <p class="note len-hint" data-len-for="preset-input" data-len-max="80"></p>
     <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
     <input type="number" id="preset-maxlen" class="preset-extra" value="20" min="1" max="20" placeholder="최대 글자수 (1~20)" style="display:none">
     <label id="preset-duration-label" class="preset-extra">투표 시간 (초, 5~600) — 선택형 전용</label>
@@ -677,6 +684,7 @@
     <h2>즉석 질문 시작</h2>
     <label>질문 내용</label>
     <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?" maxlength="200">
+    <p class="note len-hint" data-len-for="question-input" data-len-max="80"></p>
     <label>질문 유형</label>
     <select id="question-type" class="type-select" onchange="onQuestionTypeChange()">
       <option value="yesno">YES/NO 투표</option>
@@ -918,7 +926,7 @@
     pinnedChatMsg = currentState.pinnedChat || null;
     pinnedNoticeMsg = currentState.pinnedNotice || null;
     renderPinStatus();
-    renderChatFeed();
+    syncChatFeedMarks(); // 핀 잠금(모드)이 바뀌었을 때만 다시 그림, 핀 표시는 바뀐 항목만
     renderApplause();
     renderEnding();
     renderEffects();
@@ -1164,8 +1172,9 @@
       document.getElementById('status-answers').textContent = data.answerCount;
     }
     if (typeof data.id === 'number') {
-      answerItems.push({ id: data.id, text: data.text });
-      renderAnswers();
+      const a = { id: data.id, text: data.text };
+      answerItems.push(a);
+      appendAnswer(a); // 그 답변만 끝에 붙임 (답변마다 목록 전체를 다시 그리지 않음)
     }
   });
 
@@ -1183,7 +1192,7 @@
   socket.on('answerPicked', (data) => {
     if (data && typeof data.id === 'number') {
       pickedIds.add(data.id);
-      renderAnswers();
+      refreshAnswer(data.id);
     }
   });
 
@@ -1191,7 +1200,7 @@
     if (!data || typeof data.id !== 'number') return;
     if (data.starred) starredIds.add(data.id);
     else starredIds.delete(data.id);
-    renderAnswers();
+    if (starredOnly) renderAnswers(); else refreshAnswer(data.id); // 후보만 보기면 목록 구성이 바뀜
   });
 
   // 답변 목록 전체화면 토글 — 작가가 답변 선별에만 집중할 수 있는 모드
@@ -1217,44 +1226,80 @@
     renderChatFeed();
   });
 
+  // ── 답변 목록 그리기 ── 화면에는 조건에 맞는 최근 MAX_ANSWER_DOM개만(검색·후보만 보기는 메모리의 전체 답변에서 찾음).
+  // 새 답변은 appendAnswer가 끝에 붙이고, 별표·픽은 refreshAnswer가 그 항목만 바꿈
+  const MAX_ANSWER_DOM = 300;
+  const answerEls = new Map(); // 그려진 답변 id → 요소
+  function answerMatches(a) { return (!starredOnly || starredIds.has(a.id)) && (!searchKeyword || a.text.includes(searchKeyword)); }
+  function answerItemEl(a) {
+    const item = document.createElement('div');
+    item.className = 'answer-item'
+      + (pickedIds.has(a.id) ? ' picked' : '')
+      + (starredIds.has(a.id) ? ' starred' : '');
+
+    const starBtn = document.createElement('button');
+    starBtn.className = 'star-btn';
+    starBtn.textContent = starredIds.has(a.id) ? '★' : '☆';
+    starBtn.title = '후보 표시 (LED에 나가지 않음)';
+    starBtn.onclick = () => socket.emit('admin:toggleStar', { id: a.id });
+
+    const span = document.createElement('span');
+    span.textContent = `${a.id}. ${a.text}`;
+
+    const btn = document.createElement('button');
+    btn.className = 'pick-btn';
+    btn.textContent = pickedIds.has(a.id) ? '픽됨 · 다시' : '픽';
+    btn.onclick = () => socket.emit('admin:pickAnswer', { id: a.id });
+
+    item.appendChild(starBtn);
+    item.appendChild(span);
+    item.appendChild(btn);
+    item._answer = a;
+    return item;
+  }
+
   function renderAnswers() {
     const list = document.getElementById('answer-list');
-    let filtered = answerItems;
-    if (starredOnly) filtered = filtered.filter(a => starredIds.has(a.id));
-    if (searchKeyword) filtered = filtered.filter(a => a.text.includes(searchKeyword));
+    answerEls.clear();
+    const filtered = answerItems.filter(answerMatches);
 
     if (filtered.length === 0) {
       list.innerHTML = `<div class="empty-hint">${answerItems.length === 0 ? '아직 답변이 없습니다' : '조건에 맞는 답변이 없습니다'}</div>`;
       return;
     }
     const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 10;
+    const frag = document.createDocumentFragment();
+    filtered.slice(-MAX_ANSWER_DOM).forEach((a) => { const el = answerItemEl(a); answerEls.set(a.id, el); frag.appendChild(el); });
     list.innerHTML = '';
-    filtered.forEach((a) => {
-      const item = document.createElement('div');
-      item.className = 'answer-item'
-        + (pickedIds.has(a.id) ? ' picked' : '')
-        + (starredIds.has(a.id) ? ' starred' : '');
-
-      const starBtn = document.createElement('button');
-      starBtn.className = 'star-btn';
-      starBtn.textContent = starredIds.has(a.id) ? '★' : '☆';
-      starBtn.title = '후보 표시 (LED에 나가지 않음)';
-      starBtn.onclick = () => socket.emit('admin:toggleStar', { id: a.id });
-
-      const span = document.createElement('span');
-      span.textContent = `${a.id}. ${a.text}`;
-
-      const btn = document.createElement('button');
-      btn.className = 'pick-btn';
-      btn.textContent = pickedIds.has(a.id) ? '픽됨 · 다시' : '픽';
-      btn.onclick = () => socket.emit('admin:pickAnswer', { id: a.id });
-
-      item.appendChild(starBtn);
-      item.appendChild(span);
-      item.appendChild(btn);
-      list.appendChild(item);
-    });
+    list.appendChild(frag);
     if (atBottom && !starredOnly && !searchKeyword) list.scrollTop = list.scrollHeight; // 새 답변 따라가기
+  }
+
+  function appendAnswer(a) {
+    if (!answerMatches(a)) return;
+    const list = document.getElementById('answer-list');
+    if (!answerEls.size) { renderAnswers(); return; } // 비어 있던 목록(안내 문구) → 처음부터
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 10;
+    const el = answerItemEl(a);
+    answerEls.set(a.id, el);
+    list.appendChild(el);
+    // 화면 상한: 가장 오래된 항목부터 뺌 (위로 올려 보는 중이면 보던 답변이 제자리에 머물게)
+    if (answerEls.size > MAX_ANSWER_DOM) {
+      const [oldId, oldEl] = answerEls.entries().next().value;
+      const next = atBottom ? null : oldEl.nextElementSibling; // 맨 아래면 위치를 재지 않음
+      const before = next ? next.offsetTop : 0;
+      oldEl.remove(); answerEls.delete(oldId);
+      if (next) list.scrollTop -= before - next.offsetTop;
+    }
+    if (atBottom && !starredOnly && !searchKeyword) list.scrollTop = list.scrollHeight; // 새 답변 따라가기
+  }
+
+  function refreshAnswer(id) {
+    const old = answerEls.get(id);
+    if (!old) return;
+    const el = answerItemEl(old._answer);
+    old.replaceWith(el);
+    answerEls.set(id, el);
   }
 
   function renderChatPaused() {
@@ -1274,22 +1319,14 @@
   const MAX_FEED = 300;
 
   socket.on('history', (messages) => {
-    chatFeedItems = (messages || []).slice();
+    chatFeedItems = (messages || []).slice(-MAX_FEED);
     renderChatFeed();
   });
 
-  socket.on('chat', (msg) => {
-    chatFeedItems.push(msg);
-    if (chatFeedItems.length > MAX_FEED) chatFeedItems.shift();
-    renderChatFeed();
-  });
-
-  // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 — 목록은 한 번만 다시 그린다
-  socket.on('chatBatch', (list) => {
-    chatFeedItems.push(...list);
-    if (chatFeedItems.length > MAX_FEED) chatFeedItems.splice(0, chatFeedItems.length - MAX_FEED);
-    renderChatFeed();
-  });
+  // 새 채팅은 목록 끝에 그 항목만 붙인다(채팅마다 300개를 다시 그리지 않음). 메모리·화면 모두 최근 MAX_FEED개
+  socket.on('chat', (msg) => addChats([msg]));
+  // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 — 한 번에 붙임
+  socket.on('chatBatch', (list) => addChats(Array.isArray(list) ? list : []));
 
   // 접속 통계 초기화 — 최고 동시 접속을 현재값으로 되돌림 (리허설 뒤 본 행사 전)
   function resetAudienceStats() {
@@ -1313,24 +1350,28 @@
     if (pinnedChatMsg && pinnedChatMsg.id === id) pinnedChatMsg = null;
     if (pinnedNoticeMsg && pinnedNoticeMsg.id === id) pinnedNoticeMsg = null;
     renderPinStatus();
-    renderChatFeed();
+    // 그 항목만 지움 (체크만 보기에서는 서버 체크 목록이 chatStars로 다시 옴)
+    const el = chatEls.get(id);
+    if (el) { el.remove(); chatEls.delete(id); }
+    if (!chatEls.size) renderChatFeed(); // 비었으면 안내 문구
   });
 
   socket.on('chatPinned', (data) => {
     pinnedChatMsg = (data && data.message) || null;
     renderPinStatus();
-    renderChatFeed();
+    syncChatFeedMarks();
   });
 
   socket.on('noticePinned', (data) => {
     pinnedNoticeMsg = (data && data.message) || null;
     renderPinStatus();
-    renderChatFeed();
+    syncChatFeedMarks();
   });
 
   socket.on('chatStars', (list) => {
     starredChats = Array.isArray(list) ? list : [];
-    renderChatFeed();
+    // 체크만 보기면 목록 구성이 바뀌므로 다시 그림, 아니면 체크 표시가 바뀐 항목만
+    if (chatStarredOnly) renderChatFeed(); else syncChatFeedMarks();
   });
 
   // 운영진 채팅이면 서버가 공지 핀(맨 위 띠)으로, 관객 채팅이면 가운데 핀으로 고정한다
@@ -1381,9 +1422,70 @@
   // 핀·공지는 채팅 모드에서만 (서버 admin:pinChat 규칙과 같음). 질문 시작·결과·대기·엔딩 중엔 잠금
   function isPinLocked() { return !!currentState && currentState.mode !== 'chat'; }
 
+  // ── 채팅 목록 그리기 ── 전체 다시 그리기(renderChatFeed)는 보기 조건이 바뀔 때만(검색·체크만 보기·접속·초기화·핀 잠금).
+  // 새 채팅은 addChats가 끝에 붙이고, 핀·체크 표시가 바뀌면 그 항목만 바꿔 끼움(syncChatFeedMarks). 화면 항목도 최근 MAX_FEED개
+  const chatEls = new Map(); // 지금 목록에 그려진 채팅 id → 요소
+  let feedMarks = { pinLocked: null, pinned: [], starred: new Set() }; // 마지막으로 그린 핀 잠금·핀·체크 상태
+
+  function chatMatchesSearch(m) {
+    const kw = chatSearchKeyword;
+    return !kw || (m.text || '').toLowerCase().includes(kw) || (m.nickname || '').toLowerCase().includes(kw);
+  }
+  function currentPinnedIds() { return [pinnedChatMsg, pinnedNoticeMsg].filter(Boolean).map(m => m.id); }
+  function feedAtBottom(feed) { return feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10; }
+
+  // 채팅 한 줄 (☆ 체크 · 본문(누르면 핀/공지) · ✕ 삭제)
+  function chatItemEl(m) {
+    const starred = feedMarks.starred.has(m.id), pinned = feedMarks.pinned.includes(m.id), pinLocked = feedMarks.pinLocked;
+    const item = document.createElement('div');
+    item.className = 'chat-item' + (starred ? ' starred' : '') + (pinned ? ' pinned' : '');
+    const star = document.createElement('button');
+    star.className = 'star-btn';
+    star.textContent = starred ? '★' : '☆';
+    star.title = '좋은 글 체크 (LED에 나가지 않음, 관리자끼리 공유)';
+    star.onclick = (e) => { e.stopPropagation(); toggleChatStar(m); };
+    const body = document.createElement('div');
+    body.className = 'chat-body';
+    body.title = pinLocked ? '질문·결과 중에는 핀·공지를 걸 수 없어요 (채팅 모드에서만)'
+      : (m.isOperator ? 'LED·관객 폰 맨 위에 공지로 고정' : 'LED에 핀 고정');
+    const nick = document.createElement('div');
+    nick.className = 'chat-nick';
+    if (m.isOperator) {
+      const badge = document.createElement('span');
+      badge.className = 'chat-op-badge';
+      badge.textContent = '운영진 · 공지';
+      nick.appendChild(badge);
+    }
+    if (pinned) {
+      const pb = document.createElement('span');
+      pb.className = 'chat-pin-badge';
+      pb.textContent = m.isOperator ? '공지 중' : '📌 고정 중';
+      nick.appendChild(pb);
+    }
+    nick.appendChild(document.createTextNode(m.nickname || ''));
+    const text = document.createElement('div');
+    text.className = 'chat-text';
+    text.textContent = m.text;
+    body.appendChild(nick);
+    body.appendChild(text);
+    body.onclick = () => { if (!isPinLocked()) pinChat(m); };
+    const del = document.createElement('button');
+    del.className = 'chat-del';
+    del.textContent = '✕';
+    del.title = '이 채팅 삭제';
+    del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
+    item.appendChild(star);
+    item.appendChild(body);
+    item.appendChild(del);
+    item._msg = m;
+    return item;
+  }
+
   function renderChatFeed() {
     const feed = document.getElementById('chat-feed');
-    feed.classList.toggle('pin-locked', isPinLocked());
+    feedMarks = { pinLocked: isPinLocked(), pinned: currentPinnedIds(), starred: new Set(starredChats.map(m => m.id)) };
+    feed.classList.toggle('pin-locked', feedMarks.pinLocked);
+    chatEls.clear();
     // 체크만 보기: 서버가 보관한 체크 목록(최근 채팅에서 밀려난 글도 포함)
     // 체크 목록은 체크한 순서가 아니라 채팅이 올라온 순서로 (id = "시각-순번")
     const source = chatStarredOnly ? starredChats.slice().sort(compareChatId) : chatFeedItems;
@@ -1392,68 +1494,69 @@
       return;
     }
     // 검색어가 있으면 닉네임·본문에 포함된 것만
-    const kw = chatSearchKeyword;
-    const items = kw
-      ? source.filter(m => (m.text || '').toLowerCase().includes(kw) || (m.nickname || '').toLowerCase().includes(kw))
-      : source;
+    const items = source.filter(chatMatchesSearch);
     if (items.length === 0) {
       feed.innerHTML = '<div class="empty-hint">검색 결과가 없습니다</div>';
       return;
     }
     // 맨 아래에 있을 때만 새 채팅을 따라간다. 위로 스크롤해 읽는 중이거나 검색 중이면 위치 유지.
-    const atBottom = !kw && feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 10;
+    const atBottom = !chatSearchKeyword && feedAtBottom(feed);
     const prevTop = feed.scrollTop;
-    const starredSet = new Set(starredChats.map(m => m.id));
-    const pinnedIds = [pinnedChatMsg, pinnedNoticeMsg].filter(Boolean).map(m => m.id);
-    const pinLocked = isPinLocked();
+    const frag = document.createDocumentFragment();
+    items.forEach((m) => { const el = chatItemEl(m); chatEls.set(m.id, el); frag.appendChild(el); });
     feed.innerHTML = '';
-    items.forEach((m) => {
-      const item = document.createElement('div');
-      item.className = 'chat-item'
-        + (starredSet.has(m.id) ? ' starred' : '')
-        + (pinnedIds.includes(m.id) ? ' pinned' : '');
-      const star = document.createElement('button');
-      star.className = 'star-btn';
-      star.textContent = starredSet.has(m.id) ? '★' : '☆';
-      star.title = '좋은 글 체크 (LED에 나가지 않음, 관리자끼리 공유)';
-      star.onclick = (e) => { e.stopPropagation(); toggleChatStar(m); };
-      const body = document.createElement('div');
-      body.className = 'chat-body';
-      body.title = pinLocked ? '질문·결과 중에는 핀·공지를 걸 수 없어요 (채팅 모드에서만)'
-        : (m.isOperator ? 'LED·관객 폰 맨 위에 공지로 고정' : 'LED에 핀 고정');
-      const nick = document.createElement('div');
-      nick.className = 'chat-nick';
-      if (m.isOperator) {
-        const badge = document.createElement('span');
-        badge.className = 'chat-op-badge';
-        badge.textContent = '운영진 · 공지';
-        nick.appendChild(badge);
-      }
-      if (pinnedIds.includes(m.id)) {
-        const pb = document.createElement('span');
-        pb.className = 'chat-pin-badge';
-        pb.textContent = m.isOperator ? '공지 중' : '📌 고정 중';
-        nick.appendChild(pb);
-      }
-      nick.appendChild(document.createTextNode(m.nickname || ''));
-      const text = document.createElement('div');
-      text.className = 'chat-text';
-      text.textContent = m.text;
-      body.appendChild(nick);
-      body.appendChild(text);
-      body.onclick = () => { if (!isPinLocked()) pinChat(m); };
-      const del = document.createElement('button');
-      del.className = 'chat-del';
-      del.textContent = '✕';
-      del.title = '이 채팅 삭제';
-      del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
-      item.appendChild(star);
-      item.appendChild(body);
-      item.appendChild(del);
-      feed.appendChild(item);
-    });
+    feed.appendChild(frag);
     // 맨 아래면 최신으로 따라가고, 위로 스크롤 중이면 재렌더 전 위치를 복원(제작진이 상위 글을 찾을 수 있게)
     feed.scrollTop = atBottom ? feed.scrollHeight : prevTop;
+  }
+
+  // 새 채팅: 메모리 목록(최근 MAX_FEED)에 넣고, 지금 보기 조건에 맞는 것만 목록 끝에 붙임
+  function addChats(list) {
+    if (!list.length) return;
+    chatFeedItems.push(...list);
+    if (chatFeedItems.length > MAX_FEED) chatFeedItems.splice(0, chatFeedItems.length - MAX_FEED);
+    if (chatStarredOnly) return; // 체크만 보기: 새 채팅은 아직 체크 전이라 목록에 없음
+    const feed = document.getElementById('chat-feed');
+    if (!chatEls.size) { renderChatFeed(); return; } // 비어 있던 목록(안내 문구) → 처음부터
+    const add = list.filter(chatMatchesSearch);
+    const atBottom = !chatSearchKeyword && feedAtBottom(feed);
+    if (add.length) {
+      const frag = document.createDocumentFragment();
+      add.forEach((m) => { if (chatEls.has(m.id)) return; const el = chatItemEl(m); chatEls.set(m.id, el); frag.appendChild(el); });
+      feed.appendChild(frag);
+    }
+    trimChatFeed(feed, atBottom);
+    if (atBottom) feed.scrollTop = feed.scrollHeight;
+  }
+
+  // 메모리에서 밀려난 오래된 채팅을 화면에서도 뺌 — 위로 올려 읽는 중이면 보던 글이 그 자리에 머물게 스크롤 보정
+  function trimChatFeed(feed, atBottom) {
+    const keep = new Set(chatFeedItems.map(m => m.id));
+    const gone = [];
+    for (const [id, el] of chatEls) { if (keep.has(id)) break; gone.push([id, el]); } // 그려진 순서 = 올라온 순서
+    if (!gone.length) return;
+    const anchor = !atBottom && chatEls.size > gone.length ? [...chatEls.values()][gone.length] : null; // 맨 아래면 위치를 재지 않음
+    const before = anchor ? anchor.offsetTop : 0;
+    gone.forEach(([id, el]) => { el.remove(); chatEls.delete(id); });
+    if (anchor) feed.scrollTop -= before - anchor.offsetTop;
+  }
+
+  // 핀 잠금(모드)·핀·체크 표시가 바뀐 항목만 새로 만들어 바꿔 끼움 (핀 잠금이 바뀌면 모든 항목 안내가 바뀌므로 전체)
+  function syncChatFeedMarks() {
+    if (isPinLocked() !== feedMarks.pinLocked) { renderChatFeed(); return; }
+    const pinned = currentPinnedIds(), starred = new Set(starredChats.map(m => m.id));
+    const changed = new Set();
+    [...pinned, ...feedMarks.pinned].forEach((id) => { if (pinned.includes(id) !== feedMarks.pinned.includes(id)) changed.add(id); });
+    starred.forEach((id) => { if (!feedMarks.starred.has(id)) changed.add(id); });
+    feedMarks.starred.forEach((id) => { if (!starred.has(id)) changed.add(id); });
+    feedMarks = { pinLocked: feedMarks.pinLocked, pinned, starred };
+    changed.forEach((id) => {
+      const old = chatEls.get(id);
+      if (!old) return;
+      const el = chatItemEl(old._msg);
+      old.replaceWith(el);
+      chatEls.set(id, el);
+    });
   }
 
   function toggleChatFullscreen() {
@@ -1678,6 +1781,7 @@
     input.value = '';
     document.getElementById('preset-options').value = '';
     renderPresets();
+    refreshLenHints();
   }
 
   function runPreset(i) {
@@ -1773,6 +1877,24 @@
   }
 
   renderPresets();
+
+  // 질문 글자 수 안내: 가로형 LED는 질문이 3줄을 넘으면 글자가 작아지고 말줄임되므로 80자 이내를 권장 (입력은 막지 않음)
+  document.querySelectorAll('.len-hint[data-len-for]').forEach((hint) => {
+    const input = document.getElementById(hint.dataset.lenFor);
+    const max = Number(hint.dataset.lenMax) || 80;
+    const update = () => {
+      const n = Array.from(input.value.trim()).length;
+      hint.classList.toggle('over', n > max);
+      hint.textContent = n > max
+        ? `지금 ${n}자 — 가로형 LED는 ${max}자 이내 권장 (넘으면 글자가 작아지고 3줄에서 잘려요)`
+        : `가로형 LED는 ${max}자 이내 권장${n ? ` (지금 ${n}자)` : ''}`;
+    };
+    input.addEventListener('input', update);
+    input.addEventListener('change', update); // 붙여넣기·자동완성 등
+    hint.update = update;
+    update();
+  });
+  const refreshLenHints = () => document.querySelectorAll('.len-hint').forEach((h) => h.update && h.update());
 </script>
 </body>
 </html>

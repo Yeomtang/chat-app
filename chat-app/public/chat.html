@@ -308,6 +308,7 @@
       max-width: 320px;
       word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
       overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
+      text-wrap: balance;        /* 질문류: 줄 길이를 고르게 — "회사 / 행사는?"처럼 짧은 마지막 줄 방지 (미지원 브라우저는 그냥 줄바꿈) */
     }
 
     #voting-buttons {
@@ -344,6 +345,12 @@
       word-break: keep-all;
       overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 보기도 카드 폭 안에서 줄바꿈 */
       text-wrap: balance;      /* 마지막 줄에 한 글자만 남지 않게 줄 길이를 고르게 */
+      /* 같은 줄 카드끼리 헤더 높이가 같아지도록 남는 높이는 헤더(보기 색)가 가져가고, 이름은 그 안에서 세로 가운데.
+         본문(%) 높이는 고정 → 옆 보기 이름이 두 줄 이상이어도 이름 가운데·숫자 줄이 같은 높이에 옴 */
+      flex: 1 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
     }
     /* 띄어쓰기 없는 긴 덩어리(12자+)만: 글자마다 줄바꿈 기회를 줘야 balance가 줄 길이를 고르게 나눔
        (keep-all이면 마지막 줄에 '로' 한 글자). 같은 보기의 다른 어절은 keep-all 그대로 */
@@ -351,7 +358,7 @@
 
     .vote-btn-body {
       background: var(--bg-soft); /* 흰 카드 위에서도 본문이 상자처럼 읽히도록 살짝 톤 다운 */
-      flex: 1; /* 옆 카드 보기가 두 줄로 꺾여 카드가 늘어나도 본문이 바닥까지 차게(흰 띠 방지) */
+      flex: none; /* 높이 고정 — 카드가 늘어난 만큼은 헤더가 채움(흰 띠 없음, 숫자 줄 정렬) */
       min-height: 62px;
       display: flex;
       align-items: center;
@@ -633,6 +640,7 @@
 
     .msg-text {
       color: var(--ink);
+      text-wrap: pretty; /* 채팅: 마지막 줄에 한 글자만 남지 않게 (keep-all은 말풍선에서 상속, 미지원 브라우저는 그냥 줄바꿈) */
     }
 
     /* ── 입력창 ── */
@@ -703,6 +711,30 @@
     #char-counter.limit { color: var(--warn); font-weight: 700; }
 
     /* ── 안내 띠 (연결 상태·전송 안내) ── 입력창 바로 위. 연결 끊김은 계속, 전송 안내는 잠깐 표시 */
+    /* 위로 올려 읽는 중에 새 채팅이 오면 목록 아래쪽에 뜨는 알림 (누르면 맨 아래로) — 위치(bottom)는 JS가 입력창 위로 */
+    .new-msg-pill {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      width: fit-content;
+      margin: 0 auto;
+      padding: 7px 14px;
+      border: none;
+      border-radius: 16px;
+      background: var(--ink);
+      color: var(--surface);
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      z-index: 5;
+    }
+    .new-msg-pill.visible {
+      display: block;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+
     .notice-bar {
       display: none;
       margin: 0 12px 8px;
@@ -746,14 +778,14 @@
     .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
     .pin-notice-body { flex: 1; min-width: 0; }
     .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
-    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; text-wrap: pretty; }
 
     /* ── "내 채팅이 고정됐어요" 배너 ── 채팅 화면 위쪽에서 슬라이드 다운, 작성자 폰에만 뜸 */
     .pin-banner {
       position: absolute;
       left: 12px;
       right: 12px;
-      top: 12px;
+      top: var(--pin-top, 12px); /* JS가 헤더(공지 띠가 있으면 그 아래) 아래 끝 + 8px로 지정 — 헤더·공지를 덮지 않게 */
       background: var(--ink);
       color: var(--surface);
       border-radius: 14px;
@@ -764,7 +796,7 @@
       line-height: 1.4;
       word-break: keep-all;
       overflow-wrap: break-word;
-      transform: translateY(-140%);
+      transform: translateY(calc(-100% - var(--pin-top, 12px) - 16px)); /* 숨김: 화면 위 밖 (그림자까지) */
       transition: transform 0.55s cubic-bezier(0.22, 0.75, 0.25, 1);
       z-index: 40;
       box-shadow: var(--shadow-lg);
@@ -857,6 +889,7 @@
     </div>
 
     <div id="messages"></div>
+    <button class="new-msg-pill" id="new-msg-pill" type="button" onclick="jumpToLatest()">새 메시지 ↓</button>
 
     <div class="notice-bar" id="notice-bar" role="status" aria-live="polite"></div>
 
@@ -1048,15 +1081,11 @@
         scrollToBottom();
       });
       // 새 메시지 수신
-      nickSocket.on('chat', (msg) => {
-        addMessage(msg);
-        scrollToBottom();
-      });
+      // 맨 아래를 보고 있을 때만 따라 내려감(운영진 화면과 같은 방식) — 위로 올려 읽는 중이면 위치 유지 + "새 메시지" 알림.
+      // 내가 방금 보낸 글이 돌아오면 그때는 맨 아래로
+      nickSocket.on('chat', (msg) => receiveMessages([msg]));
       // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 (화면 갱신·스크롤은 한 번만)
-      nickSocket.on('chatBatch', (list) => {
-        list.forEach(addMessage);
-        scrollToBottom();
-      });
+      nickSocket.on('chatBatch', (list) => receiveMessages(list));
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
       nickSocket.on('chatCleared', () => {
         document.getElementById('messages').innerHTML = '';
@@ -1170,6 +1199,9 @@
       b.className = 'vote-btn';
       const head = document.createElement('span');
       head.className = 'vote-btn-head';
+      const name = document.createElement('span'); // 헤더 안 한 덩어리(세로 가운데 정렬 대상 — 글자 조각이 flex 항목으로 흩어지지 않게)
+      name.className = 'vote-btn-name';
+      head.appendChild(name);
       // 12자 넘게 붙은 덩어리만 span.long-word(글자 단위 줄바꿈), 나머지는 그대로 — 사용자 글이라 textContent로만 넣음
       String(label).split(/(\S{12,})/).forEach((part, k) => {
         if (!part) return;
@@ -1177,8 +1209,8 @@
           const run = document.createElement('span');
           run.className = 'long-word';
           run.textContent = part;
-          head.appendChild(run);
-        } else head.appendChild(document.createTextNode(part));
+          name.appendChild(run);
+        } else name.appendChild(document.createTextNode(part));
       });
       const body = document.createElement('span');
       body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
@@ -1710,6 +1742,35 @@
   function scrollToBottom() {
     const messages = document.getElementById('messages');
     messages.scrollTop = messages.scrollHeight;
+    hideNewMsgPill();
+  }
+
+  // 새 채팅 받기: 맨 아래였거나 내가 보낸 글이면 맨 아래로, 아니면 읽던 자리 그대로 두고 "새 메시지" 알림
+  let pendingOwnText = null; // 방금 보낸 글 (서버를 거쳐 돌아오면 맨 아래로 내려 보여 줌)
+  function receiveMessages(list) {
+    const atBottom = isNearBottom();
+    let mine = false;
+    list.forEach((m) => {
+      if (pendingOwnText != null && m && m.nickname === currentNickname && m.text === pendingOwnText) { mine = true; pendingOwnText = null; }
+      addMessage(m);
+    });
+    if (atBottom || mine) scrollToBottom();
+    else showNewMsgPill();
+  }
+  function showNewMsgPill() {
+    const pill = document.getElementById('new-msg-pill');
+    const content = document.getElementById('chat-content').getBoundingClientRect();
+    const list = document.getElementById('messages').getBoundingClientRect();
+    pill.style.bottom = Math.round(content.bottom - list.bottom + 10) + 'px'; // 목록 아래 끝(입력창·안내 띠 위) 10px 위
+    pill.classList.add('visible');
+  }
+  function hideNewMsgPill() { document.getElementById('new-msg-pill').classList.remove('visible'); }
+  // 직접 맨 아래까지 내리면 알림을 거둠
+  document.getElementById('messages').addEventListener('scroll', () => { if (isNearBottom()) hideNewMsgPill(); }, { passive: true });
+  function jumpToLatest() {
+    const messages = document.getElementById('messages');
+    messages.scrollTo({ top: messages.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    hideNewMsgPill();
   }
 
   // 목록이 맨 아래(20px 안쪽)에 있는지 — 운영진 화면(host.html)과 같은 기준
@@ -1731,6 +1792,11 @@
   let pinBannerTimer = null;
   function showPinnedYou(id) {
     const banner = document.getElementById('pin-banner');
+    // 헤더 아래(운영진 공지 띠가 떠 있으면 그 아래)에 8px 띄워 내려옴 — 헤더를 덮거나 공지 띠에 맞닿지 않게
+    const root = document.getElementById('chatroom').getBoundingClientRect();
+    const notice = document.getElementById('pin-notice');
+    const above = notice.classList.contains('visible') ? notice : document.getElementById('chat-header');
+    banner.style.setProperty('--pin-top', Math.round(above.getBoundingClientRect().bottom - root.top + 8) + 'px');
     banner.classList.add('show');
     clearTimeout(pinBannerTimer);
     pinBannerTimer = setTimeout(() => banner.classList.remove('show'), 4000);
@@ -1805,6 +1871,7 @@
       return;
     }
     const sent = text.slice(0, MAX_CHAT_LENGTH);
+    pendingOwnText = sent; // 돌아오면 맨 아래로 (서버가 비속어를 가리면 글이 달라져 못 알아볼 수 있음 — 그땐 맨 아래일 때만 따라감)
     // 서버가 결과를 알려준다 — 거절되면 이유를 안내하고 보내려던 내용을 되살린다
     socket.timeout(5000).emit('chat', { nickname: currentNickname, text: sent }, (err, res) => {
       if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
