@@ -661,6 +661,30 @@
     }
     .notice-bar.warn { background: var(--warn); }
 
+    /* ── 운영진 공지 핀 ── 관리자가 운영진 채팅을 핀하면 채팅 맨 위에 고정 (운영진 화면 host.html과 같은 모양) */
+    .pin-notice {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 8px 12px 0;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: var(--surface);
+      box-shadow: var(--shadow);
+      flex-shrink: 0;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    .pin-notice.visible {
+      display: flex;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+    .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
+    .pin-notice-body { flex: 1; min-width: 0; }
+    .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
+
     /* ── "내 채팅이 고정됐어요" 배너 ── 채팅 화면 위쪽에서 슬라이드 다운, 작성자 폰에만 뜸 */
     .pin-banner {
       position: absolute;
@@ -756,6 +780,15 @@
       <div class="header-info">
         <div class="header-title" id="header-nickname"></div>
         <div class="header-sub">익명 토론 채팅</div>
+      </div>
+    </div>
+
+    <!-- 운영진 공지 핀 (관리자가 운영진 채팅을 핀하면 표시) -->
+    <div class="pin-notice" id="pin-notice" role="status">
+      <span class="pin-notice-icon" aria-hidden="true">📢</span>
+      <div class="pin-notice-body">
+        <div class="pin-notice-nick" id="pin-notice-nick"></div>
+        <div class="pin-notice-text" id="pin-notice-text"></div>
       </div>
     </div>
 
@@ -946,6 +979,8 @@
       nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
       // 관리자가 "내 채팅"을 LED에 고정했을 때만 작성자 본인에게 옴 (다른 사람 폰에는 안 옴)
       nickSocket.on('chatPinnedYou', ({ id }) => showPinnedYou(id));
+      // 운영진 공지 핀 (모든 관객에게) — 채팅 맨 위 띠
+      nickSocket.on('noticePinned', (data) => renderPinNotice(data && data.message));
     } else {
       // 이미 연결돼 있으면(리롤 등) 새로 고른 닉네임을 서버에 다시 등록
       nickSocket.emit('claimNickname', { name: currentNickname, theme: themeKey });
@@ -1047,9 +1082,25 @@
     });
   }
 
+  // 운영진 공지 핀 — 관리자가 운영진 채팅을 핀하면 채팅 맨 위에 고정 (null이면 숨김)
+  let pinNoticeKey = null;
+  function renderPinNotice(msg) {
+    const box = document.getElementById('pin-notice');
+    const key = msg ? JSON.stringify([msg.id, msg.nickname, msg.text]) : null;
+    if (key === pinNoticeKey) return; // 같은 공지 재전송이면 등장 애니메이션을 다시 틀지 않음
+    pinNoticeKey = key;
+    box.classList.remove('visible');
+    if (!msg) return;
+    document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
+    document.getElementById('pin-notice-text').textContent = msg.text || '';
+    void box.offsetWidth; // 교체 때도 팝인 재시작
+    box.classList.add('visible');
+  }
+
   function applyVoteState(state) {
     const prevMode = currentMode;
     currentMode = state.mode;
+    renderPinNotice(state.pinnedNotice);
     const overlay = document.getElementById('voting-overlay');
     const chatContent = document.getElementById('chat-content');
     const resultReact = document.getElementById('result-react');

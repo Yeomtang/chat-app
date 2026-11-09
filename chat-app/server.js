@@ -181,6 +181,7 @@ app.get('/host', (req, res) => {
 });
 
 // 채팅이 허용되는 모드 / 리액션이 막히는 모드
+// (운영진·관리자의 운영자 채팅은 모드와 무관하게 항상 허용 — 질문 중에도 채팅창 관리를 계속하므로)
 const CHAT_MODES = ['chat', 'idle', 'ending'];
 const REACTION_BLOCKED_MODES = ['voting', 'subjective', 'emoji', 'applause'];
 
@@ -262,6 +263,8 @@ const appState = {
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
   emojiOptions: [],       // 이모지 반응 질문 보기: [{emoji, label}] (라벨=뜻, 관객 폰에 표시)
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
+  pinnedNotice: null,     // 운영자 채팅을 핀하면 공지처럼 LED·관객 폰 맨 위 띠로 고정 {id, nickname, text} (일반 핀과 따로)
+  starredChats: [],       // 관리자가 체크(즐겨찾기)한 채팅 [{id, nickname, text, isOperator}] — 관리자끼리 공유, 메모리 보관
   timerHandle: null,
   chatPaused: false,      // LED 화면 채팅 표시 일시정지 여부 (관리자 화면에서 제어, 관객 채팅 송수신엔 영향 없음)
   effects: { heartBurst: true }, // LED 연출 on/off (리허설·현장 상황에 따라 관리자가 끔)
@@ -361,6 +364,7 @@ function publicState(forClientId, withSlides = false) {
     myAnswered: forClientId ? !!appState.answers[forClientId] : null,
     cloud: appState.mode === 'subjectiveResult' ? computeCloud() : null,
     pinnedChat: appState.pinnedChat,
+    pinnedNotice: appState.pinnedNotice,
     chatPaused: appState.chatPaused,
     audience: audienceStats(),
     // 아래는 모든 모드에서 같은 모양으로 보낸다(해당 모드가 아니면 기본값) — 클라이언트가 분기 없이 읽도록
@@ -421,11 +425,24 @@ function scheduleVoteUpdate() {
   }, VOTE_UPDATE_MS);
 }
 
-// 질문 모드 진입/복귀 시 채팅 핀 해제 (오래된 핀이 남는 것 방지)
+// 질문 모드 진입/복귀 시 채팅 핀·운영자 공지 핀 해제 (오래된 핀이 남는 것 방지)
 function clearPinnedChat() {
+  clearPinnedNotice();
   if (!appState.pinnedChat) return;
   appState.pinnedChat = null;
   io.to(SCREENS).emit('chatPinned', { message: null });
+}
+
+// 운영자 공지 핀 해제 — 관객 폰에도 보이므로 모두에게 알린다 (드물게 일어나는 이벤트라 전송량 부담 없음)
+function clearPinnedNotice() {
+  if (!appState.pinnedNotice) return;
+  appState.pinnedNotice = null;
+  io.emit('noticePinned', { message: null });
+}
+
+// 체크(즐겨찾기)한 채팅 목록 — 관리자 화면 전용
+function emitChatStars(target) {
+  (target || io.to(ADMINS)).emit('chatStars', appState.starredChats);
 }
 
 // options: 보기 라벨 배열, type: 'yesno' | 'choice'
@@ -727,13 +744,14 @@ io.on('connection', (socket) => {
 
   // 새 연결에 최근 메시지 전송
   socket.emit('history', recentMessages);
+  if (role === 'admin') emitChatStars(socket); // 체크한 채팅(관리자끼리 공유) 복원
 
   // 채팅 메시지 (채팅·대기·엔딩 모드에서 허용)
   // ack(선택): 보낸 사람에게 결과를 알려준다 — { ok: true } 또는 { ok: false, reason: 'mode'|'rate'|'empty' }
   // (예전 화면은 ack 없이 보내므로 함수일 때만 호출)
   on('chat', (data, ack) => {
     const reply = (r) => { if (typeof ack === 'function') ack(r); };
-    if (!CHAT_MODES.includes(appState.mode)) return reply({ ok: false, reason: 'mode' });
+    if (!socket.isOperator && !CHAT_MODES.includes(appState.mode)) return reply({ ok: false, reason: 'mode' });
     const d = asObj(data);
     const raw = cleanStr(d.text, MAX_CHAT_LENGTH);
     if (!raw) return reply({ ok: false, reason: 'empty' });
@@ -878,6 +896,13 @@ io.on('connection', (socket) => {
     const text = maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
     if (!text) return;
     const id = typeof d.id === 'string' || typeof d.id === 'number' ? d.id : Date.now();
+    // 운영자 채팅이면 공지 핀(LED·관객 폰 맨 위 띠). 운영자 여부는 서버 보관본 기준(지난 채팅이면 관리자가 보낸 값)
+    const known = recentMessages.find(m => m.id === id) || appState.starredChats.find(m => m.id === id);
+    if (known ? known.isOperator : d.isOperator === true) {
+      appState.pinnedNotice = { id, nickname, text };
+      io.emit('noticePinned', { message: appState.pinnedNotice });
+      return;
+    }
     appState.pinnedChat = { id, nickname, text };
     io.to(SCREENS).emit('chatPinned', { message: appState.pinnedChat });
     // 작성한 관객에게 "내 채팅이 LED에 올라감" 알림 — 같은 사람의 탭이 여러 개면 모두에게
@@ -890,7 +915,36 @@ io.on('connection', (socket) => {
   });
 
   onAdmin('admin:unpinChat', () => {
-    clearPinnedChat();
+    // 일반 핀만 내린다 (공지 핀은 [공지 내리기]로 따로) — clearPinnedChat은 공지까지 내리므로 쓰지 않음
+    if (!appState.pinnedChat) return;
+    appState.pinnedChat = null;
+    io.to(SCREENS).emit('chatPinned', { message: null });
+  });
+
+  onAdmin('admin:unpinNotice', () => {
+    clearPinnedNotice();
+  });
+
+  // 관리자: 채팅 체크(즐겨찾기) 토글 — 좋은 글을 모아 두고 나중에 핀. LED·관객엔 안 보임, 관리자 화면끼리 공유.
+  // 메시지 내용째 보관 → 최근 채팅(50개)에서 밀려나도, 새로 연 관리자 화면에서도 체크 목록에서 바로 핀할 수 있다.
+  onAdmin('admin:toggleChatStar', (data) => {
+    const d = asObj(data);
+    if (typeof d.id !== 'string' || d.id.length > 64) return;
+    const idx = appState.starredChats.findIndex(m => m.id === d.id);
+    if (idx !== -1) appState.starredChats.splice(idx, 1);
+    else {
+      // 서버 보관본(최근 50개)에 있으면 그 내용을, 밀려난 지난 채팅이면 관리자 화면이 보낸 내용을 쓴다
+      const m = recentMessages.find(x => x.id === d.id) || {
+        id: d.id,
+        nickname: cleanStr(d.nickname, MAX_NICKNAME_LENGTH),
+        text: maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH)),
+        isOperator: d.isOperator === true,
+      };
+      if (!m.text) return;
+      appState.starredChats.push({ id: m.id, nickname: m.nickname, text: m.text, isOperator: !!m.isOperator });
+      if (appState.starredChats.length > 200) appState.starredChats.shift(); // 과도한 누적 방지
+    }
+    emitChatStars();
   });
 
   // 관리자: 개별 채팅 삭제 — 부적절한 메시지를 즉시 내림. 모든 화면에서 사라진다.
@@ -899,7 +953,13 @@ io.on('connection', (socket) => {
     const idx = recentMessages.findIndex(m => m.id === id);
     if (idx !== -1) recentMessages.splice(idx, 1);
     chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
-    if (appState.pinnedChat && appState.pinnedChat.id === id) clearPinnedChat(); // 핀된 걸 지우면 핀도 해제
+    if (appState.pinnedChat && appState.pinnedChat.id === id) {  // 핀된 걸 지우면 핀도 해제
+      appState.pinnedChat = null;
+      io.to(SCREENS).emit('chatPinned', { message: null });
+    }
+    if (appState.pinnedNotice && appState.pinnedNotice.id === id) clearPinnedNotice();
+    const starIdx = appState.starredChats.findIndex(m => m.id === id);
+    if (starIdx !== -1) { appState.starredChats.splice(starIdx, 1); emitChatStars(); } // 지운 글은 체크 목록에서도 뺌
     io.emit('chatDeleted', id);
   });
 
@@ -929,7 +989,8 @@ io.on('connection', (socket) => {
     recentMessages.length = 0;
     chatQueue = [];
     messageAuthors.clear();
-    clearPinnedChat(); // 지워진 메시지가 LED에 핀으로 남아 있으면 안 됨
+    clearPinnedChat(); // 지워진 메시지가 LED에 핀(공지 핀 포함)으로 남아 있으면 안 됨
+    if (appState.starredChats.length) { appState.starredChats = []; emitChatStars(); }
     io.emit('chatCleared');
   });
 

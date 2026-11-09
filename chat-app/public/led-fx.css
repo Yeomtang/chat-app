@@ -733,3 +733,54 @@
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+
+/* ── 운영진 공지 핀 (LedFx.notice) ── 관리자가 운영진 채팅을 핀하면 화면 맨 위에 공지 띠로 고정.
+   일반 채팅 핀(가운데 주황 카드)과 따로 — 둘이 함께 떠 있을 수 있다. 운영자 말풍선과 같은 네이비. */
+.fx-notice {
+  display: none;
+  position: absolute;
+  top: calc(16px * var(--u));
+  left: calc(20px * var(--u));
+  right: calc(20px * var(--u));
+  z-index: 16; /* 채팅 핀(15) 위, 투표(20)·리액션(25) 아래 */
+  align-items: center;
+  gap: calc(12px * var(--u) * var(--fx-k, 1));
+  padding: calc(12px * var(--u)) calc(22px * var(--u));
+  border-radius: calc(16px * var(--u));
+  background: var(--ink);
+  color: #fff;
+  box-shadow: 0 calc(14px * var(--u)) calc(40px * var(--u)) rgba(0, 0, 0, 0.18);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+.fx-notice.on {
+  display: flex;
+  animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn */
+}
+.fx-notice.leaving {
+  display: flex;
+  animation: fxNoticeOut 0.4s ease forwards;
+}
+@keyframes fxNoticeOut { to { opacity: 0; transform: translateY(calc(-12px * var(--u))); } }
+.fx-notice-icon {
+  flex-shrink: 0;
+  font-size: calc(24px * var(--u) * var(--fx-k, 1));
+  line-height: 1;
+}
+.fx-notice-body { flex: 1; min-width: 0; }
+.fx-notice-nick {
+  font-size: calc(12px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: calc(2px * var(--u));
+}
+.fx-notice-text {
+  font-size: calc(20px * var(--u) * var(--fx-k, 1));
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-notice.on, .fx-notice.leaving { animation: none; }
+}

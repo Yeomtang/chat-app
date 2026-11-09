@@ -145,314 +145,51 @@
       transition: filter 0.5s ease, opacity 0.5s ease;
     }
 
-    #chat-content.blurred {
-      filter: blur(16px);
-      opacity: 0.5;
-      pointer-events: none;
-    }
-
-    /* ── 투표 오버레이 (관객 폰) ── */
-    /* 보기가 많거나 질문이 길어 카드가 화면보다 커지면 스크롤로 볼 수 있어야 한다.
-       align-items:center + overflow 조합은 위쪽이 잘려 접근 불가라서, 카드에 margin:auto를 쓴다. */
-    #voting-overlay {
-      display: none;
-      position: absolute;
-      inset: 0;
-      justify-content: center;
-      padding: 28px;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      z-index: 30;
-    }
-
-    #voting-overlay.active { display: flex; }
-
-    /* 등장 모션: 작은 박스가 중앙에서 살짝 튕기듯 커지며 등장 */
-    #voting-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 18px;
-      width: 100%;
-      max-width: 320px;
-      margin: auto; /* 공간이 남으면 가운데, 넘치면 위부터 (잘림 방지) */
-      position: relative;
-      background: var(--surface);
-      border-radius: 24px;
-      padding: 44px 24px 28px;
-      box-shadow: var(--shadow-lg);
-      opacity: 0;
-      transform: scale(0.4);
-    }
-
-    #voting-overlay.active #voting-card {
-      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }
-
+    /* 공용 popIn 패턴 (scale 0.4→1.05→1) — 안내 띠 등장에 사용 */
     @keyframes voteCardIn {
       0%   { opacity: 0; transform: scale(0.4); }
       60%  { opacity: 1; transform: scale(1.05); }
       100% { opacity: 1; transform: scale(1); }
     }
 
-    /* 타이머 배지: 카드 상단 중앙에 걸치는 형태 (LED 질문 카드와 동일) */
-    #voting-timer-phone {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      display: inline-flex;
+    /* ── 지금 진행 중인 질문 안내 ── 운영진 화면은 질문 중에도 채팅창 그대로(채팅 관리가 주목적), 질문은 헤더 아래 한 줄로만 */
+    .mode-hint {
+      display: none;
       align-items: center;
-      justify-content: center;
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      background: var(--ink);
-      color: #fff;
-      font-size: 18px;
-      font-weight: 700;
-    }
-
-    #voting-question-phone {
-      font-size: 19px;
-      font-weight: 700;
-      color: var(--ink);
-      text-align: center;
-      line-height: 1.4;
-      max-width: 320px;
-      word-break: keep-all;      /* 한글 어절 단위 줄바꿈 */
-      overflow-wrap: break-word; /* 한 어절이 너무 길면 예외적으로 자름 */
-    }
-
-    #voting-buttons {
-      display: flex;
-      gap: 14px;
-      width: 100%;
-      max-width: 320px;
-    }
-
-    /* 보기 버튼: 컬러 헤더 + 흰 본문 카드. 색은 JS가 옵션별 --strong으로 주입 (YES/NO·N지선다 공용) */
-    .vote-btn {
-      flex: 1;
-      min-width: 0;
-      display: flex;
-      flex-direction: column;
-      padding: 0;
-      overflow: hidden;
-      border: none;
-      border-radius: 16px;
-      background: var(--surface);
-      cursor: pointer;
-      font-family: inherit;
-      box-shadow: 0 4px 14px rgba(30, 30, 66, 0.10);
-      transition: transform 0.15s, opacity 0.15s, box-shadow 0.15s;
-    }
-
-    .vote-btn-head {
-      background: var(--strong, var(--ink));
-      color: #fff;
-      font-size: 18px;
-      font-weight: 700;
-      padding: 11px 8px;
-      line-height: 1.25;
-      word-break: keep-all;
-      overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 보기도 카드 폭 안에서 줄바꿈 */
-      text-wrap: balance;      /* 마지막 줄에 한 글자만 남지 않게 줄 길이를 고르게 */
-    }
-    /* 띄어쓰기 없는 긴 덩어리(12자+)만: 글자마다 줄바꿈 기회를 줘야 balance가 줄 길이를 고르게 나눔
-       (keep-all이면 마지막 줄에 '로' 한 글자). 같은 보기의 다른 어절은 keep-all 그대로 */
-    .vote-btn-head .long-word { word-break: break-all; }
-
-    .vote-btn-body {
-      background: var(--bg-soft); /* 흰 카드 위에서도 본문이 상자처럼 읽히도록 살짝 톤 다운 */
-      flex: 1; /* 옆 카드 보기가 두 줄로 꺾여 카드가 늘어나도 본문이 바닥까지 차게(흰 띠 방지) */
-      min-height: 62px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 22px;
-      font-weight: 700;
-      color: var(--strong, var(--ink));
-    }
-
-    .vote-btn:active { transform: scale(0.96); }
-    .vote-btn:disabled { cursor: default; } /* 결과 모드에서 비율(%)이 흐려지지 않도록 dim 없음 */
-    .vote-btn.selected { box-shadow: 0 0 0 3px var(--strong, var(--ink)), 0 6px 18px rgba(30, 30, 66, 0.16); }
-
-    /* 3지 이상(N지선다)은 2열 그리드로 줄바꿈 */
-    #voting-buttons.grid { flex-wrap: wrap; }
-    #voting-buttons.grid .vote-btn { flex: 1 1 calc(50% - 7px); }
-    #voting-buttons.grid .vote-btn-head { font-size: 15px; }
-    #voting-buttons.grid .vote-btn-body { min-height: 46px; font-size: 18px; }
-
-    #voting-ratio {
-      width: 100%;
-      max-width: 320px;
-    }
-
-    .ratio-bar {
-      width: 100%;
-      height: 10px;
-      border-radius: 6px;
-      background: rgba(30, 30, 66, 0.08);
-      display: flex;
-      overflow: hidden;
-      margin-bottom: 8px;
-    }
-
-    .ratio-fill { height: 100%; transition: width 0.3s ease; }
-
-    .ratio-text {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center; /* 카드 안 다른 요소(질문·보기·안내문)와 같은 가운데 정렬 */
-      gap: 6px 14px;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-soft);
+      border-bottom: 1px solid var(--line);
       font-size: 13px;
-      font-weight: 700;
       color: var(--ink-soft);
-    }
-    .ratio-item { display: inline-flex; align-items: center; gap: 5px; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; } /* 어절 중간에서 줄이 바뀌지 않게 */
-    .ratio-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-
-    /* 이모지 반응 버튼 */
-    #emoji-buttons {
-      display: none;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 12px;
-      width: 100%;
-      max-width: 320px;
-    }
-    #emoji-buttons.active { display: flex; }
-    .emoji-btn {
-      flex: 1 1 calc(50% - 6px);
-      min-width: 0;
-      min-height: 104px;
-      padding: 14px 10px;
-      border-radius: 18px;
-      border: none;
-      background: var(--bg-soft);
-      cursor: pointer;
-      font-family: inherit;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: transform 0.12s, background 0.12s;
-    }
-    .emoji-btn-icon { font-size: 36px; line-height: 1; }
-    .emoji-btn-label {
-      max-width: 100%;          /* 세로 flex 가운데 정렬 자식이라 폭 제한이 없으면 버튼 밖으로 넘침 */
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--ink);
-      text-align: center;
-      line-height: 1.3;
-      word-break: keep-all;
-      overflow-wrap: anywhere;  /* 띄어쓰기 없는 긴 라벨도 버튼 안에서 줄바꿈 (break-word는 최소 폭을 줄이지 못함) */
-    }
-    .emoji-btn:active { transform: scale(0.92); background: var(--orange-tint); }
-    .emoji-btn.pop { animation: emojiPop 0.3s ease; }
-    @keyframes emojiPop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
-
-    /* ── 주관식 답변 입력 ── */
-    #subjective-wrap {
-      display: none;
-      width: 100%;
-      max-width: 320px;
-    }
-
-    #subjective-wrap.active { display: block; }
-
-    #subjective-form {
-      display: flex;
-      gap: 8px;
-    }
-
-    #answer-input {
-      flex: 1;
-      min-width: 0; /* input 기본 최소 너비 해제 — 좁은 화면에서 버튼이 카드 밖으로 밀리는 문제 방지 */
-      background: var(--bg-soft);
-      border: none;
-      border-radius: 14px;
-      padding: 14px;
-      font-size: 16px;
-      font-family: inherit;
-      color: var(--ink);
-      outline: none;
-    }
-
-    #answer-input::placeholder { color: var(--ink-faint); }
-
-    #answer-submit {
-      background: var(--ink);
-      color: #fff;
-      border: none;
-      border-radius: 14px;
-      padding: 0 18px;
-      font-size: 15px;
-      font-weight: 700;
-      cursor: pointer;
-      font-family: inherit;
       flex-shrink: 0;
+      min-width: 0;
     }
-
-    #answer-submit:disabled { opacity: 0.4; cursor: default; }
-
-    #answer-done {
-      display: none;
+    .mode-hint.visible { display: flex; }
+    .mode-hint-label {
+      flex-shrink: 0;
+      padding: 2px 8px;
+      border-radius: 8px;
       background: var(--orange-tint);
       color: var(--orange-deep);
-      border-radius: 14px;
-      padding: 16px;
-      font-size: 14px;
-      font-weight: 600;
-      text-align: center;
-      line-height: 1.4;
+      font-size: 12px;
+      font-weight: 700;
     }
-
-    #subjective-wrap.answered #subjective-form { display: none; }
-    #subjective-wrap.answered #answer-done { display: block; }
-
-    /* ── 결과 모드 붐업/붐따 ── */
-    #result-react {
-      display: none;
-      width: 100%;
-      max-width: 320px;
-      flex-direction: column;
-      gap: 10px;
-      margin-top: 4px;
-    }
-
-    #result-react.active { display: flex; }
-
-    #result-react-hint {
-      font-size: 13px;
-      color: var(--ink-soft);
-      text-align: center;
-    }
-
-    #result-react-buttons {
-      display: flex;
-      gap: 12px;
-    }
-
-    .result-react-btn {
+    .mode-hint-text {
       flex: 1;
-      padding: 14px 0;
-      border-radius: 16px;
-      border: none;
-      background: var(--bg-soft);
-      font-size: 24px;
-      line-height: 1;
-      cursor: pointer;
-      font-family: inherit;
-      transition: transform 0.15s;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink);
+      font-weight: 600;
     }
-
-    .result-react-btn:active { transform: scale(0.95); }
-    .result-react-btn.pop { animation: reactPop 0.3s ease; }
+    .mode-hint-timer {
+      flex-shrink: 0;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink);
+    }
 
     #chat-header {
       background: var(--surface);
@@ -601,6 +338,8 @@
     }
 
     .react-btn.pop { animation: reactPop 0.3s ease; }
+    /* 질문 중(투표·주관식·이모지·함성)엔 서버가 리액션을 받지 않으므로 흐리게 — 채팅 입력은 그대로 */
+    .react-btn:disabled { opacity: 0.35; cursor: default; }
 
     @keyframes reactPop {
       0% { transform: scale(1); }
@@ -641,6 +380,30 @@
       animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
     }
     .notice-bar.warn { background: var(--warn); }
+
+    /* ── 운영진 공지 핀 ── 관리자가 운영진 채팅을 핀하면 채팅 맨 위에 고정 (관객 폰 chat.html과 같은 모양) */
+    .pin-notice {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 8px 12px 0;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: var(--surface);
+      box-shadow: var(--shadow);
+      flex-shrink: 0;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    .pin-notice.visible {
+      display: flex;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+    .pin-notice-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
+    .pin-notice-body { flex: 1; min-width: 0; }
+    .pin-notice-nick { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.7); margin-bottom: 2px; }
+    .pin-notice-text { font-size: 14px; font-weight: 700; line-height: 1.45; }
 
     /* ── 키 없음/틀림 안내 ── 입장·채팅 화면 어디서든 보이도록 상단 고정, 인증될 때까지 유지 */
     .auth-notice {
@@ -734,6 +497,22 @@
       </div>
     </div>
 
+    <!-- 질문 중일 때만: 지금 어떤 질문이 나가 있는지 한 줄 안내 (채팅창은 그대로) -->
+    <div class="mode-hint" id="mode-hint" aria-live="polite">
+      <span class="mode-hint-label" id="mode-hint-label"></span>
+      <span class="mode-hint-text" id="mode-hint-text"></span>
+      <span class="mode-hint-timer" id="mode-hint-timer"></span>
+    </div>
+
+    <!-- 운영진 공지 핀 (관리자가 운영진 채팅을 핀하면 표시) -->
+    <div class="pin-notice" id="pin-notice" role="status">
+      <span class="pin-notice-icon" aria-hidden="true">📢</span>
+      <div class="pin-notice-body">
+        <div class="pin-notice-nick" id="pin-notice-nick"></div>
+        <div class="pin-notice-text" id="pin-notice-text"></div>
+      </div>
+    </div>
+
     <div id="messages"></div>
 
     <div class="notice-bar" id="notice-bar" role="status" aria-live="polite"></div>
@@ -748,41 +527,6 @@
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
         </svg>
       </button>
-    </div>
-  </div>
-
-  <!-- 투표 오버레이 -->
-  <div id="voting-overlay">
-    <div id="voting-card">
-      <div id="voting-timer-phone">30</div>
-      <div id="voting-question-phone"></div>
-      <!-- 보기 버튼/비율은 질문 유형(YES/NO·N지선다)에 맞춰 JS가 동적 생성 -->
-      <div id="voting-buttons"></div>
-      <div id="voting-ratio">
-        <div class="ratio-bar" id="ratio-bar"></div>
-        <div class="ratio-text" id="ratio-text"></div>
-      </div>
-
-      <!-- 이모지 반응 질문 전용: 이모지 선택 (여러 번 탭 가능) -->
-      <div id="emoji-buttons"></div>
-
-      <!-- 주관식 모드 전용: 자유 텍스트 답변 (1인 1회, 20자) -->
-      <div id="subjective-wrap">
-        <div id="subjective-form">
-          <input type="text" id="answer-input" maxlength="20" placeholder="20자 이내로 답해주세요">
-          <button id="answer-submit" onclick="submitAnswer()">보내기</button>
-        </div>
-        <div id="answer-done">답변이 접수됐어요! LED 화면을 봐주세요 👀</div>
-      </div>
-
-      <!-- 결과 모드 전용: 결과에 붐업/붐따로 반응 -->
-      <div id="result-react">
-        <div id="result-react-hint">이 결과, 어떻게 생각하세요?</div>
-        <div id="result-react-buttons">
-          <button class="result-react-btn" onclick="sendReaction('thumbs', this)">👍</button>
-          <button class="result-react-btn" onclick="sendReaction('down', this)">👎</button>
-        </div>
-      </div>
     </div>
   </div>
 </div>
@@ -975,7 +719,7 @@
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
-      nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
+      nickSocket.on('noticePinned', (data) => renderPinNotice(data && data.message));
     }
   }
 
@@ -991,270 +735,81 @@
   }
 
   // ══════════════════════════════════
-  //  투표 모드 (관객 폰)
+  //  질문 안내 · 공지 핀 (운영진 화면)
+  //  운영진 화면은 채팅 관리가 주목적이라 질문 중에도 채팅창을 가리지 않는다(투표·답변 카드 없음).
+  //  지금 나가 있는 질문은 헤더 아래 한 줄로만 알려 준다. 운영자 채팅은 서버가 모든 모드에서 받는다.
   // ══════════════════════════════════
   let currentMode = 'chat';
-  let myVote = null;        // 내가 고른 보기 인덱스(0-based) 또는 null
-  let voteOptions = [];     // 현재 질문의 보기 라벨 배열
-  let voteTypeCur = 'yesno';// 'yesno' | 'choice'
-  let answerMax = 20;       // 현재 주관식 최대 글자수
-  let phoneTimerInterval = null;
-  let phoneVotingEndTime = null;
+  let hintTimerInterval = null;
+  let hintEndTime = null;
 
-  let myAnswerDone = false; // 주관식 답변 완료 여부 (1인 1회)
+  const MODE_HINTS = {
+    voting: '투표 중',
+    result: '투표 결과',
+    subjective: '주관식 접수 중',
+    subjectiveResult: '주관식 결과',
+    emoji: '이모지 반응',
+    applause: '함성 측정 중',
+    applauseResult: '함성 결과',
+  };
 
-  // 보기 색 팔레트 (LED와 순서 동일하게 유지 — 같은 보기 = 같은 색)
-  const YESNO_STYLES = [
-    { tint: '#ffe6db', strong: '#fb7e55', on: '#b5502e' }, // YES 오렌지
-    { tint: '#e3e3f7', strong: '#5b5cc4', on: '#3d3e96' }, // NO 인디고
-  ];
-  const OPTION_STYLES = [
-    { tint: '#ffe6db', strong: '#fb7e55', on: '#b5502e' },
-    { tint: '#e3e3f7', strong: '#5b5cc4', on: '#3d3e96' },
-    { tint: '#dcf3f0', strong: '#2fb3a3', on: '#1f7f74' },
-    { tint: '#fdeed8', strong: '#f2a03d', on: '#a86c1c' },
-    { tint: '#fbe2ea', strong: '#e3557f', on: '#a83458' },
-    { tint: '#e4e4ee', strong: '#4a4a7a', on: '#33335c' },
-  ];
-  function voteStyles(type) { return type === 'yesno' ? YESNO_STYLES : OPTION_STYLES; }
-
-  function renderVoteButtons(options, type) {
-    const el = document.getElementById('voting-buttons');
-    el.innerHTML = '';
-    const styles = voteStyles(type);
-    options.forEach((label, i) => {
-      const s = styles[i % styles.length];
-      const b = document.createElement('button');
-      b.className = 'vote-btn';
-      const head = document.createElement('span');
-      head.className = 'vote-btn-head';
-      // 12자 넘게 붙은 덩어리만 span.long-word(글자 단위 줄바꿈), 나머지는 그대로 — 사용자 글이라 textContent로만 넣음
-      String(label).split(/(\S{12,})/).forEach((part, k) => {
-        if (!part) return;
-        if (k % 2) {
-          const run = document.createElement('span');
-          run.className = 'long-word';
-          run.textContent = part;
-          head.appendChild(run);
-        } else head.appendChild(document.createTextNode(part));
-      });
-      const body = document.createElement('span');
-      body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
-      b.appendChild(head);
-      b.appendChild(body);
-      b.style.setProperty('--tint', s.tint);
-      b.style.setProperty('--strong', s.strong);
-      b.style.setProperty('--on', s.on);
-      b.addEventListener('click', () => castVote(i));
-      el.appendChild(b);
-    });
-    el.classList.toggle('grid', options.length > 2);
-  }
-
-  function renderEmojiButtons(options) {
-    const el = document.getElementById('emoji-buttons');
-    el.innerHTML = '';
-    (options || []).forEach((opt) => {
-      const emoji = opt && opt.emoji ? opt.emoji : '';
-      const label = opt && opt.label ? opt.label : '';
-      const b = document.createElement('button');
-      b.className = 'emoji-btn';
-      const icon = document.createElement('span');
-      icon.className = 'emoji-btn-icon';
-      icon.textContent = emoji;
-      b.appendChild(icon);
-      if (label) {
-        const l = document.createElement('span');
-        l.className = 'emoji-btn-label';
-        l.textContent = label;
-        b.appendChild(l);
-      }
-      b.addEventListener('click', () => pickEmoji(emoji, b));
-      el.appendChild(b);
-    });
-  }
+  // 서버 REACTION_BLOCKED_MODES와 같은 목록 — 이 모드에선 리액션 버튼을 흐리게
+  const REACTION_BLOCKED_MODES = ['voting', 'subjective', 'emoji', 'applause'];
 
   function applyVoteState(state) {
-    const prevMode = currentMode;
     currentMode = state.mode;
-    const overlay = document.getElementById('voting-overlay');
-    const chatContent = document.getElementById('chat-content');
-    const resultReact = document.getElementById('result-react');
-    const subjectiveWrap = document.getElementById('subjective-wrap');
+    const reactBlocked = REACTION_BLOCKED_MODES.includes(state.mode);
+    document.querySelectorAll('.react-btn').forEach(b => { b.disabled = reactBlocked; });
+    renderPinNotice(state.pinnedNotice);
 
-    // chat·idle(대기 화면)·ending(엔딩 슬라이드) — 세 모드 모두 채팅이 열려 있어야 함(서버 CHAT_MODES와 동일)
-    if (state.mode === 'chat' || state.mode === 'idle' || state.mode === 'ending') {
-      overlay.classList.remove('active');
-      chatContent.classList.remove('blurred');
-      resultReact.classList.remove('active');
-      subjectiveWrap.classList.remove('active', 'answered');
-      myVote = null;
-      myAnswerDone = false;
-      stopPhoneTimer();
-      updateVoteUI();
+    const hint = document.getElementById('mode-hint');
+    const label = MODE_HINTS[state.mode];
+    if (!label) { // 채팅·대기·엔딩 — 안내 없음
+      hint.classList.remove('visible');
+      stopHintTimer();
       return;
     }
-
-    chatContent.classList.add('blurred');
-    overlay.classList.add('active');
-    // 새 투표 질문 시작 시 내 선택 초기화, 재접속이면 서버 값(인덱스) 복원
-    if (state.mode === 'voting' && prevMode !== 'voting' && prevMode !== 'result') myVote = null;
-    if (state.myVote != null) myVote = state.myVote;
-
-    // 새 주관식 질문 시작 시 답변 상태 초기화
-    if (state.mode === 'subjective' && prevMode !== 'subjective') {
-      myAnswerDone = false;
-      document.getElementById('answer-input').value = '';
-    }
-    if (state.myAnswered === true) myAnswerDone = true; // 재접속 시 서버 기준 복원
-
-    const questionEl = document.getElementById('voting-question-phone');
-    const timerEl = document.getElementById('voting-timer-phone');
-    const buttonsEl = document.getElementById('voting-buttons');
-    const ratioEl = document.getElementById('voting-ratio');
-
-    // 공통: 질문은 항상 표시 (결과에서도 유지)
-    questionEl.style.display = 'block';
-    questionEl.textContent = state.question || '';
-
-    // 함성 측정 모드는 투표 카드를 그대로 재사용해 안내문만 바꿔 보여준다 (화면은 함성 레벨을 안 받으므로 안내문만)
-    if (state.mode === 'applause') {
-      questionEl.textContent = '지금 박수와 함성을 보내 주세요!';
-    } else if (state.mode === 'applauseResult') {
-      const peak = (state.applause && state.applause.peak) || 0;
-      questionEl.textContent = `함성 지수 ${Math.round(peak * 100)}`;
-    }
-
-    // 모드별 요소 표시
-    const isVote = state.mode === 'voting' || state.mode === 'result';
-    const isEmoji = state.mode === 'emoji';
-    const emojiEl = document.getElementById('emoji-buttons');
-
-    if (isVote) {
-      voteOptions = state.voteOptions || [];
-      voteTypeCur = state.voteType || 'yesno';
-      renderVoteButtons(voteOptions, voteTypeCur);
-    }
-    // 비율(%)은 결과 모드에서만 공개 — 투표 중엔 결과가 궁금하도록 숨김(LED와 동일)
-    const showRatio = state.mode === 'result';
-    buttonsEl.style.display = isVote ? 'flex' : 'none';
-    ratioEl.style.display = showRatio ? 'block' : 'none';
-    emojiEl.classList.toggle('active', isEmoji);
-    if (isEmoji) renderEmojiButtons(state.emojiOptions || []);
-    subjectiveWrap.classList.toggle('active', state.mode === 'subjective');
-
-    // 주관식 글자수 제한 반영 (질문별 설정)
-    if (state.mode === 'subjective') {
-      answerMax = state.answerMaxLen || 20;
-      const ai = document.getElementById('answer-input');
-      ai.maxLength = answerMax;
-      ai.placeholder = `${answerMax}자 이내로 답해주세요`;
-    }
-
-    if (state.mode === 'voting') {
-      timerEl.style.display = 'inline-flex';
-      resultReact.classList.remove('active');
-      startPhoneTimer(state.votingEndTime);
-    } else if (state.mode === 'result') {
-      timerEl.style.display = 'none';
-      resultReact.classList.add('active'); // 결과에 붐업/붐따로 반응
-      stopPhoneTimer();
-    } else if (state.mode === 'subjective') {
-      timerEl.style.display = 'none';
-      resultReact.classList.remove('active');
-      subjectiveWrap.classList.toggle('answered', myAnswerDone);
-      stopPhoneTimer();
-    } else if (state.mode === 'subjectiveResult') {
-      timerEl.style.display = 'none';
-      resultReact.classList.add('active'); // 워드클라우드 결과에도 붐업/붐따
-      stopPhoneTimer();
-    } else if (state.mode === 'emoji') {
-      timerEl.style.display = 'none';
-      resultReact.classList.remove('active'); // 이모지 모드는 자체 버튼만
-      stopPhoneTimer();
-    } else if (state.mode === 'applause' || state.mode === 'applauseResult') {
-      timerEl.style.display = 'none'; // 화면 쪽 타이머/함성 레벨은 LED에만 보임
-      resultReact.classList.remove('active');
-      stopPhoneTimer();
-    }
-
-    updateVoteUI();
-    if (showRatio) updateRatio(state.counts, voteTypeCur);
+    document.getElementById('mode-hint-label').textContent = label;
+    let text = state.question || '';
+    if (state.mode === 'applause') text = '관객 함성을 측정하고 있어요';
+    else if (state.mode === 'applauseResult') text = `함성 지수 ${Math.round(((state.applause && state.applause.peak) || 0) * 100)}`;
+    const textEl = document.getElementById('mode-hint-text');
+    textEl.textContent = text;
+    textEl.title = text; // 긴 질문은 말줄임 — 마우스를 올리면 전체
+    hint.classList.add('visible');
+    if (state.mode === 'voting' && state.votingEndTime) startHintTimer(state.votingEndTime);
+    else stopHintTimer();
   }
 
-  // ── 주관식 답변 제출 ──
-  function submitAnswer() {
-    const input = document.getElementById('answer-input');
-    const text = input.value.trim().slice(0, answerMax);
-    if (!text || myAnswerDone || currentMode !== 'subjective' || !nickSocket) return;
-    nickSocket.emit('answer', { text });
-    myAnswerDone = true; // 낙관적 반영 (서버도 1인 1회 보장)
-    document.getElementById('subjective-wrap').classList.add('answered');
+  function startHintTimer(endTime) {
+    hintEndTime = endTime;
+    if (hintTimerInterval) clearInterval(hintTimerInterval);
+    hintTimerInterval = setInterval(updateHintTimer, 250);
+    updateHintTimer();
+  }
+  function stopHintTimer() {
+    if (hintTimerInterval) clearInterval(hintTimerInterval);
+    hintTimerInterval = null;
+    document.getElementById('mode-hint-timer').textContent = '';
+  }
+  function updateHintTimer() {
+    const remain = Math.max(0, Math.ceil((hintEndTime - Date.now()) / 1000));
+    document.getElementById('mode-hint-timer').textContent = remain + '초';
   }
 
-  function updateVoteUI() {
-    const btns = document.querySelectorAll('#voting-buttons .vote-btn');
-    btns.forEach((b, i) => {
-      b.classList.toggle('selected', myVote === i);
-      b.disabled = currentMode !== 'voting';
-      // 결과 모드의 % 표시를 덮어쓰지 않도록 투표 중일 때만 본문을 갱신
-      if (currentMode === 'voting') {
-        const body = b.querySelector('.vote-btn-body');
-        if (body) body.textContent = myVote === i ? '✓' : '';
-      }
-    });
-  }
-
-  function updateRatio(counts, type) {
-    const per = counts && counts.perOption ? counts.perOption : [];
-    const total = counts && counts.total ? counts.total : 0;
-    const styles = voteStyles(type || voteTypeCur);
-    const bar = document.getElementById('ratio-bar');
-    const txt = document.getElementById('ratio-text');
-    bar.innerHTML = '';
-    txt.innerHTML = '';
-    voteOptions.forEach((label, i) => {
-      const pct = total ? Math.round((per[i] || 0) / total * 100) : 0;
-      const s = styles[i % styles.length];
-      const fill = document.createElement('div');
-      fill.className = 'ratio-fill';
-      fill.style.width = pct + '%';
-      fill.style.background = s.strong;
-      bar.appendChild(fill);
-      // 보기 카드 본문에도 최종 비율 표시 — 결과 모드에서만 (투표 중엔 비율 비공개)
-      if (currentMode === 'result') {
-        const btn = document.querySelectorAll('#voting-buttons .vote-btn')[i];
-        const body = btn && btn.querySelector('.vote-btn-body');
-        if (body) body.textContent = pct + '%';
-      }
-
-      const item = document.createElement('span');
-      item.className = 'ratio-item';
-      const dot = document.createElement('span');
-      dot.className = 'ratio-dot';
-      dot.style.background = s.strong;
-      item.appendChild(dot);
-      item.appendChild(document.createTextNode(`${label} ${pct}%`));
-      txt.appendChild(item);
-    });
-  }
-
-  function startPhoneTimer(endTime) {
-    phoneVotingEndTime = endTime;
-    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
-    phoneTimerInterval = setInterval(updatePhoneTimerDisplay, 200);
-    updatePhoneTimerDisplay();
-  }
-
-  function stopPhoneTimer() {
-    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
-    phoneTimerInterval = null;
-  }
-
-  function updatePhoneTimerDisplay() {
-    if (!phoneVotingEndTime) return;
-    const remain = Math.max(0, Math.ceil((phoneVotingEndTime - Date.now()) / 1000));
-    document.getElementById('voting-timer-phone').textContent = remain;
+  // 운영진 공지 핀 — 관리자가 운영진 채팅을 핀하면 채팅 맨 위에 고정 (null이면 숨김)
+  let pinNoticeKey = null;
+  function renderPinNotice(msg) {
+    const box = document.getElementById('pin-notice');
+    const key = msg ? JSON.stringify([msg.id, msg.nickname, msg.text]) : null;
+    if (key === pinNoticeKey) return; // 같은 공지 재전송이면 등장 애니메이션을 다시 틀지 않음
+    pinNoticeKey = key;
+    box.classList.remove('visible');
+    if (!msg) return;
+    document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
+    document.getElementById('pin-notice-text').textContent = msg.text || '';
+    void box.offsetWidth; // 교체 때도 팝인 재시작
+    box.classList.add('visible');
   }
 
   // ── 리액션 (하트/붐업/붐따) ──
@@ -1263,7 +818,7 @@
     const now = Date.now();
     if (now - lastReactionAt < 250) return; // 연타 제한
     lastReactionAt = now;
-    if (!nickSocket || currentMode === 'voting' || currentMode === 'subjective') return;
+    if (!nickSocket || REACTION_BLOCKED_MODES.includes(currentMode)) return;
     nickSocket.emit('reaction', { type });
 
     const btn = btnEl || document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');
@@ -1271,24 +826,6 @@
     btn.classList.remove('pop');
     void btn.offsetWidth; // 애니메이션 재시작 트릭
     btn.classList.add('pop');
-  }
-
-  function castVote(choice) {
-    if (currentMode !== 'voting' || !nickSocket) return;
-    myVote = choice; // 보기 인덱스
-    updateVoteUI();
-    nickSocket.emit('vote', { choice });
-  }
-
-  // 이모지 반응 질문: 이모지 선택 → LED에 떠오름 (여러 번 탭 가능, 250ms 연타 제한)
-  let lastEmojiAt = 0;
-  function pickEmoji(emoji, btnEl) {
-    const now = Date.now();
-    if (now - lastEmojiAt < 250) return;
-    lastEmojiAt = now;
-    if (currentMode !== 'emoji' || !nickSocket) return;
-    nickSocket.emit('emojiPick', { emoji });
-    if (btnEl) { btnEl.classList.remove('pop'); void btnEl.offsetWidth; btnEl.classList.add('pop'); }
   }
 
   function enterChat() {
@@ -1432,15 +969,6 @@
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
-      }
-    });
-
-    // 주관식 답변: 엔터로 제출
-    document.getElementById('answer-input').addEventListener('keydown', (e) => {
-      if (e.isComposing) return;
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        submitAnswer();
       }
     });
   });
