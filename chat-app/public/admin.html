@@ -1754,7 +1754,9 @@
       const actions = el('div', 'preset-actions');
       const runBtn = el('button', '', '실행');
       runBtn.addEventListener('click', () => runPreset(i));
-      const removeBtn = el('button', 'remove-btn', '✕');
+      // [실행] 바로 옆이라 잘못 누르기 쉬워 2클릭 확인(결과 목록과 같은 패턴) — 항목 객체로 기억(다른 관리자가 목록을 바꾸면 풀림)
+      const confirming = pendingPresetRemove === p;
+      const removeBtn = el('button', confirming ? 'remove-btn confirming' : 'remove-btn', confirming ? '삭제?' : '✕');
       removeBtn.addEventListener('click', () => removePreset(i));
       actions.append(runBtn, removeBtn);
       item.append(main, actions);
@@ -1818,7 +1820,17 @@
     emitStart(p.type, p.text, { options: p.options, emojis: p.emojis, maxLen: p.maxLen }, duration);
   }
 
+  let pendingPresetRemove = null, pendingPresetTimer = null;
   function removePreset(i) {
+    const p = presets[i];
+    clearTimeout(pendingPresetTimer);
+    if (pendingPresetRemove !== p) {
+      pendingPresetRemove = p;
+      pendingPresetTimer = setTimeout(() => { pendingPresetRemove = null; renderPresets(); }, 3000);
+      renderPresets();
+      return;
+    }
+    pendingPresetRemove = null;
     presets.splice(i, 1);
     savePresets();
     renderPresets();
