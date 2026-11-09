@@ -941,7 +941,7 @@
 
     if (timerInterval) clearTimeout(timerInterval);
     timerInterval = null;
-    if (currentState.mode === 'voting' && voteDeadline != null) {
+    if ((currentState.mode === 'voting' || currentState.mode === 'applause') && voteDeadline != null) {
       tickTimerDisplay();
     } else {
       document.getElementById('status-timer').textContent = '-';
@@ -1575,14 +1575,17 @@
   // 남은 시간은 서버가 보낸 votingRemainMs(서버 시계로 계산한 남은 ms) 기준 — 받은 순간 이 PC의 Date.now()에 더해 마감 시각을 잡는다.
   // (서버의 votingEndTime을 이 PC 시계로 빼면 PC마다 시계 차이만큼 LED·폰과 어긋났음. 받은 순간 기준이라 PC 시계가 틀려도 같다)
   let voteDeadline = null;
+  // 함성 측정 중에도 같은 방식(서버가 보낸 applause.remainMs)으로 남은 시간을 보여 준다
   function syncVoteDeadline(state) {
-    voteDeadline = state && state.mode === 'voting' && state.votingRemainMs != null
-      ? Date.now() + state.votingRemainMs : null;
+    const remain = !state ? null
+      : state.mode === 'voting' ? state.votingRemainMs
+      : state.mode === 'applause' ? (state.applause && state.applause.remainMs) : null;
+    voteDeadline = remain != null ? Date.now() + remain : null;
   }
   function updateTimerDisplay() {
     if (voteDeadline == null) return;
     const remain = Math.max(0, Math.ceil((voteDeadline - Date.now()) / 1000));
-    const total = currentState && currentState.votingDuration;
+    const total = currentState && currentState.mode === 'voting' && currentState.votingDuration;
     document.getElementById('status-timer').textContent = total ? `${remain}초 / ${total}초` : remain + '초';
   }
   // 초가 바뀌는 순간에 맞춰 갱신 — LED·관객 폰과 같은 순간에 숫자가 넘어가도록 (200ms 폴링은 화면마다 최대 0.2초 엇갈림)

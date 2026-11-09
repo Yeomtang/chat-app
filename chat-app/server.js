@@ -467,9 +467,11 @@ function publicState(forClientId, withSlides = false) {
     audience: audienceStats(),
     // 아래는 모든 모드에서 같은 모양으로 보낸다(해당 모드가 아니면 기본값) — 클라이언트가 분기 없이 읽도록
     effects: { ...appState.effects },
+    // remainMs: 측정 중 남은 시간(서버 시계 기준 — votingRemainMs와 같은 이유). 관리자 '남은 시간' 표시용
     applause: isApplauseMode()
-      ? { endTime: appState.applause.endTime, peak: appState.applause.peak }
-      : { endTime: null, peak: 0 },
+      ? { endTime: appState.applause.endTime, peak: appState.applause.peak,
+          remainMs: appState.mode === 'applause' && appState.applause.endTime ? Math.max(0, appState.applause.endTime - Date.now()) : null }
+      : { endTime: null, peak: 0, remainMs: null },
     ending: appState.mode === 'ending'
       ? { index: appState.endingIndex, slides: withSlides ? endingSlides() : [] }
       : { index: 0, slides: [] },
