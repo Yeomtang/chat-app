@@ -1125,7 +1125,7 @@
       tops.forEach((r) => {
         const p = document.createElement('div');
         p.className = 'fx-cloud-count';
-        p.textContent = `${max}명이 같은 답`;
+        p.textContent = tops.length > 1 ? `공동 1위 · ${max}명` : `${max}명이 같은 답`; // 동률이면 모두 비추고 "공동 1위"(알약이 길어져 이웃 단어를 덜 가리게 짧게)
         box.appendChild(p);
         const pw = p.offsetWidth, ph = p.offsetHeight;
         const L = lim || { top: 0, left: 0, right: box.offsetWidth, bottom: box.offsetHeight };
@@ -2170,9 +2170,11 @@
 
     function subjectiveSlide(s, n) {
       const d = el('div', 'fx-end-slide');
-      d.appendChild(el('div', 'fx-end-kicker', `질문 ${n} · 주관식 1위`));
-      d.appendChild(el('div', 'fx-end-q', s.question || ''));
       const top = (Array.isArray(s.top) ? s.top : []).filter((t) => t && typeof t.word === 'string');
+      // 순위는 같은 수면 같은 순위(5·5·3명 → 1·1·3위), 같은 순위가 둘 이상이면 "공동"
+      const rank = rankLabels(top.map((t) => t.count));
+      d.appendChild(el('div', 'fx-end-kicker', `질문 ${n} · 주관식 ${top.length ? rank[0] : '1위'}`));
+      d.appendChild(el('div', 'fx-end-q', s.question || ''));
       if (!top.length) {
         d.appendChild(el('div', 'fx-end-note', '접수된 답변이 없었어요'));
         return d;
@@ -2183,7 +2185,7 @@
         const more = el('div', 'fx-end-more');
         top.slice(1, 3).forEach((t, i) => {
           const r = el('div', 'fx-end-more-row');
-          r.append(el('span', 'fx-end-rank', `${i + 2}위`), el('span', 'fx-end-word', t.word), el('span', 'fx-end-count', `${t.count}명`));
+          r.append(el('span', 'fx-end-rank', rank[i + 1]), el('span', 'fx-end-word', t.word), el('span', 'fx-end-count', `${t.count}명`));
           more.appendChild(r);
         });
         d.appendChild(more);
@@ -2266,6 +2268,14 @@
       // 창 크기·글꼴 로딩으로 슬라이드 크기가 바뀌면 다시 맞춤
       relayout() { fitted = false; fitAll(); },
     };
+  }
+
+  // 많은 순으로 정렬된 수 목록 → 순위 글자 ("1위", 같은 수가 둘 이상이면 "공동 1위"). 같은 수 = 같은 순위(5·5·3 → 1·1·3위)
+  function rankLabels(counts) {
+    return counts.map((c) => {
+      const r = 1 + counts.filter((x) => x > c).length;
+      return (counts.filter((x) => x === c).length > 1 ? '공동 ' : '') + r + '위';
+    });
   }
 
   // ── 함성 미터: 화면들이 받은 레벨(서버 중계)로 게이지가 차오르고, 목표선을 처음 넘으면 터짐 ──

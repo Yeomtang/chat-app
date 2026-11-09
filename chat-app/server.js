@@ -366,7 +366,10 @@ function resultSummary(entry) {
   }
   if (entry.kind === 'subjective') {
     const top = entry.top[0];
-    return top ? `1위 ‘${top.word}’ ${top.count}명 (답변 ${entry.answerCount})` : `답변 없음 (답변 ${entry.answerCount})`;
+    if (!top) return `답변 없음 (답변 ${entry.answerCount})`;
+    const tied = entry.top.filter((t) => t.count === top.count); // 동률 1위는 모두 "공동 1위"로
+    if (tied.length > 1) return `공동 1위 ${tied.map((t) => `‘${t.word}’`).join('·')} 각 ${top.count}명 (답변 ${entry.answerCount})`;
+    return `1위 ‘${top.word}’ ${top.count}명 (답변 ${entry.answerCount})`;
   }
   return '';
 }
@@ -586,7 +589,8 @@ function endSubjective() {
   recordResult({
     kind: 'subjective',
     question: appState.question,
-    top: computeCloud().slice(0, 3).map(({ word, count }) => ({ word, count })),
+    // 엔딩은 3위까지 보여 주지만, 3위가 4위와 동률인지("공동 3위") 알 수 있게 4개까지 기록
+    top: computeCloud().slice(0, 4).map(({ word, count }) => ({ word, count })),
     answerCount: Object.keys(appState.answers).length,
   });
   emitModeChange(); // cloud 포함됨
