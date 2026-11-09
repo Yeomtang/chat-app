@@ -349,6 +349,7 @@ const appState = {
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
   answerAuthors: new Map(), // 답변 id -> 작성 관객 clientId (서버 전용, 밖으로 보내지 않음) — [이 사람 차단]용
   hiddenAnswers: [],      // 관리자가 [숨김]한 답변 id — LED 흘림·워드클라우드·결과 기록·엔딩·폰 클라우드에서 뺀다(되돌리기 가능)
+  hiddenKeys: new Set(),  // [같은 답 모두 숨김]한 묶음 키 — 이후 들어오는 같은 답도 처음부터 숨김
   subjectiveResultId: null, // 이번 주관식 마감 때 기록한 결과 id — 마감 뒤 숨김을 바꾸면 그 기록도 다시 집계
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
   emojiOptions: [],       // 이모지 반응 질문 보기: [{emoji, label}] (라벨=뜻, 관객 폰에 표시)
@@ -613,6 +614,7 @@ function startVoting(question, options, duration, type) {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
   appState.answerAuthors = new Map();
   emitModeChange();
 
@@ -658,6 +660,7 @@ function startSubjective(question, maxLen) {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
   appState.answerAuthors = new Map();
   emitModeChange();
 }
@@ -723,6 +726,7 @@ function resetQuestionState() {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.hiddenKeys = new Set();
   appState.answerAuthors = new Map();
   appState.answerMaxLen = MAX_ANSWER_LENGTH;
   appState.emojiOptions = [];
@@ -1087,11 +1091,15 @@ io.on('connection', (socket) => {
     const entry = { id: appState.answerList.length + 1, text };
     appState.answerList.push(entry);
     appState.answerAuthors.set(entry.id, socket.clientId);
+    const key = answerKey(text);
+    const hidden = appState.hiddenKeys.has(key); // 묶음째 숨긴 답과 같은 답 → 처음부터 숨김(LED에 흘리지 않음)
+    if (hidden) appState.hiddenAnswers.push(entry.id);
     // LED 흘려보내기 + 관리자 목록/카운트용 (익명: 텍스트만 공개)
     io.to(SCREENS).emit('subjectiveAnswer', {
       id: entry.id,
       text,
-      key: answerKey(text), // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
+      key, // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
+      hidden, // true면 LED는 흘리지 않고 관리자 목록엔 숨김으로 표시
       answerCount: appState.answerList.length,
     });
     socket.emit('answerAccepted'); // 본인 확인용
@@ -1309,6 +1317,7 @@ io.on('connection', (socket) => {
     const hide = d.hidden !== false;
     const key = answerKey(entry.text);
     const ids = (d.sameKey === true ? appState.answerList.filter((a) => answerKey(a.text) === key) : [entry]).map((a) => a.id);
+    if (d.sameKey === true) { if (hide) appState.hiddenKeys.add(key); else appState.hiddenKeys.delete(key); } // 묶음째면 앞으로 올 같은 답도
     setAnswersHidden(ids, hide);
   });
 

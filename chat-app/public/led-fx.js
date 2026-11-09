@@ -3706,7 +3706,7 @@
     });
 
     socket.on('subjectiveAnswer', (data) => {
-      if (currentMode !== 'subjective') return;
+      if (currentMode !== 'subjective' || (data && data.hidden)) return; // 묶음째 숨긴 답과 같은 답은 흘리지 않음
       answerFx.push(data);
     });
 

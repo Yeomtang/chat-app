@@ -1569,6 +1569,7 @@
     if (typeof data.id === 'number') {
       const a = { id: data.id, text: data.text, key: data.key };
       answerItems.push(a);
+      if (data.hidden) hiddenIds.add(a.id); // 묶음째 숨긴 답과 같은 답 — 서버가 처음부터 숨김
       // 같은 답이 처음 2개가 되면 먼저 온 답에도 [같은 답 모두] 버튼이 생기도록 그 항목들만 다시 그림
       const same = a.key == null ? 1 : keyCounts.set(a.key, (keyCounts.get(a.key) || 0) + 1).get(a.key);
       if (same === 2) answerItems.forEach((x) => { if (x !== a && x.key === a.key) refreshAnswer(x.id); });
@@ -1740,7 +1741,6 @@
     hideBtn.title = hidden ? 'LED·워드클라우드·결과에 다시 포함' : 'LED 흘림·워드클라우드·결과 기록·엔딩에서 뺌 (되돌리기 가능)';
     hideBtn.onclick = () => hideAnswer(a, false);
     tools.appendChild(hideBtn);
-    tools.appendChild(blockButton({ answerId: a.id }));
     if (a.key != null && (keyCounts.get(a.key) || 0) >= 2) {
       const groupBtn = document.createElement('button');
       groupBtn.className = 'mini-btn';
@@ -1749,6 +1749,7 @@
       groupBtn.onclick = () => hideAnswer(a, true);
       tools.appendChild(groupBtn);
     }
+    tools.appendChild(blockButton({ answerId: a.id }));
 
     item.appendChild(starBtn);
     item.appendChild(span);
