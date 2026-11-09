@@ -148,6 +148,47 @@
       el.classList.toggle('hot', remain > 0 && remain <= timer.HOT_SECONDS);
     },
     reset(el) { el.classList.remove('hot'); },
+    // 숫자가 다음 초로 넘어갈 때까지 남은 ms(+여유 15ms) — 200ms 폴링 대신 이 간격으로 갱신하면
+    // LED·관리자·관객 폰이 같은 순간에 숫자를 넘긴다 (폴링은 화면마다 최대 0.2초 엇갈림)
+    nextTickMs(remainMs) { return ((remainMs - 1) % 1000) + 1 + 15; },
+    // 남은 시간 게이지 — card(질문 카드) 안 아래쪽에 막대를 붙인다(모양은 led-fx.css .fx-timer-gauge).
+    // start(deadline, totalMs): deadline(이 PC Date.now() 기준 마감 시각, 숫자와 같은 값)에서 지금 비율을 계산해
+    // 0까지 linear로 줄인다. Web Animations라 카드가 안 보일 때 시작돼도 시간은 흐르고, 탭이 다시 보이면 마감 시각에 다시 맞춘다.
+    createGauge(card) {
+      const gauge = document.createElement('div');
+      gauge.className = 'fx-timer-gauge';
+      const fill = document.createElement('div');
+      fill.className = 'fx-timer-gauge-fill';
+      gauge.appendChild(fill);
+      card.appendChild(gauge);
+      let anim = null, deadline = null, total = 0;
+      const run = () => {
+        if (anim) { anim.cancel(); anim = null; }
+        if (deadline == null) return;
+        const remainMs = Math.max(0, deadline - Date.now());
+        const frac = total > 0 ? Math.min(1, remainMs / total) : 0;
+        fill.style.transform = 'scaleX(0)'; // 끝난 뒤 머무는 모양
+        if (remainMs > 0 && fill.animate) {
+          anim = fill.animate([{ transform: `scaleX(${frac})` }, { transform: 'scaleX(0)' }],
+            { duration: remainMs, easing: 'linear' });
+        }
+      };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) run(); });
+      return {
+        start(endAt, totalMs) {
+          deadline = endAt;
+          total = totalMs;
+          gauge.classList.add('active');
+          run();
+        },
+        hot(on) { gauge.classList.toggle('hot', !!on); },
+        stop() {
+          deadline = null;
+          if (anim) { anim.cancel(); anim = null; }
+          gauge.classList.remove('active', 'hot');
+        },
+      };
+    },
   };
 
   // ── 공 낙하: 상자 헤더 바로 아래에서 제자리로 떨어져 한 번 작게 튕김 ──
@@ -2589,7 +2630,10 @@
     let voteType = 'yesno';    // 'yesno' | 'choice'
     let optCount = 0;          // 보기 수
 
-    let votingEndTime = null;
+    // 투표 마감 시각 — 서버가 보낸 남은 시간(votingRemainMs, 서버 시계로 계산)을 받은 순간의 이 PC Date.now()에 더해 잡는다.
+    // (서버의 votingEndTime을 이 PC 시계로 빼면 LED PC·관리자 PC·폰 시계 차이만큼 남은 초가 달랐음)
+    let voteDeadline = null;
+    const timerGauge = LedFx.timer.createGauge(document.getElementById('voting-question-card'));
     let timerInterval = null;
     let rafHandle = null;
     let currentMode = 'chat';
@@ -2981,10 +3025,11 @@
     }
 
     function updateTimerDisplay() {
-      if (!votingEndTime) return;
-      const remain = Math.max(0, Math.ceil((votingEndTime - Date.now()) / 1000));
+      if (voteDeadline == null) return;
+      const remain = Math.max(0, Math.ceil((voteDeadline - Date.now()) / 1000));
       votingTimer.textContent = remain;
       LedFx.timer.update(votingTimer, remain); // 마지막 5초 경고색·맥박, 0이면 멈춤
+      timerGauge.hot(remain > 0 && remain <= LedFx.timer.HOT_SECONDS); // 게이지도 같은 시점에 경고색
     }
 
     function updateResultLine(counts) {
@@ -3103,6 +3148,7 @@
         stopRenderLoop();
         if (timerInterval) clearInterval(timerInterval);
         LedFx.timer.reset(votingTimer);
+        timerGauge.stop();
         if (state.mode === 'chat') pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
         else pinFx.clear(); // 대기·엔딩·함성 화면에선 핀 숨김
         return;
@@ -3118,7 +3164,7 @@
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
       // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음)
-      if (state.mode !== 'voting') LedFx.timer.reset(votingTimer);
+      if (state.mode !== 'voting') { LedFx.timer.reset(votingTimer); timerGauge.stop(); }
 
       const isVote = state.mode === 'voting' || state.mode === 'result';
       if (isVote) {
@@ -3144,10 +3190,16 @@
         // 투표 중엔 숫자 배너 없이 공 클러스터 이동만으로 실시간 현황을 보여줌
         resultBanner.classList.remove('active');
         votingTimer.style.display = 'inline-flex';
-        votingEndTime = state.votingEndTime;
-        if (timerInterval) clearInterval(timerInterval);
-        timerInterval = setInterval(updateTimerDisplay, 200);
-        updateTimerDisplay();
+        const remainMs = Math.max(0, Number(state.votingRemainMs) || 0);
+        voteDeadline = Date.now() + remainMs;
+        timerGauge.start(voteDeadline, (Number(state.votingDuration) || 0) * 1000);
+        if (timerInterval) clearInterval(timerInterval); // setTimeout id도 clearInterval로 지워진다(같은 id 목록)
+        const tick = () => {
+          updateTimerDisplay();
+          const r = voteDeadline - Date.now();
+          timerInterval = r > 0 ? setTimeout(tick, LedFx.timer.nextTickMs(r)) : null;
+        };
+        tick();
       } else if (state.mode === 'result') {
         // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
         if (timerInterval) clearInterval(timerInterval);

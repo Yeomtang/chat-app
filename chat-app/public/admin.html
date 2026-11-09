@@ -303,6 +303,7 @@
     .preset-tag.choice { background: #d4edda; color: #19692c; }
     .preset-tag.emoji { background: #ffe6f0; color: #a01050; }
     .preset-extra { width: 100%; min-width: 0; margin-top: 8px; }
+    label.preset-extra { margin-top: 12px; } /* 입력칸 위 제목(투표 시간) — 추가 줄과 살짝 띄움 */
 
     /* 주관식 답변 목록 / 픽 */
     .answer-list {
@@ -649,6 +650,8 @@
     </div>
     <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
     <input type="number" id="preset-maxlen" class="preset-extra" value="20" min="1" max="20" placeholder="최대 글자수 (1~20)" style="display:none">
+    <label id="preset-duration-label" class="preset-extra">투표 시간 (초, 5~600) — 선택형 전용</label>
+    <input type="number" id="preset-duration" class="preset-extra" value="30" min="5" max="600">
   </div>
 
   <!-- 즉석 질문 / 컨트롤 -->
@@ -668,7 +671,7 @@
     <label id="question-maxlen-label" style="display:none">최대 글자수 (1~20)</label>
     <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
     <label id="duration-label">투표 시간 (초) — 선택형 전용</label>
-    <input type="number" id="duration-input" value="30" min="5">
+    <input type="number" id="duration-input" value="30" min="5" max="600">
     <button class="btn btn-primary" onclick="startQuestionNow()">질문 시작</button>
   </div>
 
@@ -837,11 +840,13 @@
   socket.on('state', (state) => {
     setAuthNeeded(false);
     currentState = state;
+    syncVoteDeadline(state);
     renderState();
   });
 
   socket.on('modeChange', (state) => {
     currentState = state;
+    syncVoteDeadline(state);
     renderState();
     socket.emit('admin:getAnswers'); // 새 질문 시작/복귀 시 목록 동기화
   });
@@ -917,10 +922,10 @@
     returnBtn.disabled = currentState.mode === 'chat';
     idleBtn.disabled = currentState.mode === 'idle';
 
-    if (timerInterval) clearInterval(timerInterval);
-    if (currentState.mode === 'voting' && currentState.votingEndTime) {
-      timerInterval = setInterval(updateTimerDisplay, 200);
-      updateTimerDisplay();
+    if (timerInterval) clearTimeout(timerInterval);
+    timerInterval = null;
+    if (currentState.mode === 'voting' && voteDeadline != null) {
+      tickTimerDisplay();
     } else {
       document.getElementById('status-timer').textContent = '-';
     }
@@ -1421,10 +1426,33 @@
     }
   }
 
+  // 남은 시간은 서버가 보낸 votingRemainMs(서버 시계로 계산한 남은 ms) 기준 — 받은 순간 이 PC의 Date.now()에 더해 마감 시각을 잡는다.
+  // (서버의 votingEndTime을 이 PC 시계로 빼면 PC마다 시계 차이만큼 LED·폰과 어긋났음. 받은 순간 기준이라 PC 시계가 틀려도 같다)
+  let voteDeadline = null;
+  function syncVoteDeadline(state) {
+    voteDeadline = state && state.mode === 'voting' && state.votingRemainMs != null
+      ? Date.now() + state.votingRemainMs : null;
+  }
   function updateTimerDisplay() {
-    const remain = Math.max(0, Math.ceil((currentState.votingEndTime - Date.now()) / 1000));
-    document.getElementById('status-timer').textContent = remain + '초';
-    if (remain <= 0) clearInterval(timerInterval);
+    if (voteDeadline == null) return;
+    const remain = Math.max(0, Math.ceil((voteDeadline - Date.now()) / 1000));
+    const total = currentState && currentState.votingDuration;
+    document.getElementById('status-timer').textContent = total ? `${remain}초 / ${total}초` : remain + '초';
+  }
+  // 초가 바뀌는 순간에 맞춰 갱신 — LED·관객 폰과 같은 순간에 숫자가 넘어가도록 (200ms 폴링은 화면마다 최대 0.2초 엇갈림)
+  function tickTimerDisplay() {
+    if (timerInterval) clearTimeout(timerInterval);
+    timerInterval = null;
+    updateTimerDisplay();
+    if (voteDeadline == null) return;
+    const r = voteDeadline - Date.now();
+    if (r > 0) timerInterval = setTimeout(tickTimerDisplay, ((r - 1) % 1000) + 1 + 15);
+  }
+
+  // 투표 시간(초) — 서버 검증(cleanVotingSeconds)과 같은 규칙: 숫자가 아니면 null, 5~600으로 맞춤
+  function votingSeconds(v) {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? Math.min(600, Math.max(5, n)) : null;
   }
 
   // 보기/이모지 파싱 (/ 또는 공백 구분)
@@ -1495,7 +1523,7 @@
     const question = document.getElementById('question-input').value.trim();
     if (!question) { alert('질문을 입력해주세요'); return; }
     const type = document.getElementById('question-type').value;
-    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    const duration = votingSeconds(document.getElementById('duration-input').value) ?? 30;
     emitStart(type, question, {
       options: parseOptions(document.getElementById('question-options').value),
       emojis: parseEmojiOptions(document.getElementById('question-options').value),
@@ -1535,6 +1563,11 @@
       if (p.type === 'choice' && Array.isArray(p.options)) detail = p.options.join(' / ');
       else if (p.type === 'emoji' && Array.isArray(p.emojis)) detail = p.emojis.map(o => o.emoji + (o.label ? ' ' + o.label : '')).join(' / ');
       else if (p.type === 'subjective' && p.maxLen) detail = `${p.maxLen}자 이내`;
+      // 선택형은 투표 시간도 표시 — 시간이 없는 예전 프리셋은 즉석 질문 칸의 시간으로 실행
+      if (p.type === 'yesno' || p.type === 'choice') {
+        const sec = p.duration ? `${p.duration}초` : '기본 시간(즉석 질문 칸)';
+        detail = detail ? `${detail} · ${sec}` : sec;
+      }
       // 프리셋 문구는 사용자 입력이므로 innerHTML이 아닌 textContent로만 넣는다(XSS 방지)
       const el = (tag, cls, text) => {
         const e = document.createElement(tag);
@@ -1570,6 +1603,9 @@
       ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
       : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
     maxIn.style.display = (type === 'subjective') ? 'block' : 'none';
+    const showDur = (type === 'yesno' || type === 'choice');
+    document.getElementById('preset-duration-label').style.display = showDur ? 'block' : 'none';
+    document.getElementById('preset-duration').style.display = showDur ? 'block' : 'none';
   }
 
   function addPreset() {
@@ -1589,6 +1625,11 @@
     } else if (type === 'subjective') {
       p.maxLen = parseInt(document.getElementById('preset-maxlen').value, 10) || 20;
     }
+    if (type === 'yesno' || type === 'choice') {
+      p.duration = votingSeconds(document.getElementById('preset-duration').value);
+      if (p.duration == null) { alert('투표 시간을 초 단위 숫자로 입력해주세요 (5~600)'); return; }
+      document.getElementById('preset-duration').value = p.duration; // 범위 밖 값은 맞춘 값으로 보여 줌(700 → 600)
+    }
     presets.push(p);
     savePresets();
     input.value = '';
@@ -1598,7 +1639,8 @@
 
   function runPreset(i) {
     const p = presets[i];
-    const duration = parseInt(document.getElementById('duration-input').value, 10) || 30;
+    // 프리셋에 저장한 시간 우선, 없으면(예전 프리셋) 즉석 질문 칸의 시간
+    const duration = votingSeconds(p.duration) ?? votingSeconds(document.getElementById('duration-input').value) ?? 30;
     emitStart(p.type, p.text, { options: p.options, emojis: p.emojis, maxLen: p.maxLen }, duration);
   }
 
@@ -1672,7 +1714,15 @@
       } catch { list = null; }
       if (!Array.isArray(list) || !list.length) { alert('질문 프리셋 파일이 아니거나 비어 있습니다'); return; }
       if (presets.length && !confirm(`지금 목록(${presets.length}개)을 파일의 질문 ${list.length}개로 바꿉니다. 계속할까요?`)) return;
-      presets = list.filter(p => p && typeof p.text === 'string'); // 서버도 형식을 한 번 더 검증한다
+      presets = list.filter(p => p && typeof p.text === 'string') // 서버도 형식을 한 번 더 검증한다
+        .map(p => {
+          // 투표 시간은 화면 목록에도 서버와 같은 규칙으로 반영(범위 밖 → 5~600, 잘못된 값 → 기본 시간)
+          const q = { ...p };
+          const sec = votingSeconds(q.duration);
+          if (sec == null || (q.type !== 'yesno' && q.type !== 'choice' && q.type != null)) delete q.duration;
+          else q.duration = sec;
+          return q;
+        });
       savePresets();
       renderPresets();
     };

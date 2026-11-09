@@ -238,6 +238,37 @@
       z-index: 60;
     }
 
+    /* 타이머 게이지: 남은 시간만큼 줄어드는 막대 — 숫자와 같은 마감 시각(서버 기준)으로 움직인다.
+       채움은 transform(scaleX) 한 번의 linear 애니메이션(Web Animations)으로 처리해 폰 부담 없이 매끄럽게. 마지막 5초는 숫자 배지와 같이 경고색 */
+    .timer-gauge {
+      display: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 100px;
+      background: var(--bg-soft);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .timer-gauge.active { display: block; }
+    .timer-gauge-fill {
+      width: 100%;
+      height: 100%;
+      background: var(--ink);
+      transform-origin: left center;
+      will-change: transform;
+      transition: background-color 0.4s;
+    }
+    .timer-gauge.hot .timer-gauge-fill { background: var(--warn); }
+    /* 마지막 5초: 숫자 배지 맥박(timerPulse, 1초)과 같은 박자로 막대 둘레가 경고색으로 은은하게 번짐 (LED 게이지와 같은 연출) */
+    .timer-gauge.hot { animation: gaugePulse 1s ease-in-out infinite; }
+    @keyframes gaugePulse {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 0%, transparent); }
+      50%      { box-shadow: 0 0 8px 1px color-mix(in srgb, var(--warn) 45%, transparent); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .timer-gauge.hot { animation: none; }
+    }
+
     #voting-question-phone {
       font-size: 19px;
       font-weight: 700;
@@ -814,6 +845,7 @@
     <div id="voting-card">
       <div id="voting-timer-phone">30</div>
       <div id="voting-question-phone"></div>
+      <div class="timer-gauge" id="voting-timer-gauge"><div class="timer-gauge-fill"></div></div>
       <!-- 보기 버튼/비율은 질문 유형(YES/NO·N지선다)에 맞춰 JS가 동적 생성 -->
       <div id="voting-buttons"></div>
       <div id="voting-ratio">
@@ -1069,7 +1101,8 @@
   let voteTypeCur = 'yesno';// 'yesno' | 'choice'
   let answerMax = 20;       // 현재 주관식 최대 글자수
   let phoneTimerInterval = null;
-  let phoneVotingEndTime = null;
+  let phoneVoteDeadline = null; // 이 기기 Date.now() 기준 마감 시각 (서버가 보낸 남은 ms를 받은 순간에 더해 계산)
+  let phoneVoteTotalMs = 0;     // 설정한 투표 시간(ms) — 게이지 비율 계산용
 
   let myAnswerDone = false; // 주관식 답변 완료 여부 (1인 1회)
 
@@ -1240,7 +1273,7 @@
     if (state.mode === 'voting') {
       timerEl.style.display = 'inline-flex';
       resultReact.classList.remove('active');
-      startPhoneTimer(state.votingEndTime);
+      startPhoneTimer(state);
     } else if (state.mode === 'result') {
       timerEl.style.display = 'none';
       resultReact.classList.add('active'); // 결과에 붐업/붐따로 반응
@@ -1325,27 +1358,75 @@
     });
   }
 
-  function startPhoneTimer(endTime) {
-    phoneVotingEndTime = endTime;
-    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
-    phoneTimerInterval = setInterval(updatePhoneTimerDisplay, 200);
+  // 서버가 보낸 남은 시간(votingRemainMs = 서버 시계로 계산한 남은 ms)을 받은 순간의 이 기기 Date.now()에 더해 마감 시각을 잡는다.
+  // 서버의 votingEndTime을 이 기기 시계로 빼면 폰·PC마다 시계 차이만큼 LED와 어긋났음(시계가 5초 빠른 폰은 5초 적게 보임).
+  // 받은 순간 기준이라 기기 시계가 틀려도 상관없고, performance.now()와 달리 화면이 꺼졌다 켜져도(절전) 시간이 흐른 만큼 반영된다.
+  function startPhoneTimer(state) {
+    const remainMs = Math.max(0, Number(state.votingRemainMs) || 0);
+    phoneVoteDeadline = Date.now() + remainMs;
+    phoneVoteTotalMs = (Number(state.votingDuration) || 0) * 1000;
+    startTimerGauge();
+    tickPhoneTimer();
+  }
+
+  // 숫자는 초가 바뀌는 순간에 맞춰 갱신 — 200ms 간격 폴링이면 화면마다 최대 0.2초씩 늦게 바뀌어 LED·폰 숫자가 엇갈려 보였다
+  function tickPhoneTimer() {
+    if (phoneTimerInterval) clearTimeout(phoneTimerInterval);
+    phoneTimerInterval = null;
     updatePhoneTimerDisplay();
+    if (phoneVoteDeadline == null) return;
+    const r = phoneVoteDeadline - Date.now();
+    if (r > 0) phoneTimerInterval = setTimeout(tickPhoneTimer, ((r - 1) % 1000) + 1 + 15);
   }
 
   function stopPhoneTimer() {
-    if (phoneTimerInterval) clearInterval(phoneTimerInterval);
+    if (phoneTimerInterval) clearTimeout(phoneTimerInterval);
     phoneTimerInterval = null;
+    phoneVoteDeadline = null;
     document.getElementById('voting-timer-phone').classList.remove('hot');
+    stopTimerGauge();
   }
 
   function updatePhoneTimerDisplay() {
-    if (!phoneVotingEndTime) return;
-    const remain = Math.max(0, Math.ceil((phoneVotingEndTime - Date.now()) / 1000));
+    if (phoneVoteDeadline == null) return;
+    const remain = Math.max(0, Math.ceil((phoneVoteDeadline - Date.now()) / 1000));
     const timerEl = document.getElementById('voting-timer-phone');
     timerEl.textContent = remain;
-    // 마지막 5초만 경고색 + 맥박 (0에서는 멈춤)
-    timerEl.classList.toggle('hot', remain > 0 && remain <= 5);
+    // 마지막 5초만 경고색 + 맥박 (0에서는 멈춤) — 게이지도 같은 시점에 경고색
+    const hotNow = remain > 0 && remain <= 5;
+    timerEl.classList.toggle('hot', hotNow);
+    document.getElementById('voting-timer-gauge').classList.toggle('hot', hotNow);
   }
+
+  // ── 타이머 게이지 ── 숫자와 같은 마감 시각(phoneVoteDeadline)에서 지금 비율을 계산해 0까지 linear로 줄인다.
+  // Web Animations로 돌려서 닉네임 입력 화면처럼 게이지가 안 보일 때 질문이 시작돼도 시간은 흐르고,
+  // 화면에 나타나는 순간 숫자와 같은 위치에 있다(CSS transition은 안 보이는 동안 시작되지 않아 빈 막대로 보였음).
+  let timerGaugeAnim = null;
+  function startTimerGauge() {
+    const gauge = document.getElementById('voting-timer-gauge');
+    const fill = gauge.firstElementChild;
+    if (timerGaugeAnim) { timerGaugeAnim.cancel(); timerGaugeAnim = null; }
+    if (phoneVoteDeadline == null) return;
+    const remainMs = Math.max(0, phoneVoteDeadline - Date.now());
+    const frac = phoneVoteTotalMs > 0 ? Math.min(1, remainMs / phoneVoteTotalMs) : 0;
+    gauge.classList.add('active');
+    fill.style.transform = 'scaleX(0)'; // 끝난 뒤 머무는 모양
+    if (remainMs > 0 && fill.animate) {
+      timerGaugeAnim = fill.animate([{ transform: `scaleX(${frac})` }, { transform: 'scaleX(0)' }],
+        { duration: remainMs, easing: 'linear' });
+    }
+  }
+  function stopTimerGauge() {
+    const gauge = document.getElementById('voting-timer-gauge');
+    if (timerGaugeAnim) { timerGaugeAnim.cancel(); timerGaugeAnim = null; }
+    gauge.classList.remove('active', 'hot');
+  }
+  // 화면이 꺼졌다 켜지거나 앱을 다시 열면 숫자·게이지를 마감 시각에 다시 맞춘다
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || phoneVoteDeadline == null) return;
+    startTimerGauge();
+    tickPhoneTimer();
+  });
 
   // ── 리액션 (하트/붐업/붐따) ──
   let lastReactionAt = 0;
