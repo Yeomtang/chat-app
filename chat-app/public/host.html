@@ -338,6 +338,8 @@
     }
 
     .react-btn.pop { animation: reactPop 0.3s ease; }
+    /* 질문 중(투표·주관식·이모지·함성)엔 서버가 리액션을 받지 않으므로 흐리게 — 채팅 입력은 그대로 */
+    .react-btn:disabled { opacity: 0.35; cursor: default; }
 
     @keyframes reactPop {
       0% { transform: scale(1); }
@@ -751,8 +753,13 @@
     applauseResult: '함성 결과',
   };
 
+  // 서버 REACTION_BLOCKED_MODES와 같은 목록 — 이 모드에선 리액션 버튼을 흐리게
+  const REACTION_BLOCKED_MODES = ['voting', 'subjective', 'emoji', 'applause'];
+
   function applyVoteState(state) {
     currentMode = state.mode;
+    const reactBlocked = REACTION_BLOCKED_MODES.includes(state.mode);
+    document.querySelectorAll('.react-btn').forEach(b => { b.disabled = reactBlocked; });
     renderPinNotice(state.pinnedNotice);
 
     const hint = document.getElementById('mode-hint');
@@ -811,7 +818,7 @@
     const now = Date.now();
     if (now - lastReactionAt < 250) return; // 연타 제한
     lastReactionAt = now;
-    if (!nickSocket || currentMode === 'voting' || currentMode === 'subjective') return;
+    if (!nickSocket || REACTION_BLOCKED_MODES.includes(currentMode)) return;
     nickSocket.emit('reaction', { type });
 
     const btn = btnEl || document.getElementById(type === 'heart' ? 'react-heart' : 'react-thumbs');

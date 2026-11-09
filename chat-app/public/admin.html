@@ -509,8 +509,9 @@
     .chat-item.starred { background: #fff8e6; }
     .chat-item.pinned { background: #fff3cd; }
 
-    /* 운영진 채팅 — 핀하면 공지(맨 위 띠)로 고정됨을 알 수 있게 표시 */
-    .chat-item .chat-op-badge {
+    /* 채팅 항목 배지 공용 — 운영진(핀하면 공지 띠) / 지금 고정 중(체크 표시와 배경색이 비슷해 글자로 구분) */
+    .chat-item .chat-op-badge,
+    .chat-item .chat-pin-badge {
       display: inline-block;
       background: #1e1e42;
       color: #fff;
@@ -520,6 +521,7 @@
       font-size: 10px;
       font-weight: 700;
     }
+    .chat-item .chat-pin-badge { background: #ff9f0a; }
 
     .chat-item .chat-nick {
       font-size: 11px;
@@ -1294,6 +1296,12 @@
     socket.emit('admin:pinChat', { id: msg.id, nickname: msg.nickname, text: msg.text, isOperator: !!msg.isOperator });
   }
 
+  function compareChatId(a, b) {
+    const [at, as] = String(a.id).split('-').map(Number);
+    const [bt, bs] = String(b.id).split('-').map(Number);
+    return (at - bt) || ((as || 0) - (bs || 0));
+  }
+
   function toggleChatStar(msg) {
     socket.emit('admin:toggleChatStar', { id: msg.id, nickname: msg.nickname, text: msg.text, isOperator: !!msg.isOperator });
   }
@@ -1331,7 +1339,8 @@
   function renderChatFeed() {
     const feed = document.getElementById('chat-feed');
     // 체크만 보기: 서버가 보관한 체크 목록(최근 채팅에서 밀려난 글도 포함)
-    const source = chatStarredOnly ? starredChats : chatFeedItems;
+    // 체크 목록은 체크한 순서가 아니라 채팅이 올라온 순서로 (id = "시각-순번")
+    const source = chatStarredOnly ? starredChats.slice().sort(compareChatId) : chatFeedItems;
     if (source.length === 0) {
       feed.innerHTML = `<div class="empty-hint">${chatStarredOnly ? '체크한 채팅이 없습니다 — 채팅 왼쪽 ☆를 눌러 체크하세요' : '아직 채팅이 없습니다'}</div>`;
       return;
@@ -1371,6 +1380,12 @@
         badge.className = 'chat-op-badge';
         badge.textContent = '운영진 · 공지';
         nick.appendChild(badge);
+      }
+      if (pinnedIds.includes(m.id)) {
+        const pb = document.createElement('span');
+        pb.className = 'chat-pin-badge';
+        pb.textContent = m.isOperator ? '공지 중' : '📌 고정 중';
+        nick.appendChild(pb);
       }
       nick.appendChild(document.createTextNode(m.nickname || ''));
       const text = document.createElement('div');
