@@ -319,6 +319,7 @@
         recent = recent.filter((t) => now - t < HEART_WINDOW);
         if (recent.length < HEART_REARM) armed = true;
         recent.push(now);
+        if (recent.length > HEART_FIRE) recent.shift(); // 판정엔 최근 40개만 필요 — 하트가 몰려도 배열이 커지지 않게
         if (recent.length >= HEART_FIRE && armed && enabled && !playing && HEART_MODES.includes(mode)) {
           armed = false;
           play();
@@ -2500,7 +2501,7 @@
     const MAX_VISIBLE = 40; // LED에 유지할 최대 메시지 수 — 화면 높이를 가득 채우고, 넘치는 위쪽은 overflow+페이드로 자연스럽게 잘림
     const MAX_BUFFER = 300; // 일시정지 중에도 누적되는 메시지 버퍼 상한(메모리 보호용)
     const messages = [];
-    let chatPaused = false; // 채팅 빈 영역 클릭으로 일시정지된 상태인지
+    let chatPaused = false; // 관리자 화면에서 LED 채팅 표시를 멈춘 상태인지 (서버 chatPaused)
 
     const container = document.getElementById('led-messages');
     // ── 마이크 화면 운영진 키 ── 주소에 ?mic=1&key=운영진키 로 열면 키를 이 브라우저에 기억하고 주소창에서는 지운다.
@@ -2796,13 +2797,6 @@
 
     // 보기 수에 맞춘 상자 격자 { cols, rows } — 화면 비율마다 다르므로 페이지 설정에서
     const clusterLayout = cfg.clusterLayout;
-
-    // 공 클러스터 중심 = 보기 상자 본문(헤더 아래)의 한가운데.
-    // 배치의 기준은 상자(boxRect)이고 공은 거기에 따라온다.
-    function clusterCenter(i) {
-      const b = boxRect(i);
-      return { x: b.x + b.w / 2, y: b.y + headH() + (b.h - headH()) / 2 };
-    }
 
     // 모서리별 반경을 따로 주는 둥근 사각형 경로 (헤더는 위쪽만 둥글게)
     function roundRectPath(x, y, w, h, tl, tr, br, bl) {
