@@ -400,9 +400,37 @@ function resultsSummaryList() {
   return resultsHistory.map(e => ({ id: e.id, kind: e.kind, question: e.question, summary: resultSummary(e) }));
 }
 
-// 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
-function emitResults() {
-  io.to(ADMINS).emit('results', resultsSummaryList());
+// 결과 기록이 바뀔 때마다(마감·비우기·개별 삭제·복원) 관리자 화면에만 목록을 다시 보낸다 (관객 폰엔 안 보냄)
+// resultsFull: 원본 기록 전체(최대 20건) — 관리자 화면의 [결과 내보내기]·브라우저 백업용
+function emitResults(target) {
+  const t = target || io.to(ADMINS);
+  t.emit('results', resultsSummaryList());
+  t.emit('resultsFull', resultsHistory.map((e) => ({ ...e })));
+}
+
+// 브라우저 백업에서 되살리는 결과 한 건 검증 — 관리자 화면이 보낸 값이므로 recordResult가 만드는 모양 그대로만 받는다
+const MAX_RESULT_COUNT = 1000000;
+function cleanResultEntry(e) {
+  const o = asObj(e);
+  const question = cleanStr(o.question, MAX_QUESTION_LENGTH);
+  if (!question) return null;
+  const count = (v) => (Number.isInteger(v) && v >= 0 && v <= MAX_RESULT_COUNT ? v : null);
+  if (o.kind === 'vote') {
+    const voteType = o.voteType === 'choice' ? 'choice' : 'yesno';
+    const options = voteType === 'yesno' ? ['YES', 'NO'] : cleanOptions(o.options);
+    if (options.length < 2 || !Array.isArray(o.perOption) || o.perOption.length !== options.length) return null;
+    const perOption = o.perOption.map(count);
+    if (perOption.some((n) => n == null)) return null;
+    return { kind: 'vote', question, voteType, options, perOption, total: perOption.reduce((a, b) => a + b, 0) };
+  }
+  if (o.kind === 'subjective') {
+    const top = (Array.isArray(o.top) ? o.top : []).slice(0, 4)
+      .map((t) => ({ word: maskProfanity(cleanStr(asObj(t).word, MAX_ANSWER_LENGTH)), count: count(asObj(t).count) }))
+      .filter((t) => t.word && t.count >= 1)
+      .sort((a, b) => b.count - a.count);
+    return { kind: 'subjective', question, top, answerCount: count(o.answerCount) ?? top.reduce((a, t) => a + t.count, 0) };
+  }
+  return null;
 }
 
 // 주관식 답변 묶음 키 — 같은 답으로 칠 표기 차이만 지운다: 유니코드 호환 정규화(NFKC), 공백 전부, 문장부호·기호·이모지
@@ -1255,7 +1283,20 @@ io.on('connection', (socket) => {
 
   // 관리자: 결과 기록 요약 목록 조회 (화면 로드 시)
   onAdmin('admin:getResults', () => {
-    socket.emit('results', resultsSummaryList());
+    emitResults(socket);
+  });
+
+  // 관리자: 브라우저에 백업해 둔 결과 기록 복원 — 서버 재시작으로 기록이 비었을 때만(있으면 섞이지 않게 거부)
+  onAdmin('admin:restoreResults', (data) => {
+    if (resultsHistory.length) return 'notEmpty';
+    const list = asObj(data).results;
+    if (!Array.isArray(list)) return 'invalid';
+    const cleaned = list.slice(-MAX_RESULTS).map(cleanResultEntry).filter(Boolean);
+    if (!cleaned.length) return 'invalid';
+    cleaned.forEach(recordResult);
+    if (appState.mode === 'ending') endingGo(appState.endingIndex);
+    else io.to(ADMINS).emit('state', publicState(null, true)); // 관리자 화면의 기록 개수 갱신
+    emitResults();
   });
 
   // 함성 레벨 (LED → 서버) — 측정 중에만, 운영진 키로 접속해 registerScreen한 화면 소켓만, 소켓당 초당 15회까지

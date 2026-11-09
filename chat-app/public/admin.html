@@ -778,7 +778,15 @@
 
   <!-- 엔딩 · 오늘의 결과 -->
   <div class="card">
-    <h2>엔딩 · 오늘의 결과</h2>
+    <h2 class="card-title-row">
+      <span>엔딩 · 오늘의 결과</span>
+      <span class="title-actions">
+        <button class="expand-btn" onclick="exportResults('json')">내보내기 JSON</button>
+        <button class="expand-btn" onclick="exportResults('csv')">CSV</button>
+      </span>
+    </h2>
+    <p class="note" style="margin-bottom: 10px;">재시작·배포하면 결과 기록이 사라집니다. 이 브라우저에 자동으로 백업되고, [내보내기]로 결과와 체크(☆)한 채팅을 파일로 받아 둘 수 있습니다.</p>
+    <button class="btn btn-secondary" id="results-restore-btn" style="display:none; margin: 0 0 10px;" onclick="restoreLocalResults()"></button>
     <button class="btn btn-primary" id="ending-start-btn" onclick="startEndingNow()">엔딩 시작</button>
     <div class="status-row">
       <span class="status-label">진행</span>
@@ -1000,6 +1008,7 @@
     if (serverInfo && serverInfo.bootId === info.bootId) return renderUptime();
     const prev = serverInfo ? serverInfo.bootId : prevBootId;
     serverInfo = { bootId: info.bootId, startedAt: info.startedAt };
+    updateResultsRestoreButton();
     if (prev && prev !== info.bootId) {
       document.getElementById('boot-bar-text').textContent =
         `서버가 ${hhmm(info.startedAt)}에 다시 시작됐어요 — 채팅·결과 기록이 초기화됐어요`;
@@ -1093,6 +1102,83 @@
     resultsList = Array.isArray(list) ? list : [];
     renderResults();
   });
+
+  // ── 결과 기록 원본 · 브라우저 백업 · 복원 · 내보내기 ──
+  // 서버는 결과가 바뀔 때마다 원본 전체(resultsFull, 최대 20건)를 관리자 화면에 보낸다 → 이 브라우저 localStorage에 백업.
+  // 서버가 재시작해(다른 bootId) 기록이 비어 있고 백업이 있으면 [복원] 버튼(프리셋 복원처럼 수동). 같은 서버에서 비운 건 복원 안내 안 함.
+  const RESULTS_BACKUP_KEY = 'resultsBackup';
+  let resultsFull = [];
+  socket.on('resultsFull', (list) => {
+    resultsFull = Array.isArray(list) ? list : [];
+    if (resultsFull.length && serverInfo) {
+      try { localStorage.setItem(RESULTS_BACKUP_KEY, JSON.stringify({ savedAt: Date.now(), bootId: serverInfo.bootId, results: resultsFull })); } catch {}
+    }
+    updateResultsRestoreButton();
+  });
+  function readResultsBackup() {
+    try {
+      const b = JSON.parse(localStorage.getItem(RESULTS_BACKUP_KEY) || 'null');
+      return b && Array.isArray(b.results) && b.results.length ? b : null;
+    } catch { return null; }
+  }
+  function updateResultsRestoreButton() {
+    const btn = document.getElementById('results-restore-btn');
+    const b = resultsFull.length === 0 && serverInfo ? readResultsBackup() : null;
+    const show = !!(b && b.bootId !== serverInfo.bootId); // 지금 서버가 만든 백업이면(같은 실행 중에 비움) 안내하지 않음
+    btn.style.display = show ? 'block' : 'none';
+    if (show) {
+      const when = new Date(b.savedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      btn.textContent = `이 브라우저에 저장된 결과 ${b.results.length}건 복원 (${when})`;
+    }
+  }
+  function restoreLocalResults() {
+    const b = readResultsBackup();
+    if (!b) return;
+    socket.emit('admin:restoreResults', { results: b.results }, (res) => {
+      if (res && res.ok === false && res.reason === 'notEmpty') { showOpNotice('서버에 이미 결과 기록이 있어 복원하지 않았어요'); return true; }
+      if (res && res.ok) showOpNotice(`결과 ${b.results.length}건을 복원했어요`, false);
+    });
+  }
+
+  function exportResults(format) {
+    const results = resultsFull.map(({ id, ...e }) => e);
+    const chats = starredChats.map(({ nickname, text, isOperator }) => ({ nickname, text, isOperator: !!isOperator }));
+    if (!results.length && !chats.length) { alert('내보낼 결과·체크한 채팅이 없습니다'); return; }
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+    let blob;
+    if (format === 'csv') {
+      // 엑셀에서 한글이 깨지지 않게 BOM, 수식으로 읽히는 값(= + - @ 시작)은 앞에 ' (관객 입력이 섞이므로)
+      const cell = (v) => {
+        let t = v == null ? '' : String(v);
+        if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+        return '"' + t.replace(/"/g, '""') + '"';
+      };
+      const rows = [['번호', '종류', '질문 / 닉네임', '항목 / 내용', '수', '비율(%)', '전체']];
+      results.forEach((r, i) => {
+        if (r.kind === 'vote') {
+          r.options.forEach((label, k) => {
+            const n = r.perOption[k] || 0;
+            rows.push([i + 1, '투표', r.question, label, n, r.total ? Math.round((n / r.total) * 100) : 0, r.total]);
+          });
+        } else if (r.kind === 'subjective') {
+          if (!r.top.length) rows.push([i + 1, '주관식', r.question, '(답변 없음)', '', '', r.answerCount]);
+          r.top.forEach((t) => rows.push([i + 1, '주관식', r.question, t.word, t.count, r.answerCount ? Math.round((t.count / r.answerCount) * 100) : '', r.answerCount]));
+        }
+      });
+      chats.forEach((c, i) => rows.push([i + 1, c.isOperator ? '체크한 채팅(운영진)' : '체크한 채팅', c.nickname, c.text, '', '', '']));
+      blob = new Blob(['\uFEFF' + rows.map((r) => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    } else {
+      const data = { version: 1, exportedAt: d.toISOString(), serverStartedAt: serverInfo ? new Date(serverInfo.startedAt).toISOString() : null, results, starredChats: chats };
+      blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `결과기록-${stamp}.${format === 'csv' ? 'csv' : 'json'}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
 
   socket.on('state', (state) => {
     setAuthNeeded(false);
