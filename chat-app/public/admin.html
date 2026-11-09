@@ -675,7 +675,7 @@
       <button onclick="addPreset()">추가</button>
     </div>
     <p class="note len-hint" data-len-for="preset-input" data-len-max="80"></p>
-    <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
+    <input type="text" id="preset-options" class="preset-extra" placeholder="보기를 /로 구분 (예: 동료와 맛집/혼밥/낮잠/자기 계발)" style="display:none">
     <input type="number" id="preset-maxlen" class="preset-extra" value="20" min="1" max="20" placeholder="최대 글자수 (1~20)" style="display:none">
     <label id="preset-duration-label" class="preset-extra">투표 시간 (초, 5~600) — 선택형 전용</label>
     <input type="number" id="preset-duration" class="preset-extra" value="30" min="5" max="600">
@@ -695,7 +695,7 @@
       <option value="emoji">이모지 반응</option>
     </select>
     <label id="question-options-label" style="display:none">보기 (선택지)</label>
-    <input type="text" id="question-options" placeholder="보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)" style="display:none">
+    <input type="text" id="question-options" placeholder="보기를 /로 구분 (예: 동료와 맛집/혼밥/낮잠/자기 계발)" style="display:none">
     <label id="question-maxlen-label" style="display:none">최대 글자수 (1~20)</label>
     <input type="number" id="question-maxlen" value="20" min="1" max="20" style="display:none">
     <label id="duration-label">투표 시간 (초) — 선택형 전용</label>
@@ -1678,8 +1678,9 @@
     }
   }
 
-  // 이모지 반응 질문 기본 보기 (공연 [9]번 고정 세트) — 유형 선택 시 자동 채움
-  const DEFAULT_EMOJI_OPTIONS = '🔥 소리 질러 / 🥹 벌써 눈물 남 / 😱 너무 떨려요 / 🤩 빨리 보고 싶어요';
+  // 이모지 반응 질문 기본 보기 — 유형 선택 시 자동 채움. 관리자 화면은 직장인·공연 테마가 같이 쓰므로
+  // 본 행사(직장썰루션) 맥락으로 둔다. (예전 공연 [9]번 세트: 🔥 소리 질러 / 🥹 벌써 눈물 남 / 😱 너무 떨려요 / 🤩 빨리 보고 싶어요)
+  const DEFAULT_EMOJI_OPTIONS = '😴 월요일 아침 같아요 / ☕ 커피 수혈 중 / 🔥 열정 가득 / 🏃 퇴근만 기다려요';
 
   // 즉석 질문 유형 변경 시 보조 입력칸 표시 토글
   function onQuestionTypeChange() {
@@ -1698,8 +1699,8 @@
     optLbl.textContent = type === 'emoji' ? '이모지 + 뜻' : '보기 (선택지)';
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
-      ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
-      : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
+      ? '이모지+뜻을 /로 구분 (예: 😴 월요일 아침 같아요 / ☕ 커피 수혈 중)'
+      : '보기를 /로 구분 (예: 동료와 맛집/혼밥/낮잠/자기 계발)';
     const showMax = (type === 'subjective');
     maxLbl.style.display = showMax ? 'block' : 'none';
     maxIn.style.display = showMax ? 'block' : 'none';
@@ -1791,8 +1792,8 @@
     const showOpt = (type === 'choice' || type === 'emoji');
     optIn.style.display = showOpt ? 'block' : 'none';
     optIn.placeholder = type === 'emoji'
-      ? '이모지+뜻을 /로 구분 (예: 🔥 소리 질러 / 🥹 벌써 눈물 남)'
-      : '보기를 /로 구분 (예: 어반자카파/펀치/치즈/전부 다)';
+      ? '이모지+뜻을 /로 구분 (예: 😴 월요일 아침 같아요 / ☕ 커피 수혈 중)'
+      : '보기를 /로 구분 (예: 동료와 맛집/혼밥/낮잠/자기 계발)';
     maxIn.style.display = (type === 'subjective') ? 'block' : 'none';
     const showDur = (type === 'yesno' || type === 'choice');
     document.getElementById('preset-duration-label').style.display = showDur ? 'block' : 'none';
