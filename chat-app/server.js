@@ -759,6 +759,9 @@ function rememberAuthor(id, clientId) {
   if (messageAuthors.size > MAX_MESSAGE_AUTHORS) messageAuthors.delete(messageAuthors.keys().next().value);
 }
 
+// 관리자 조작 유효 시간 — 이보다 늦게 도착한 조작은 실행하지 않는다(화면이 보낸 시각 _t가 있을 때만 검사, 옛 화면은 그대로)
+const STALE_ADMIN_MS = 6000;
+
 // 접속 시 인증 키로 역할 결정 — 관객은 키 없이 그대로 접속(audience)
 function isValidClientId(v) { return typeof v === 'string' && v.length > 0 && v.length <= 64; }
 
@@ -792,11 +795,15 @@ io.on('connection', (socket) => {
   // 제작진 이벤트 공통 처리 — 마지막 인자가 함수(ack)면 결과를 { ok, reason }으로 돌려준다(콜백 없는 옛 화면은 그대로 동작).
   // 핸들러는 거부할 때 사유 코드(문자열)를 return 한다 — 화면이 한국어 안내로 바꿔 보여 줌.
   //  auth: 키 없음/틀림(매번 알림 — authError 이벤트는 소켓당 1번), error: 처리 중 오류
+  //  stale: 관리자 화면이 보낸 시각(서버 시계 기준 추정, 두 번째 인자 { _t })보다 STALE_ADMIN_MS 넘게 늦게 도착한 조작 —
+  //         와이파이 먹통·재연결 버퍼로 한참 뒤에 도착한 [실행]이 뒤늦게 LED를 바꾸지 않게 버린다
   const staffHandler = (need, fn) => (...args) => {
     const ack = typeof args[args.length - 1] === 'function' ? args.pop() : null;
     const reply = (reason) => { if (ack) ack(reason ? { ok: false, reason } : { ok: true }); };
     const allowed = need === 'admin' ? role === 'admin' : (role === 'admin' || role === 'host');
     if (!allowed) { denied(need); return reply('auth'); }
+    const sentAt = asObj(args[1])._t;
+    if (typeof sentAt === 'number' && Number.isFinite(sentAt) && Date.now() - sentAt > STALE_ADMIN_MS) return reply('stale');
     let r;
     try { r = fn(args[0]); }
     catch (e) { reply('error'); throw e; }
@@ -821,6 +828,9 @@ io.on('connection', (socket) => {
 
   // 연결 확인 — 폰이 다른 앱에서 돌아왔을 때 연결이 살아 있는지 바로 확인하는 용도
   on('alive', (ack) => { if (typeof ack === 'function') ack(true); });
+
+  // 서버 시계·응답 확인 — 관리자 화면이 몇 초마다 물어 '서버 응답 없음'을 알아채고, 조작에 붙일 서버 기준 시각을 맞춘다
+  on('serverTime', (ack) => { if (typeof ack === 'function') ack({ now: Date.now() }); });
 
   // LED 화면 등록 — 화면 전용 이벤트(리액션·투표 집계·주관식 흘려보내기 등)를 받는다
   // isScreen: 함성 레벨을 보낼 수 있는 소켓 표시 (관리자·운영진은 역할로 SCREENS에 들어오므로 방 소속으로 판단하지 않음)
