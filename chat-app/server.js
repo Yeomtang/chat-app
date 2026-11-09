@@ -384,21 +384,41 @@ function emitResults() {
   io.to(ADMINS).emit('results', resultsSummaryList());
 }
 
+// 주관식 답변 묶음 키 — 같은 답으로 칠 표기 차이만 지운다: 유니코드 호환 정규화(NFKC), 공백 전부, 문장부호·기호·이모지
+// (ZWJ·이모지 변형 선택자·키캡 포함), 영문 대소문자, 같은 글자 3번 이상 반복은 2번으로('ㅋㅋㅋㅋ'='ㅋㅋ').
+// 오탈자 추정('일직'→'일찍') 같은 유사도 묶기는 하지 않는다(엉뚱한 답이 합쳐질 위험).
+// 지우고 나면 빈 문자열(이모지·기호만)인 답은 원문(공백만 정리) 그대로 따로 센다.
+const ANSWER_STRIP_RE = /[\s\p{P}\p{S}\p{Extended_Pictographic}\u200d\ufe0e\ufe0f\u20e3]/gu;
+function answerKey(text) {
+  const raw = String(text == null ? '' : text);
+  const key = raw.normalize('NFKC').replace(ANSWER_STRIP_RE, '').toLowerCase().replace(/(.)\1{2,}/gu, '$1$1');
+  return key || '\u0000' + raw.replace(/\s+/g, ' ').trim();
+}
+
 // 주관식 답변 → 워드클라우드용 빈도 집계 (상위 40개)
 // 단어로 쪼개지 않고 답변 전체를 한 덩어리로 집계 — "나 빼고 다" 같은 문구형 답변의
 // 어순/의미가 보존되고, 같은 답변을 쓴 사람이 많을수록 그 문구가 커진다.
+// 묶음(answerKey)마다 화면에 보이는 대표 문구 = 그 묶음에서 가장 많이 나온 원문 표기(공백만 정리, 동률이면 먼저 들어온 것).
+// key는 LED가 흘러가던 답변을 자기 단어로 모을 때 같은 묶음을 찾는 데 쓴다 (subjectiveAnswer에도 같은 key)
 function computeCloud() {
-  const freq = new Map(); // 정규화 문구 -> { word, count }
-  for (const text of Object.values(appState.answers)) {
-    const norm = text.replace(/\s+/g, ' ').trim(); // 공백만 정리
-    if (!norm) continue;
-    const entry = freq.get(norm);
-    if (entry) entry.count += 1;
-    else freq.set(norm, { word: norm, count: 1 });
-  }
-  return [...freq.values()]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 40);
+  const groups = new Map(); // 묶음 키 -> { key, count, forms: Map(표기 -> 개수), first: 처음 들어온 순서 }
+  appState.answerList.forEach((a, order) => {
+    const form = String(a.text).replace(/\s+/g, ' ').trim();
+    if (!form) return;
+    const key = answerKey(form);
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = { key, count: 0, forms: new Map(), first: order });
+    g.count += 1;
+    g.forms.set(form, (g.forms.get(form) || 0) + 1); // Map은 넣은 순서를 지킴 → 동률이면 먼저 들어온 표기
+  });
+  return [...groups.values()]
+    .sort((a, b) => b.count - a.count || a.first - b.first)
+    .slice(0, 40)
+    .map((g) => {
+      let word = null, best = 0;
+      g.forms.forEach((n, form) => { if (n > best) { best = n; word = form; } });
+      return { word, count: g.count, key: g.key };
+    });
 }
 
 // 보기별 득표 집계 → { perOption: [n0, n1, ...], total }
@@ -926,6 +946,7 @@ io.on('connection', (socket) => {
     io.to(SCREENS).emit('subjectiveAnswer', {
       id: entry.id,
       text,
+      key: answerKey(text), // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
       answerCount: Object.keys(appState.answers).length,
     });
     socket.emit('answerAccepted'); // 본인 확인용

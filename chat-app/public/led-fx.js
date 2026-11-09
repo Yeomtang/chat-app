@@ -835,7 +835,8 @@
       b.style.left = sw + 'px'; // 오른쪽 밖에서 시작
       laneLast[lane] = { t0: now, x0: sw, w, v };
       laneBusy[lane] = now + (w + STREAM.GAP * scale()) / v; // 다 들어올 때까지 (클라우드 쪽 말풍선도 피해 감)
-      const it = { el: b, id: a.id, text: normText(a.text) };
+      // key: 서버가 붙인 워드클라우드 묶음 키(표기 차이를 지운 것) — 마감 때 자기 단어로 모일 자리를 찾는 데 씀 (옛 서버면 글 그대로)
+      const it = { el: b, id: a.id, text: normText(a.text), key: a.key || normText(a.text) };
       it.anim = b.animate([
         { transform: 'translateX(0)' },
         { transform: `translateX(${-dist}px)` },
@@ -874,7 +875,7 @@
       it.el.style.left = (r.left - sr.left) + 'px';
       it.el.style.top = (r.top - sr.top) + 'px';
       items = items.filter((x) => x !== it);
-      return { el: it.el, id: it.id, text: it.text, x: r.left - sr.left, y: r.top - sr.top, w: r.width, h: r.height, rect: r };
+      return { el: it.el, id: it.id, text: it.text, key: it.key, x: r.left - sr.left, y: r.top - sr.top, w: r.width, h: r.height, rect: r };
     }
 
     return {
@@ -885,7 +886,7 @@
       start() { el.classList.add('active'); running = true; schedule(); },
       push(a) {
         if (!a || typeof a.text !== 'string') return;
-        queue.push({ id: a.id, text: a.text });
+        queue.push({ id: a.id, text: a.text, key: a.key });
         if (queue.length > STREAM.MAX_QUEUE) queue.shift();
         schedule();
       },
@@ -1001,7 +1002,7 @@
         s.textContent = entry.word;
         s.style.color = colors[i % colors.length]; // 표시 순서대로 팔레트 순환 — 이웃끼리 다른 색
         box.appendChild(s);
-        return { el: s, word: normText(entry.word), count: entry.count, shown: 0 };
+        return { el: s, word: entry.key || normText(entry.word), label: entry.word, count: entry.count, shown: 0 }; // word = 묶음 키 (흘러가던 답변과 짝 맞춤), label = 보이는 글
       });
       wrap.appendChild(box);
       // 영역에 들어가는 가장 큰 배율을 이분 탐색 (1이면 그대로, 최소 0.3) — 작은 단어는 하한 26px 유지.
@@ -1067,7 +1068,7 @@
       };
       const TRIES = 10;
       recs.forEach((r, i) => {
-        const isFirst = r.word === normText(cloud[0].word);
+        const isFirst = r.word === (cloud[0].key || normText(cloud[0].word));
         let cand = placed[i];
         if (!isFirst) {
           for (let t = 0; t < TRIES; t++) {
@@ -1221,7 +1222,7 @@
         later(() => el.remove(), 550);
       };
       taken.sort((a, b) => a.x - b.x).forEach((t) => {
-        const r = words.get(t.text);
+        const r = words.get(t.key || t.text);
         if (r && n(r) < r.count && plan.length < CLOUD.MAX_FLY) { plan.push({ src: t, word: r }); planned.set(r, n(r) + 1); }
         else fade(t.el); // 상위 40개 밖이거나 상한 초과 → 그냥 사라짐 (수는 도착 때 반영)
       });
@@ -1269,7 +1270,7 @@
           // 아직 접수 중이던 답변: 출발 시각에 오른쪽 끝 밖에서 만들어져 들어옴
           f.t0 = Infinity;
           later(() => {
-            const el = stream.makeBubble(p.word.word);
+            const el = stream.makeBubble(p.word.label);
             const top = el.offsetTop, w = el.offsetWidth, h = el.offsetHeight;
             f.sx = sw + w / 2 + (k % 6) * 40 * u; f.sy = top + h / 2;
             Object.assign(el.style, { left: '0px', top: '0px', transform: `translate(${f.sx}px, ${f.sy}px) translate(-50%, -50%)` });
