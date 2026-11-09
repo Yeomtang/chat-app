@@ -1091,6 +1091,23 @@
         r.el.style.setProperty('--rot', (cand.rot * 180 / Math.PI).toFixed(1) + 'deg');
         if (!words.has(r.word)) words.set(r.word, r);
       });
+      // 도착 때 부푸는 배율(팝인 1.05·통통 1.18)을 단어마다 여유만큼으로 제한 — 최종 크기에서 그 배율로 커져도
+      // 이웃 단어(최종 크기)와 닿지 않고 영역 밖으로 나가지 않는 가장 큰 값 (여유가 없으면 1 = 부풀지 않음)
+      // 이웃도 동시에 부풀 수 있으므로 두 단어를 같은 배율로 함께 키워 봄 → 단어 배율 = 이웃마다 구한 한계 중 최솟값
+      // (두 단어가 각자 자기 한계 이하로만 커지면 서로 닿지 않음)
+      const grow = (q, sc) => Object.assign({}, q, { w: q.w * sc, h: q.h * sc });
+      const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < (Math.hypot(a.w, a.h) + Math.hypot(b.w, b.h)) * 0.6 + 8 * u;
+      const limitBy = (ok) => { let lo = 1, hi = 1.18; if (ok(hi)) return hi; for (let t = 0; t < 8; t++) { const mid = (lo + hi) / 2; if (ok(mid)) lo = mid; else hi = mid; } return lo; };
+      recs.forEach((r, i) => {
+        let lim1 = limitBy((sc) => inside(grow(placed[i], sc)));
+        placed.forEach((o, j) => {
+          if (j === i || !near(placed[i], o)) return;
+          lim1 = Math.min(lim1, limitBy((sc) => !hits(grow(placed[i], sc), grow(o, sc), 0)));
+        });
+        r.el.style.setProperty('--bump', lim1.toFixed(3)); // 통통(ease, 넘침 없음)의 꼭짓점
+        // 팝인은 공용 popIn 곡선(cubic-bezier 0.34,1.56…)이라 0.4→꼭짓점 구간에서 약 10% 더 넘침 — 넘친 값이 한계 안에 들게
+        r.el.style.setProperty('--pop', Math.min(1.05, (lim1 + 0.04) / 1.1).toFixed(3));
+      });
     }
 
     function setShown(r, n) {
@@ -1144,10 +1161,11 @@
       });
       requestAnimationFrame(() => requestAnimationFrame(() => pills.forEach((p) => p.classList.add('on'))));
       later(() => {
-        words.forEach((r) => { r.el.classList.remove('dim'); r.el.style.setProperty('--s', '1'); });
+        // 1등이 제 크기로 돌아온 뒤(배율 전환 0.8초)에 나머지를 다시 밝힘 — 아직 큰 1등이 이웃과 겹쳐 보이지 않게
+        words.forEach((r) => r.el.style.setProperty('--s', '1'));
         pills.forEach((p) => p.classList.remove('on'));
         later(() => pills.forEach((p) => p.remove()), 600);
-        done();
+        later(() => { words.forEach((r) => r.el.classList.remove('dim')); done(); }, 800);
       }, CLOUD.SPOT_MS);
     }
 
