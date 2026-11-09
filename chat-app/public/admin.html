@@ -653,7 +653,7 @@
       <div class="empty-hint">등록된 질문이 없습니다</div>
     </div>
     <div class="add-row">
-      <input type="text" id="preset-input" placeholder="질문 입력 후 추가">
+      <input type="text" id="preset-input" placeholder="질문 입력 후 추가" maxlength="200">
       <select id="preset-type" onchange="onPresetTypeChange()">
         <option value="yesno">YES/NO</option>
         <option value="choice">객관식(선택지)</option>
@@ -672,7 +672,7 @@
   <div class="card">
     <h2>즉석 질문 시작</h2>
     <label>질문 내용</label>
-    <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?">
+    <input type="text" id="question-input" placeholder="예: 지금 본인의 회사 생활에 만족하십니까?" maxlength="200">
     <label>질문 유형</label>
     <select id="question-type" class="type-select" onchange="onQuestionTypeChange()">
       <option value="yesno">YES/NO 투표</option>
