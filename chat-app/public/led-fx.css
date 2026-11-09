@@ -736,7 +736,7 @@
 
 /* ── 질문 타이머 게이지 (LedFx.timer.createGauge) ──
    질문 카드 아래쪽 안쪽 여백에 겹쳐 놓는 얇은 막대 — 카드 크기에 영향이 없어 아래 공 상자 위치가 그대로다.
-   남은 시간만큼 줄어든다(숫자 배지와 같은 마감 시각). 채움은 transform 한 번의 linear 전환이라 매 프레임 계산이 없다.
+   남은 시간만큼 줄어든다(숫자 배지와 같은 마감 시각). 채움은 transform 한 번의 linear 애니메이션(Web Animations)이라 매 프레임 계산이 없다.
    마지막 5초는 숫자 배지와 같은 경고색(--warn). */
 .fx-timer-gauge {
   position: absolute;
@@ -758,5 +758,15 @@
   background: var(--ink);
   transform-origin: left center;
   will-change: transform;
+  transition: background-color 0.4s;
 }
 .fx-timer-gauge.hot .fx-timer-gauge-fill { background: var(--warn); }
+/* 마지막 5초: 숫자 배지 맥박(timerPulse, 1초)과 같은 박자로 막대 둘레가 경고색으로 은은하게 번짐 — 같은 프레임에 .hot이 붙어 박자가 맞는다 */
+.fx-timer-gauge.hot { animation: fxGaugePulse 1s ease-in-out infinite; }
+@keyframes fxGaugePulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 0%, transparent); }
+  50%      { box-shadow: 0 0 calc(10px * var(--u)) calc(1px * var(--u)) color-mix(in srgb, var(--warn) 45%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-timer-gauge.hot { animation: none; }
+}
