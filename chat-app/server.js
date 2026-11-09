@@ -144,11 +144,23 @@ function roleForKey(key) {
 }
 
 // ── 입력값 정리 ── 클라이언트가 보낸 값은 형식을 믿지 않는다(잘못된 값 하나로 서버가 죽지 않도록).
-// 문자열이 아니면 '', 앞뒤 공백 제거 후 max 글자(이모지가 반으로 잘리지 않게 코드포인트 기준)로 자른다.
+// 문자열이 아니면 '', 앞뒤 공백 제거 후 max 글자(코드포인트 개수 기준)로 자른다.
+// 자를 때는 글자(grapheme) 단위로 — 👨‍👩‍👧·국기·피부색 이모지처럼 여러 코드포인트로 된 글자가 상한에 걸리면
+// 반쪽만 남기지 않고 그 글자 전체를 버린다(결과 길이는 코드포인트 기준 max 이하). Segmenter가 없으면 코드포인트로 자름
+const graphemeSeg = typeof Intl !== 'undefined' && Intl.Segmenter
+  ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
 function cleanStr(v, max) {
   if (typeof v !== 'string') return '';
   const t = v.trim();
-  return t.length <= max ? t : [...t].slice(0, max).join('');
+  if (t.length <= max) return t;
+  if (!graphemeSeg) return [...t].slice(0, max).join('');
+  let out = '', n = 0;
+  for (const { segment } of graphemeSeg.segment(t)) {
+    const len = [...segment].length;
+    if (n + len > max) break;
+    out += segment; n += len;
+  }
+  return out;
 }
 function asObj(v) { return v && typeof v === 'object' ? v : {}; }
 
@@ -256,6 +268,7 @@ function persistPresets() {
 let questionPresets = loadPresets();
 const MAX_MESSAGES = 50;
 const MAX_CHAT_LENGTH = 200; // 채팅 글자 수 제한 (클라이언트 제한 우회 대비 서버에서도 자름)
+const MAX_OPERATOR_CHAT_LENGTH = 100; // 운영진(/host) 채팅 상한 — 화면 입력칸과 같게
 
 const MAX_ANSWER_LENGTH = 20; // 주관식 답변 글자 수 상한 (LED 가독성 보호)
 const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 17자 이하지만
@@ -825,7 +838,7 @@ io.on('connection', (socket) => {
     const reply = (r) => { if (typeof ack === 'function') ack(r); };
     if (!socket.isOperator && !CHAT_MODES.includes(appState.mode)) return reply({ ok: false, reason: 'mode' });
     const d = asObj(data);
-    const raw = cleanStr(d.text, MAX_CHAT_LENGTH);
+    const raw = cleanStr(d.text, socket.isOperator ? MAX_OPERATOR_CHAT_LENGTH : MAX_CHAT_LENGTH);
     if (!raw) return reply({ ok: false, reason: 'empty' });
     // 도배 제한 (운영진 제외): 5초에 5건 — 정상 입력 속도로는 걸리지 않는 수준
     if (!socket.isOperator) {

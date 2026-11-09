@@ -21,6 +21,15 @@
   // ══════════════════════════════════
   const ELLIPSIS = '…';
 
+  // 글자(grapheme) 단위로 나눔 — 👨‍👩‍👧·국기·피부색 이모지가 줄바꿈·말줄임에서 반으로 쪼개지지 않게.
+  // 일반 한글·영문은 Array.from과 결과가 같다. Intl.Segmenter가 없는 브라우저면 코드포인트(Array.from)로 대신
+  const graphemeSeg = (typeof Intl !== 'undefined' && Intl.Segmenter)
+    ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
+  function splitGraphemes(s) {
+    s = String(s == null ? '' : s);
+    return graphemeSeg ? Array.from(graphemeSeg.segment(s), (x) => x.segment) : Array.from(s);
+  }
+
   // 캔버스 줄바꿈: 어절(공백) 단위, 한 줄보다 긴 어절(띄어쓰기 없는 긴 글)만 글자 단위로 끊음
   // (CSS keep-all + overflow-wrap:anywhere와 같은 규칙). ctx.font는 미리 지정돼 있어야 함
   function wrapCanvasLines(ctx, text, maxW) {
@@ -32,7 +41,7 @@
       if (fits(cand)) { cur = cand; return; }
       if (cur) { lines.push(cur); cur = ''; }
       if (fits(w)) { cur = w; return; }
-      for (const ch of Array.from(w)) {
+      for (const ch of splitGraphemes(w)) {
         if (!cur || fits(cur + ch)) cur += ch;
         else { lines.push(cur); cur = ch; }
       }
@@ -43,7 +52,7 @@
 
   // 마지막 줄 끝을 "…"로 (폭 안에 들어갈 때까지 글자를 덜어냄)
   function ellipsizeCanvas(ctx, line, maxW) {
-    let chars = Array.from(line);
+    let chars = splitGraphemes(line);
     while (chars.length && ctx.measureText(chars.join('').trimEnd() + ELLIPSIS).width > maxW) chars.pop();
     return chars.join('').trimEnd() + ELLIPSIS;
   }
@@ -82,7 +91,7 @@
     if (!(lh > 0)) return false;
     const limit = lh * maxLines + 1;
     if (el.scrollHeight <= limit) return false;
-    const chars = Array.from(text);
+    const chars = splitGraphemes(text);
     const at = (k) => chars.slice(0, k).join('').trimEnd() + ELLIPSIS;
     let lo = 0, hi = chars.length - 1;
     while (lo < hi) {
