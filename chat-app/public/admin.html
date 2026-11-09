@@ -876,6 +876,12 @@
       <span class="pin-status-text" id="pin-status-text">핀 고정된 채팅 없음</span>
       <button class="unpin-btn" id="unpin-btn" onclick="unpinChat()" disabled>핀 내리기</button>
     </div>
+    <!-- 차단한 관객 — 채팅·답변 항목의 [차단]으로 추가, 여기서 목록 보기·해제 -->
+    <div class="pin-status-row" id="block-status-row">
+      <span class="pin-status-text" id="block-status-text">차단한 관객 없음</span>
+      <button class="unpin-btn" id="block-list-btn" onclick="toggleBlockList()" disabled>목록 보기</button>
+    </div>
+    <div class="preset-list" id="block-list" style="display:none; margin-top: 8px;"></div>
     <div class="chat-actions">
       <button class="btn btn-secondary" id="chatpause-btn" onclick="toggleChatPause()">LED 채팅창 멈추기</button>
       <button class="btn btn-danger" onclick="clearChat()">채팅 초기화</button>
@@ -943,6 +949,10 @@
     notFound: '이미 지워졌거나 찾을 수 없는 항목이에요',
     invalid: '잘못된 값이라 반영하지 않았어요',
     stale: '연결이 늦어진 동안 누른 조작이라 실행하지 않았어요. 현재 상태를 보고 다시 눌러 주세요',
+    busy: '진행 중인 질문이 있어 실행하지 않았어요. 현재 상태를 확인해 주세요',
+    hidden: '숨긴 답은 LED에 띄울 수 없어요. [되돌리기] 뒤에 픽해 주세요',
+    notEmpty: '서버에 이미 결과 기록이 있어 복원하지 않았어요',
+    noAuthor: '작성자를 찾을 수 없어 차단하지 못했어요 (오래된 글이거나 서버 재시작 전 글)',
   };
   let opNoticeTimer = null;
   function showOpNotice(text, warn = true) {
@@ -1588,6 +1598,71 @@
     data.ids.forEach((id) => (data.hidden ? hiddenIds.add(id) : hiddenIds.delete(id)));
     data.ids.forEach(refreshAnswer);
   });
+  // ── 관객 차단 ── 채팅·답변 항목의 [차단] (2클릭 확인). 서버가 그 관객의 채팅·답변을 조용히 버리고(본인 화면엔 보낸 것처럼),
+  // 최근 글을 모두 지우며 이번 질문의 답도 숨긴다. 투표·하트·이모지 반응은 그대로. 목록에서 해제 가능(지운 글은 돌아오지 않음)
+  let blockArm = null; // { btn, timer }
+  function disarmBlock() {
+    if (!blockArm) return;
+    clearTimeout(blockArm.timer);
+    if (blockArm.btn.isConnected) { blockArm.btn.textContent = '차단'; blockArm.btn.classList.remove('confirming'); }
+    blockArm = null;
+  }
+  function blockButton(target) {
+    const b = document.createElement('button');
+    b.className = 'mini-btn danger';
+    b.textContent = '차단';
+    b.title = '이 관객의 채팅·주관식 답변을 막고(본인은 모름) 최근 글을 모두 지웁니다 — 차단 목록에서 해제 가능';
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (!blockArm || blockArm.btn !== b) {
+        disarmBlock();
+        b.textContent = '차단?';
+        b.classList.add('confirming');
+        blockArm = { btn: b, timer: setTimeout(disarmBlock, 3000) };
+        showOpNotice('이 관객의 채팅·답변을 막고 최근 글을 모두 지워요 — 3초 안에 한 번 더 누르면 차단');
+        return;
+      }
+      disarmBlock();
+      socket.emit('admin:blockClient', target, (res) => {
+        if (res && res.ok === false && res.reason === 'noAuthor') { showOpNotice('작성자를 찾을 수 없어 차단하지 못했어요 (오래된 글이거나 서버 재시작 전 글)'); return true; }
+        if (res && res.ok) showOpNotice(`차단했어요 — 글 ${res.deleted || 0}개 삭제${res.hidden ? `, 답변 ${res.hidden}개 숨김` : ''}`, false);
+      });
+    };
+    return b;
+  }
+  let blockList = [];
+  let blockListOpen = false;
+  socket.on('blockList', (list) => { blockList = Array.isArray(list) ? list : []; renderBlockList(); });
+  function toggleBlockList() { blockListOpen = !blockListOpen; renderBlockList(); }
+  function renderBlockList() {
+    const n = blockList.length;
+    document.getElementById('block-status-text').textContent = n ? `🚫 차단한 관객 ${n}명` : '차단한 관객 없음';
+    document.getElementById('block-status-row').classList.toggle('pinned', n > 0);
+    const btn = document.getElementById('block-list-btn');
+    btn.disabled = !n;
+    if (!n) blockListOpen = false;
+    btn.textContent = blockListOpen ? '목록 닫기' : '목록 보기';
+    const list = document.getElementById('block-list');
+    list.style.display = blockListOpen ? 'flex' : 'none';
+    list.innerHTML = '';
+    if (!blockListOpen) return;
+    const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    blockList.forEach((r) => {
+      const item = el('div', 'preset-item');
+      const main = el('div', 'preset-main');
+      main.append(el('span', 'preset-q', r.nickname));
+      const when = new Date(r.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+      main.append(el('span', 'preset-detail', `${when} 차단 · 지운 글 ${r.deleted || 0}개${r.sample ? ` · “${r.sample}”` : ''}`));
+      const actions = el('div', 'preset-actions');
+      const un = el('button', '', '해제');
+      un.title = '차단을 풀면 이후 채팅·답변이 다시 보입니다 (지운 글은 돌아오지 않음)';
+      un.addEventListener('click', () => socket.emit('admin:unblockClient', { id: r.id }));
+      actions.append(un);
+      item.append(main, actions);
+      list.appendChild(item);
+    });
+  }
+
   function hideAnswer(a, sameKey) {
     socket.emit('admin:hideAnswer', { id: a.id, hidden: !hiddenIds.has(a.id), sameKey });
   }
@@ -1665,6 +1740,7 @@
     hideBtn.title = hidden ? 'LED·워드클라우드·결과에 다시 포함' : 'LED 흘림·워드클라우드·결과 기록·엔딩에서 뺌 (되돌리기 가능)';
     hideBtn.onclick = () => hideAnswer(a, false);
     tools.appendChild(hideBtn);
+    tools.appendChild(blockButton({ answerId: a.id }));
     if (a.key != null && (keyCounts.get(a.key) || 0) >= 2) {
       const groupBtn = document.createElement('button');
       groupBtn.className = 'mini-btn';
@@ -1900,6 +1976,7 @@
     del.onclick = (e) => { e.stopPropagation(); deleteMessage(m); };
     item.appendChild(star);
     item.appendChild(body);
+    if (!m.isOperator) item.appendChild(blockButton({ messageId: m.id, nickname: m.nickname, text: m.text })); // 운영진 글은 차단 대상 아님
     item.appendChild(del);
     item._msg = m;
     return item;

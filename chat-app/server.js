@@ -347,6 +347,7 @@ const appState = {
   answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
+  answerAuthors: new Map(), // 답변 id -> 작성 관객 clientId (서버 전용, 밖으로 보내지 않음) — [이 사람 차단]용
   hiddenAnswers: [],      // 관리자가 [숨김]한 답변 id — LED 흘림·워드클라우드·결과 기록·엔딩·폰 클라우드에서 뺀다(되돌리기 가능)
   subjectiveResultId: null, // 이번 주관식 마감 때 기록한 결과 id — 마감 뒤 숨김을 바꾸면 그 기록도 다시 집계
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
@@ -507,7 +508,7 @@ function publicState(forClientId, withSlides = false) {
     counts: appState.mode === 'voting' && !withSlides
       ? { perOption: new Array(appState.voteOptions.length).fill(0), total: 0 } : computeCounts(),
     myVote, // 내가 고른 보기 인덱스(0-based) 또는 null
-    answerCount: Object.keys(appState.answers).length,
+    answerCount: appState.answerList.length, // 차단된 관객이 보낸(조용히 버린) 답은 세지 않음
     answerMaxLen: appState.answerMaxLen,
     emojiOptions: appState.emojiOptions,
     myAnswered: forClientId ? !!appState.answers[forClientId] : null,
@@ -612,6 +613,7 @@ function startVoting(question, options, duration, type) {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.answerAuthors = new Map();
   emitModeChange();
 
   appState.timerHandle = setTimeout(() => {
@@ -656,6 +658,7 @@ function startSubjective(question, maxLen) {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.answerAuthors = new Map();
   emitModeChange();
 }
 
@@ -720,6 +723,7 @@ function resetQuestionState() {
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
   appState.hiddenAnswers = [];
+  appState.answerAuthors = new Map();
   appState.answerMaxLen = MAX_ANSWER_LENGTH;
   appState.emojiOptions = [];
   resetSpecialState();
@@ -811,6 +815,32 @@ function endingGo(index) {
   emitModeChange();
 }
 
+// ── 관객 차단 ── clientId 기준(서버 메모리, 재시작 시 초기화). 관리자 화면엔 clientId 대신 차단 번호(b1…)만 보낸다
+const MAX_BLOCKED = 500;
+const blockedClients = new Map(); // clientId -> { id, nickname, sample, at, deleted }
+let blockSeq = 0;
+function isBlocked(clientId) { return !!clientId && blockedClients.has(clientId); }
+function emitBlockList(target) {
+  (target || io.to(ADMINS)).emit('blockList', [...blockedClients.values()].map((r) => ({ ...r })));
+}
+
+// 채팅 한 건 삭제 — 보관본·전송 대기열·핀·체크 목록에서 빼고 모든 화면에 알림 (개별 삭제·차단 일괄 삭제 공용)
+// except: 알리지 않을 방 — 차단 일괄 삭제 때 차단된 본인 화면에서는 글이 사라지지 않게(티 안 나게)
+function deleteChatMessage(id, except) {
+  const idx = recentMessages.findIndex(m => m.id === id);
+  if (idx !== -1) recentMessages.splice(idx, 1);
+  chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
+  if (appState.pinnedChat && appState.pinnedChat.id === id) {  // 핀된 걸 지우면 핀도 해제
+    appState.pinnedChat = null;
+    io.to(SCREENS).emit('chatPinned', { message: null });
+  }
+  if (appState.pinnedNotice && appState.pinnedNotice.id === id) clearPinnedNotice();
+  const starIdx = appState.starredChats.findIndex(m => m.id === id);
+  if (starIdx !== -1) { appState.starredChats.splice(starIdx, 1); emitChatStars(); } // 지운 글은 체크 목록에서도 뺌
+  (except ? io.except(except) : io).emit('chatDeleted', id);
+}
+const clientRoom = (clientId) => 'c:' + clientId; // 기기(clientId)별 방 — 차단된 본인 탭에만 보내거나 빼고 보낼 때
+
 // ── 핀 알림용 작성자 기록 ── 메시지 id → 작성 관객 clientId (외부로 보내지 않음, 오래된 것부터 버림)
 const MAX_MESSAGE_AUTHORS = 500;
 const messageAuthors = new Map();
@@ -849,6 +879,7 @@ io.on('connection', (socket) => {
   const role = socket.data.role;
   if (role === 'admin') socket.join([SCREENS, ADMINS]);
   else if (role === 'host') socket.join(SCREENS);
+  if (socket.clientId) socket.join(clientRoom(socket.clientId));
 
   // 핸들러 예외가 서버 전체를 죽이지 않도록 모든 이벤트를 감싼다
   const on = (event, fn) => socket.on(event, (...args) => {
@@ -876,6 +907,7 @@ io.on('connection', (socket) => {
     let r;
     try { r = fn(args[0]); }
     catch (e) { reply('error'); throw e; }
+    if (r && typeof r === 'object') { if (ack) ack({ ok: true, ...r }); return; } // 성공 + 결과 정보(삭제한 글 수 등)
     reply(typeof r === 'string' ? r : null);
   };
   const onAdmin = (event, fn) => on(event, staffHandler('admin', fn));
@@ -885,7 +917,7 @@ io.on('connection', (socket) => {
   on('identify', (clientId) => {
     if (!isValidClientId(clientId)) return;
     // 한 소켓의 clientId는 처음 정해진 값으로 고정 — 바꿔 가며 여러 번 투표하는 것 방지
-    if (!socket.clientId) socket.clientId = clientId;
+    if (!socket.clientId) { socket.clientId = clientId; socket.join(clientRoom(clientId)); }
     socket.emit('state', publicState(socket.clientId, socket.rooms.has(SCREENS)));
     // 핀 고정 순간 폰이 잠겨 있거나 다른 앱을 쓰느라 연결이 끊겨 있었으면 알림을 놓친다
     // → 다시 접속했을 때 내 채팅이 아직 고정 중이면 늦게라도 알려준다(late: 폰이 이미 본 알림이면 다시 띄우지 않음)
@@ -958,7 +990,7 @@ io.on('connection', (socket) => {
 
   // 새 연결에 최근 메시지 전송
   socket.emit('history', recentMessages);
-  if (role === 'admin') emitChatStars(socket); // 체크한 채팅(관리자끼리 공유) 복원
+  if (role === 'admin') { emitChatStars(socket); emitBlockList(socket); } // 체크한 채팅·차단 목록(관리자끼리 공유) 복원
 
   // 채팅 메시지 (채팅·대기·엔딩 모드에서 허용)
   // ack(선택): 보낸 사람에게 결과를 알려준다 — { ok: true } 또는 { ok: false, reason: 'mode'|'rate'|'empty' }
@@ -988,6 +1020,11 @@ io.on('connection', (socket) => {
       text,
       isOperator: !!socket.isOperator, // 운영자 메시지는 LED에서 배경색으로 구분
     };
+    // 차단된 관객: 본인 화면에만 보낸 것처럼 보여 주고(티 안 나게) LED·다른 관객·관리자에게는 보내지 않는다
+    if (!socket.isOperator && isBlocked(socket.clientId)) {
+      io.to(clientRoom(socket.clientId)).emit('chat', message);
+      return reply({ ok: true });
+    }
     // 핀 알림용으로 관객 작성자만 기억(운영진 메시지는 알릴 대상 없음)
     if (!socket.isOperator && socket.clientId) rememberAuthor(message.id, socket.clientId);
     recentMessages.push(message);
@@ -1045,14 +1082,17 @@ io.on('connection', (socket) => {
     const text = maskProfanity(raw); // 비속어 * 처리
 
     appState.answers[socket.clientId] = text;
+    // 차단된 관객: 받은 것처럼 답하고(티 안 나게) 목록·LED·집계에는 넣지 않는다
+    if (isBlocked(socket.clientId)) { socket.emit('answerAccepted'); return; }
     const entry = { id: appState.answerList.length + 1, text };
     appState.answerList.push(entry);
+    appState.answerAuthors.set(entry.id, socket.clientId);
     // LED 흘려보내기 + 관리자 목록/카운트용 (익명: 텍스트만 공개)
     io.to(SCREENS).emit('subjectiveAnswer', {
       id: entry.id,
       text,
       key: answerKey(text), // 워드클라우드 묶음 키 (LED가 흘러가던 답변을 자기 단어로 모을 때)
-      answerCount: Object.keys(appState.answers).length,
+      answerCount: appState.answerList.length,
     });
     socket.emit('answerAccepted'); // 본인 확인용
   });
@@ -1169,17 +1209,51 @@ io.on('connection', (socket) => {
   // 관리자: 개별 채팅 삭제 — 부적절한 메시지를 즉시 내림. 모든 화면에서 사라진다.
   onStaff('admin:deleteMessage', (id) => {
     if (typeof id !== 'string') return 'invalid';
-    const idx = recentMessages.findIndex(m => m.id === id);
-    if (idx !== -1) recentMessages.splice(idx, 1);
-    chatQueue = chatQueue.filter(m => m.id !== id); // 아직 묶음 전송 전이면 대기열에서도 제거
-    if (appState.pinnedChat && appState.pinnedChat.id === id) {  // 핀된 걸 지우면 핀도 해제
-      appState.pinnedChat = null;
-      io.to(SCREENS).emit('chatPinned', { message: null });
+    deleteChatMessage(id);
+  });
+
+  // 관리자: 관객 차단 — { messageId } (채팅 항목) 또는 { answerId } (주관식 답변 항목)로 작성자를 찾는다(clientId는 화면에 보내지 않음).
+  // 차단된 관객의 채팅·주관식 답변은 서버가 조용히 버린다(본인 화면엔 보낸 것처럼). 투표·하트·이모지 반응은 그대로 둔다
+  // (내용이 없는 1인 1표·속도 제한 반응이라 화면에 글이 노출될 위험이 없음). 최근 글은 모두 지우고(chatDeleted), 이번 질문의 답도 숨긴다.
+  onAdmin('admin:blockClient', (data) => {
+    const d = asObj(data);
+    let cid = null, nickname = '', sample = '';
+    if (typeof d.messageId === 'string') {
+      cid = messageAuthors.get(d.messageId) || null;
+      const m = recentMessages.find((x) => x.id === d.messageId);
+      nickname = m ? m.nickname : cleanStr(d.nickname, MAX_NICKNAME_LENGTH);
+      sample = m ? m.text : maskProfanity(cleanStr(d.text, MAX_CHAT_LENGTH));
+    } else if (Number.isInteger(d.answerId)) {
+      cid = appState.answerAuthors.get(d.answerId) || null;
+      const a = appState.answerList.find((x) => x.id === d.answerId);
+      sample = a ? a.text : '';
+    } else return 'invalid';
+    if (!cid) return 'noAuthor'; // 오래돼 작성자 기록이 없거나(최근 500개 밖·재시작 전) 운영진 글
+    if (!nickname) for (const s of io.sockets.sockets.values()) if (s.clientId === cid && activeNicknames.get(s.id)) { nickname = activeNicknames.get(s.id); break; }
+    let rec = blockedClients.get(cid);
+    if (!rec) {
+      rec = { id: 'b' + (++blockSeq), nickname: nickname || '(닉네임 모름)', sample: cleanStr(sample, 40), at: Date.now(), deleted: 0 };
+      blockedClients.set(cid, rec);
+      if (blockedClients.size > MAX_BLOCKED) blockedClients.delete(blockedClients.keys().next().value);
     }
-    if (appState.pinnedNotice && appState.pinnedNotice.id === id) clearPinnedNotice();
-    const starIdx = appState.starredChats.findIndex(m => m.id === id);
-    if (starIdx !== -1) { appState.starredChats.splice(starIdx, 1); emitChatStars(); } // 지운 글은 체크 목록에서도 뺌
-    io.emit('chatDeleted', id);
+    // 최근 글 일괄 삭제 — 작성자 기록(최근 500개)에 남은 그 사람 글 전부
+    let deleted = 0;
+    for (const [id, c] of [...messageAuthors]) if (c === cid) { deleteChatMessage(id, clientRoom(cid)); messageAuthors.delete(id); deleted++; }
+    rec.deleted += deleted;
+    // 이번 주관식 질문에 낸 답도 숨김
+    const answerIds = [...appState.answerAuthors].filter(([, c]) => c === cid).map(([id]) => id);
+    let hidden = 0;
+    if (answerIds.length && (appState.mode === 'subjective' || appState.mode === 'subjectiveResult')) { setAnswersHidden(answerIds, true); hidden = answerIds.length; }
+    emitBlockList();
+    return { deleted, hidden };
+  });
+
+  onAdmin('admin:unblockClient', (data) => {
+    const id = asObj(data).id;
+    for (const [cid, rec] of blockedClients) {
+      if (rec.id === id) { blockedClients.delete(cid); emitBlockList(); return; }
+    }
+    return 'notFound';
   });
 
   // 관리자: 질문 사전 등록 목록 조회/저장 — 다른 관리자 PC와 실시간 공유
