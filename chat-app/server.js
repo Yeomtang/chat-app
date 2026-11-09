@@ -347,6 +347,8 @@ const appState = {
   answerList: [],         // [{id, text}] 도착 순서 (관리자 목록/픽용)
   pickedAnswers: [],      // 픽된 답변 id 목록 (픽 순서)
   starredAnswers: [],     // 별표(후보) 답변 id 목록 — 작가 1차 선별용, 관리자끼리 공유
+  hiddenAnswers: [],      // 관리자가 [숨김]한 답변 id — LED 흘림·워드클라우드·결과 기록·엔딩·폰 클라우드에서 뺀다(되돌리기 가능)
+  subjectiveResultId: null, // 이번 주관식 마감 때 기록한 결과 id — 마감 뒤 숨김을 바꾸면 그 기록도 다시 집계
   answerMaxLen: MAX_ANSWER_LENGTH, // 주관식 최대 글자수 (질문별 설정 가능, 1~20)
   emojiOptions: [],       // 이모지 반응 질문 보기: [{emoji, label}] (라벨=뜻, 관객 폰에 표시)
   pinnedChat: null,       // 채팅 모드에서 LED 중앙에 핀 고정된 채팅 {id, nickname, text}
@@ -451,7 +453,9 @@ function answerKey(text) {
 // key는 LED가 흘러가던 답변을 자기 단어로 모을 때 같은 묶음을 찾는 데 쓴다 (subjectiveAnswer에도 같은 key)
 function computeCloud() {
   const groups = new Map(); // 묶음 키 -> { key, count, forms: Map(표기 -> 개수), first: 처음 들어온 순서 }
+  const hidden = new Set(appState.hiddenAnswers);
   appState.answerList.forEach((a, order) => {
+    if (hidden.has(a.id)) return; // 숨긴 답은 집계에서 뺀다
     const form = String(a.text).replace(/\s+/g, ' ').trim();
     if (!form) return;
     const key = answerKey(form);
@@ -607,6 +611,7 @@ function startVoting(question, options, duration, type) {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
   emitModeChange();
 
   appState.timerHandle = setTimeout(() => {
@@ -650,19 +655,28 @@ function startSubjective(question, maxLen) {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
   emitModeChange();
+}
+
+// 결과 기록·엔딩에 쓰는 주관식 집계 — 숨긴 답은 뺀다
+function visibleAnswerCount() {
+  const hidden = new Set(appState.hiddenAnswers);
+  return appState.answerList.filter((a) => !hidden.has(a.id)).length;
+}
+function subjectiveSummary() {
+  return {
+    // 엔딩은 3위까지 보여 주지만, 3위가 4위와 동률인지("공동 3위") 알 수 있게 4개까지 기록
+    top: computeCloud().slice(0, 4).map(({ word, count }) => ({ word, count })),
+    answerCount: visibleAnswerCount(),
+  };
 }
 
 function endSubjective() {
   if (appState.mode !== 'subjective') return;
   appState.mode = 'subjectiveResult';
-  recordResult({
-    kind: 'subjective',
-    question: appState.question,
-    // 엔딩은 3위까지 보여 주지만, 3위가 4위와 동률인지("공동 3위") 알 수 있게 4개까지 기록
-    top: computeCloud().slice(0, 4).map(({ word, count }) => ({ word, count })),
-    answerCount: Object.keys(appState.answers).length,
-  });
+  recordResult({ kind: 'subjective', question: appState.question, ...subjectiveSummary() });
+  appState.subjectiveResultId = resultSeq;
   emitModeChange(); // cloud 포함됨
   emitResults();
 }
@@ -705,9 +719,24 @@ function resetQuestionState() {
   appState.answerList = [];
   appState.pickedAnswers = [];
   appState.starredAnswers = [];
+  appState.hiddenAnswers = [];
   appState.answerMaxLen = MAX_ANSWER_LENGTH;
   appState.emojiOptions = [];
   resetSpecialState();
+}
+
+// 주관식 답변 숨김 반영 — 화면(LED·관리자)에 알리고, 마감 뒤면 결과 기록·클라우드를 다시 집계
+function setAnswersHidden(ids, hide) {
+  const set = new Set(appState.hiddenAnswers);
+  const changed = ids.filter((id) => set.has(id) !== hide);
+  if (!changed.length) return;
+  changed.forEach((id) => (hide ? set.add(id) : set.delete(id)));
+  appState.hiddenAnswers = [...set];
+  io.to(SCREENS).emit('answerHidden', { ids: changed, hidden: hide });
+  if (appState.mode !== 'subjectiveResult') return;
+  const rec = resultsHistory.find((e) => e.id === appState.subjectiveResultId);
+  if (rec) { Object.assign(rec, subjectiveSummary()); emitResults(); }
+  emitModeChange(); // LED·폰 워드클라우드 다시 그림
 }
 
 // 함성·엔딩 상태 초기화 — 질문 시작 등 다른 모드로 넘어갈 때 남은 값이 섞이지 않게
@@ -1185,12 +1214,28 @@ io.on('connection', (socket) => {
   });
 
   // 관리자: 답변 전체 목록 요청 (제작진이 훑어보고 픽하기 위함)
+  // key: 같은 답 묶음 키(워드클라우드와 같은 규칙) — [같은 답 모두 숨김]용
   onAdmin('admin:getAnswers', () => {
     socket.emit('answerList', {
-      answers: appState.answerList,
+      answers: appState.answerList.map((a) => ({ id: a.id, text: a.text, key: answerKey(a.text) })),
       picked: appState.pickedAnswers,
       starred: appState.starredAnswers,
+      hidden: appState.hiddenAnswers,
     });
+  });
+
+  // 관리자: 주관식 답변 숨김/되돌리기 — { id, hidden, sameKey }  sameKey: 같은 묶음(answerKey)의 답 전체
+  // 숨긴 답은 LED 흘림 대기열·화면에서 바로 빠지고(answerHidden), 워드클라우드·결과 기록·엔딩·폰 클라우드 집계에서 제외.
+  // 마감 뒤(subjectiveResult)에 바꾸면 이번 결과 기록과 화면의 클라우드도 다시 집계해 보낸다.
+  onAdmin('admin:hideAnswer', (data) => {
+    if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return 'mode';
+    const d = asObj(data);
+    const entry = appState.answerList.find((a) => a.id === d.id);
+    if (!entry) return 'notFound';
+    const hide = d.hidden !== false;
+    const key = answerKey(entry.text);
+    const ids = (d.sameKey === true ? appState.answerList.filter((a) => answerKey(a.text) === key) : [entry]).map((a) => a.id);
+    setAnswersHidden(ids, hide);
   });
 
   // 관리자: 별표(후보) 토글 — 작가 1차 선별용, 모든 관리자 화면에 공유
@@ -1211,6 +1256,7 @@ io.on('connection', (socket) => {
     if (appState.mode !== 'subjective' && appState.mode !== 'subjectiveResult') return 'mode';
     const entry = appState.answerList.find(a => a.id === id);
     if (!entry) return 'notFound';
+    if (appState.hiddenAnswers.includes(id)) return 'hidden'; // 숨긴 답은 LED에 크게 띄우지 않음
     if (!appState.pickedAnswers.includes(id)) appState.pickedAnswers.push(id);
     io.to(SCREENS).emit('answerPicked', { id: entry.id, text: entry.text });
   });

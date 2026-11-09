@@ -418,6 +418,28 @@
     }
 
     .answer-item.picked { background: #e9f9ed; }
+
+    /* 목록 항목 줄의 보조 버튼(숨김·같은 답·차단) — 답변·채팅 목록 공용 */
+    .item-tools { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .mini-btn {
+      background: #e9e9eb;
+      color: #1c1c1e;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .mini-btn.danger { background: #ffe1de; color: #ff3b30; }
+    .mini-btn.confirming { background: #ff3b30; color: #fff; }
+    /* 숨긴 답변 — LED·워드클라우드·결과에서 빠짐. 목록에는 흐리게 남겨 되돌릴 수 있게 */
+    .answer-item.hidden-answer { background: #f2f2f7; }
+    .answer-item.hidden-answer > span { color: #aeaeb2; text-decoration: line-through; }
+    .answer-item.hidden-answer .pick-btn { opacity: 0.35; cursor: default; }
     .answer-item.picked .pick-btn { background: #34c759; }
 
     /* 별표(답변 후보)·체크(채팅 즐겨찾기) 공용 — LED에는 나가지 않는 관리자용 표시 */
@@ -1535,8 +1557,11 @@
       document.getElementById('status-answers').textContent = data.answerCount;
     }
     if (typeof data.id === 'number') {
-      const a = { id: data.id, text: data.text };
+      const a = { id: data.id, text: data.text, key: data.key };
       answerItems.push(a);
+      // 같은 답이 처음 2개가 되면 먼저 온 답에도 [같은 답 모두] 버튼이 생기도록 그 항목들만 다시 그림
+      const same = a.key == null ? 1 : keyCounts.set(a.key, (keyCounts.get(a.key) || 0) + 1).get(a.key);
+      if (same === 2) answerItems.forEach((x) => { if (x !== a && x.key === a.key) refreshAnswer(x.id); });
       appendAnswer(a); // 그 답변만 끝에 붙임 (답변마다 목록 전체를 다시 그리지 않음)
     }
   });
@@ -1549,8 +1574,23 @@
     answerItems = (data && data.answers) || [];
     pickedIds = new Set((data && data.picked) || []);
     starredIds = new Set((data && data.starred) || []);
+    hiddenIds = new Set((data && data.hidden) || []);
+    keyCounts = new Map();
+    answerItems.forEach((a) => { if (a.key != null) keyCounts.set(a.key, (keyCounts.get(a.key) || 0) + 1); });
     renderAnswers();
   });
+
+  // ── 답변 숨김 ── 숨긴 답은 서버가 LED 흘림·워드클라우드·결과 기록·엔딩에서 뺀다. 목록에는 흐리게 남고 [되돌리기]
+  let hiddenIds = new Set();
+  let keyCounts = new Map(); // 같은 답 묶음 키 → 답 수 ([같은 답 모두] 버튼 표시용)
+  socket.on('answerHidden', (data) => {
+    if (!data || !Array.isArray(data.ids)) return;
+    data.ids.forEach((id) => (data.hidden ? hiddenIds.add(id) : hiddenIds.delete(id)));
+    data.ids.forEach(refreshAnswer);
+  });
+  function hideAnswer(a, sameKey) {
+    socket.emit('admin:hideAnswer', { id: a.id, hidden: !hiddenIds.has(a.id), sameKey });
+  }
 
   socket.on('answerPicked', (data) => {
     if (data && typeof data.id === 'number') {
@@ -1614,8 +1654,29 @@
     btn.textContent = pickedIds.has(a.id) ? '픽됨 · 다시' : '픽';
     btn.onclick = () => socket.emit('admin:pickAnswer', { id: a.id });
 
+    // [숨김]/[되돌리기] + 같은 답이 2개 이상이면 [같은 답 모두 숨김]
+    const hidden = hiddenIds.has(a.id);
+    if (hidden) { item.classList.add('hidden-answer'); btn.disabled = true; btn.title = '숨긴 답은 픽할 수 없어요'; }
+    const tools = document.createElement('div');
+    tools.className = 'item-tools';
+    const hideBtn = document.createElement('button');
+    hideBtn.className = 'mini-btn';
+    hideBtn.textContent = hidden ? '되돌리기' : '숨김';
+    hideBtn.title = hidden ? 'LED·워드클라우드·결과에 다시 포함' : 'LED 흘림·워드클라우드·결과 기록·엔딩에서 뺌 (되돌리기 가능)';
+    hideBtn.onclick = () => hideAnswer(a, false);
+    tools.appendChild(hideBtn);
+    if (a.key != null && (keyCounts.get(a.key) || 0) >= 2) {
+      const groupBtn = document.createElement('button');
+      groupBtn.className = 'mini-btn';
+      groupBtn.textContent = hidden ? '같은 답 모두 되돌리기' : '같은 답 모두 숨김';
+      groupBtn.title = `표기만 다른 같은 답(워드클라우드에서 한 단어로 묶이는 답) ${keyCounts.get(a.key)}개 전체`;
+      groupBtn.onclick = () => hideAnswer(a, true);
+      tools.appendChild(groupBtn);
+    }
+
     item.appendChild(starBtn);
     item.appendChild(span);
+    item.appendChild(tools);
     item.appendChild(btn);
     item._answer = a;
     return item;

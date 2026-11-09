@@ -900,6 +900,18 @@
         el.classList.remove('active');
         el.style.zIndex = '';
       },
+      // 관리자가 숨긴 답변(answerHidden): 대기열에서 빼고, 지금 흐르는 말풍선은 바로 치움
+      remove(ids) {
+        const set = new Set(ids);
+        for (let i = queue.length - 1; i >= 0; i--) if (set.has(queue[i].id)) queue.splice(i, 1);
+        items = items.filter((it) => {
+          if (!set.has(it.id)) return true;
+          it.anim.onfinish = null;
+          it.anim.cancel();
+          it.el.remove();
+          return false;
+        });
+      },
       // 마감: 배출을 멈추고 화면의 답변을 모두 넘겨받음
       takeAll() { stop(); return items.slice().map(detach); },
       // 픽된 답변이 지금 화면에 보이는 말풍선인지 — id 우선, 없으면 같은 글 중 가운데에 가장 가까운 것
@@ -1660,9 +1672,11 @@
     const duration = opts.duration || 8000;
     const lift = createLift({ layer: opts.layer, scale: opts.scale, coverAt: PICK.COVER_AT });
     let hideTimer = null;
+    let currentId = null; // 지금 카드로 보이는 답변 id (숨김 처리용)
 
     function hide() {
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      currentId = null;
       lift.hide();
     }
 
@@ -1670,6 +1684,7 @@
       // data: answerPicked { id, text }
       pick(data) {
         if (!data || typeof data.text !== 'string') return;
+        currentId = data.id;
         lift.settle(); // 들어올리던 중이면 먼저 카드 상태로 (흐르던 답변을 새로 찾기 전에)
         const c = document.createElement('div');
         c.className = cardClass;
@@ -1682,8 +1697,11 @@
         hideTimer = setTimeout(hide, duration);
       },
       hide,
+      // 픽 카드로 떠 있는 답변이 숨겨지면 바로 내림
+      hideIf(ids) { if (currentId != null && ids.includes(currentId)) hide(); },
       clear() {
         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        currentId = null;
         lift.clear();
       },
       settle: lift.settle,
@@ -3690,6 +3708,13 @@
     socket.on('subjectiveAnswer', (data) => {
       if (currentMode !== 'subjective') return;
       answerFx.push(data);
+    });
+
+    // 관리자가 숨긴 답변 — 흐르던 말풍선·대기열·픽 카드에서 바로 뺀다 (워드클라우드는 서버가 다시 집계해 modeChange로 보냄)
+    socket.on('answerHidden', (data) => {
+      if (!data || !data.hidden || !Array.isArray(data.ids)) return;
+      answerFx.remove(data.ids);
+      pickFx.hideIf(data.ids);
     });
 
     // 제작진 픽 → 흐르던 답변이면 카드로 늘어나고, 아니면 카드 팝인 (접수 중/마감 후 모두)
