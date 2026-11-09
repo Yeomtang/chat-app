@@ -103,6 +103,18 @@
     return true;
   }
 
+  // 요소들 안 글자의 실제 폭 중 최댓값(px, 여러 줄이면 가장 긴 줄) — 막대 이름 칸을 가장 긴 이름에 맞출 때
+  function maxInkWidth(els) {
+    let w = 0;
+    els.forEach((el) => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      const rs = [...r.getClientRects()].filter((q) => q.width > 0.5);
+      if (rs.length) w = Math.max(w, Math.max(...rs.map((q) => q.right)) - Math.min(...rs.map((q) => q.left)));
+    });
+    return w;
+  }
+
   // 질문 화면 계열 모드 (이 밖의 모드에서 들어올 때만 질문 등장 연출)
   const QUESTION_MODES = ['voting', 'result', 'subjective', 'subjectiveResult', 'emoji'];
   // 질문이 "새로 시작"되는 모드
@@ -599,6 +611,7 @@
       const n = rows.length;
       const gapMin = 8 * u;
       // 재는 동안은 최종 1위 표시(· 1위)를 켜 둔다 — 결과가 확정되며 배지가 붙어도 줄 수가 늘지 않게
+      container.style.removeProperty('--fx-bar-labw'); // 이름 칸은 최대 폭(32%)에서 줄바꿈을 정한 뒤 실제 폭으로 좁힘
       rows.forEach((r, i) => { r.style.height = ''; r.classList.toggle('win', winners.includes(i)); });
       const measure = (lines) => {
         rows.forEach((r, i) => clampText(r.querySelector('.fx-bar-name'), labels[i], lines));
@@ -615,6 +628,9 @@
       }
       // 극단적으로 좁을 때(글자는 이미 최소·1줄): 행 높이를 글자 높이 아래로 줄이지 않는다(행끼리 겹침 방지) —
       // 행 간격은 하한(gapMin)만 두고 칸 위 끝부터 쌓아, 모자라는 만큼은 아래 여백 쪽으로 넘침
+      // 이름 칸을 가장 긴 이름(1위 배지 포함)의 실제 폭으로 — 막대·% 묶음이 화면 가운데에 오게 (줄바꿈은 그대로)
+      const labW = maxInkWidth(rows.map((r) => r.querySelector('.fx-bar-label')));
+      if (labW > 0) container.style.setProperty('--fx-bar-labw', Math.ceil(labW + 1) + 'px');
       const pitch = !ok ? rowH + gapMin : n > 1 ? Math.min((H - rowH) / (n - 1), rowH * 1.45) : 0;
       geo = { y0: ok ? (H - rowH - (n - 1) * pitch) / 2 : 0, pitch, rowH };
       rows.forEach((r) => { r.style.height = rowH + 'px'; r.classList.remove('win'); });
@@ -2067,12 +2083,16 @@
         const last = kids[kids.length - 1];
         return last.offsetTop + last.offsetHeight - kids[0].offsetTop;
       };
+      d.style.removeProperty('--fx-end-labw'); // 이름 칸 최대 폭(30%)에서 줄바꿈을 정한 뒤 아래에서 실제 폭으로 좁힘
       for (const [k, qLines] of END_FIT) {
         d.style.setProperty('--fx-end-s', String(k));
         if (q) { if (qLines) clampText(q, q.dataset.full, qLines); else q.textContent = q.dataset.full; }
         labs.forEach((l) => clampText(l, l.dataset.full, 2));
-        if (need() <= avail + 1) return;
+        if (need() <= avail + 1) break;
       }
+      // 막대 묶음을 가운데로: 이름 칸 = 가장 긴 이름의 실제 폭 (결과 막대와 같은 방식)
+      const labW = maxInkWidth(labs);
+      if (labW > 0) d.style.setProperty('--fx-end-labw', Math.ceil(labW + 1) + 'px');
     }
 
     function fitAll() {

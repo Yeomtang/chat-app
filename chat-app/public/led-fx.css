@@ -70,7 +70,8 @@
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
+  /* 이름 칸 = 가장 긴 이름의 실제 폭(JS가 --fx-bar-labw로, 최대 32%) — 이름이 짧아도 묶음이 오른쪽으로 쏠리지 않고 가운데 */
+  grid-template-columns: var(--fx-bar-labw, minmax(0, 32%)) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
   gap: calc(16px * var(--u));
   align-items: center;
   transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -471,7 +472,8 @@
 
 .fx-end-row {
   display: grid;
-  grid-template-columns: minmax(0, 30%) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-ek));
+  /* 이름 칸 = 이 장에서 가장 긴 이름의 실제 폭(JS가 --fx-end-labw로, 최대 30%) — 결과 막대와 같은 방식으로 묶음을 가운데에 */
+  grid-template-columns: var(--fx-end-labw, minmax(0, 30%)) minmax(0, 1fr) calc(90px * var(--u) * var(--fx-ek));
   gap: calc(18px * var(--u));
   align-items: center;
   font-size: calc(26px * var(--u) * var(--fx-ek));
