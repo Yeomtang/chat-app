@@ -140,14 +140,22 @@
     },
   };
 
-  // ── 타이머 긴장감: 마지막 5초 경고색 + 1초 맥박 (시안 2) ──
+  // ── 타이머 긴장감: 마지막 5초 경고색 + 1초 맥박, 0이면 "마감" (시안 2) ──
   const timer = {
     HOT_SECONDS: 5,
-    // remain(초)에 맞춰 상태 클래스만 바꾼다 (모양은 페이지 CSS의 .hot)
+    // remain(초)에 맞춰 상태 클래스만 바꾼다 (모양은 페이지 CSS의 .hot·.done). 숫자는 호출한 쪽이 넣음
     update(el, remain) {
-      el.classList.toggle('hot', remain > 0 && remain <= timer.HOT_SECONDS);
+      if (remain <= 0) { timer.done(el); return; }
+      el.classList.remove('done');
+      el.classList.toggle('hot', remain <= timer.HOT_SECONDS);
     },
-    reset(el) { el.classList.remove('hot'); },
+    // 마감 표시 — 투표가 끝나 결과를 보여주는 동안 질문 아래에 남는다
+    done(el) {
+      el.classList.remove('hot');
+      el.classList.add('done');
+      el.textContent = '마감';
+    },
+    reset(el) { el.classList.remove('hot', 'done'); },
     // 숫자가 다음 초로 넘어갈 때까지 남은 ms(+여유 15ms) — 200ms 폴링 대신 이 간격으로 갱신하면
     // LED·관리자·관객 폰이 같은 순간에 숫자를 넘긴다 (폴링은 화면마다 최대 0.2초 엇갈림)
     nextTickMs(remainMs) { return ((remainMs - 1) % 1000) + 1 + 15; },
@@ -342,21 +350,32 @@
     return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * clamp01(k)).toString(16).padStart(2, '0')).join('');
   }
 
-  // ── 결과 공개 (2지선다): 시안 6을 상자 화면에 맞춤 ──
-  // 0~0.7s 이긴 상자 강조·진 쪽 흐려짐 / 0.7~1.5s 공이 상자 밖으로 흩어짐 /
-  // 1.5~2.8s 숫자 모양으로 모임(2.5s 색종이) / 2.9~4.7s 점→면 / 1.5s 유지 / 면→점 0.5s / 1.2s 제자리 복귀
+  // ── 결과 공개 (2지선다): 시안 6 그대로 — 두 원형 공 덩어리에서 시작해 원 + 비율로 끝남 ──
+  // 0~0.7s 마감: 이긴 원이 부풀었다 돌아오고 진 쪽은 흐려짐 / 0.7~1.5s 공이 흩어짐 /
+  // 1.5~2.8s 결과 숫자(예: "62%") 점 모양으로 모임(2.5s 색종이) / 2.9~4.7s 점→면(1.8s) / 6.4s까지 유지 /
+  // 면→점 0.5s / 6.9~8.1s 원으로 복귀 → 페이지가 원 위에 비율을 띄움
   const REVEAL = {
     EMPH: 700, SCATTER: 1500, GATHER_MS: 1100, CONFETTI: 2500,
-    SOLID: 2900, SOLID_MS: 1800, UNSOLID: 6200, UNSOLID_MS: 500,
-    RETURN: 6700, RETURN_MS: 1200,
+    SOLID: 2900, SOLID_MS: 1800, UNSOLID: 6400, UNSOLID_MS: 500,
+    RETURN: 6900, RETURN_MS: 1200,
+    DOTS: 260, // 숫자를 이루는 점 개수(표 수와 무관 — 표가 적어도 숫자 모양이 또렷하게)
   };
   REVEAL.END = REVEAL.RETURN + REVEAL.RETURN_MS;
   // 숫자 글꼴은 웹폰트 로딩과 무관한 시스템 글꼴로 고정 — 점을 뽑을 때와 면으로 그릴 때 모양이 정확히 겹치도록
   const NUM_FAMILY = "-apple-system, 'Helvetica Neue', Arial, sans-serif";
 
-  // opts: { W, H (논리 캔버스), sides: [{ color, balls:[{tx,ty}] }], centers: [{x,y}] (상자 중심),
-  //         ballR, winner(-1=동률), pct, label, labelFamily, ink, confettiColors }
-  // 반환 객체의 draw(ctx, now, drawBox)를 매 프레임 부르고, true가 오면 끝(페이지가 배너 표시)
+  // 원 아래 보기 이름의 투명도 — 마감 땐 보이고, 숫자 구간엔 숨었다가 원으로 돌아오며 다시 나타남
+  function revealLabelAlpha(t) {
+    const R = REVEAL;
+    if (t < R.EMPH) return 1;
+    if (t < R.SCATTER) return 1 - ease((t - R.EMPH) / (R.SCATTER - R.EMPH));
+    if (t < R.RETURN) return 0;
+    return ease((t - R.RETURN) / R.RETURN_MS);
+  }
+
+  // opts: { W, H (논리 캔버스), sides: [{ color, count, balls:[{x,y}] }] (공 = 원 덩어리 안 실제 위치),
+  //         centers: [{x,y}] (원 중심), ballR, winner(-1=동률), pct, label, labelFamily, ink, confettiColors }
+  // 반환 객체의 draw(ctx, now)를 매 프레임 부르고, true가 오면 끝(페이지가 원 + 비율을 그림)
   function createReveal(opts) {
     const { W, H, ink } = opts;
     const tie = opts.winner < 0;
@@ -382,32 +401,52 @@
       family: opts.labelFamily, lineH: LABEL_LH, maxH: Math.max(labelSize * LABEL_LH, H - labelTop - 4),
     });
 
-    // 글자를 격자로 훑어 점 위치를 뽑는다
+    // 글자를 격자로 훑어 점 위치를 뽑는다 — 격자 간격은 점이 REVEAL.DOTS개 안팎이 되게
     o.font = numFont; o.textAlign = 'center'; o.textBaseline = 'middle';
     o.fillText(text, W / 2, numY);
-    const step = Math.max(6, Math.round(size / 23));
     const data = o.getImageData(0, 0, off.width, off.height).data;
-    const pts = [];
-    for (let y = step / 2; y < off.height; y += step) {
-      for (let x = step / 2; x < off.width; x += step) {
-        if (data[(Math.floor(y) * off.width + Math.floor(x)) * 4 + 3] > 128) pts.push([x, y]);
+    const sample = (step) => {
+      const out = [];
+      for (let y = step / 2; y < off.height; y += step) {
+        for (let x = step / 2; x < off.width; x += step) {
+          if (data[(Math.floor(y) * off.width + Math.floor(x)) * 4 + 3] > 128) out.push([x, y]);
+        }
       }
-    }
+      return out;
+    };
+    let step = Math.max(4, size / 23);
+    let pts = sample(step);
+    if (pts.length) { step = Math.max(4, step * Math.sqrt(pts.length / REVEAL.DOTS)); pts = sample(step); }
     const dotR = step * 0.42;      // 처음엔 틈이 보이는 점
     const dotRFull = step * 0.66;  // 맞닿아 면처럼 보이는 크기
 
-    // 공마다 집(상자 칸)·흩어질 곳·글자 점을 정한다. 공이 점보다 적으면 점을 고르게 고르고,
-    // 많으면 남는 공은 숫자 구간 동안 흐려졌다 돌아올 때 다시 나타난다
+    // 점을 보기별로 득표 비율만큼 나눈다(시안: 62%면 점의 62%가 이긴 쪽 공). 실제 공이 모자라면
+    // 그 쪽 공 자리에서 '분신' 점이 생겨 함께 날아가고, 돌아올 때 원래 공 위로 겹치며 사라진다.
+    // 실제 공이 더 많으면 남는 공은 숫자 구간 동안 흐려졌다 돌아올 때 다시 나타난다.
+    const counts = opts.sides.map((s) => s.balls.length);
+    const total = counts.reduce((a, b) => a + b, 0) || 1;
+    const N = pts.length;
+    const share = counts.map((c) => (c ? Math.round(N * c / total) : 0));
+    if (counts[0] && counts[1]) share[1] = N - share[0]; else share[counts[0] ? 0 : 1] = N;
     const parts = [];
-    opts.sides.forEach((s, side) => s.balls.forEach((b) => parts.push({ b, side, hx: b.tx, hy: b.ty })));
-    for (let i = parts.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [parts[i], parts[j]] = [parts[j], parts[i]]; }
-    const used = Math.min(parts.length, pts.length);
+    opts.sides.forEach((s, side) => {
+      const balls = s.balls;
+      if (!balls.length) return;
+      for (let k = 0; k < Math.max(share[side], balls.length); k++) {
+        if (k < balls.length) parts.push({ b: balls[k], side, hx: balls[k].x, hy: balls[k].y, extra: false, dot: k < share[side] });
+        else { const h = balls[Math.floor(Math.random() * balls.length)]; parts.push({ b: null, side, hx: h.x, hy: h.y, extra: true, dot: true }); }
+      }
+    });
+    // 점 자리는 섞어서 배정(한쪽 보기 점이 숫자 한 부분에 몰리지 않게)
+    const dotParts = parts.filter((p) => p.dot);
+    for (let i = dotParts.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [dotParts[i], dotParts[j]] = [dotParts[j], dotParts[i]]; }
+    dotParts.forEach((p, k) => { const q = pts[k % N]; p.tx = q[0]; p.ty = q[1]; });
     const m = W * 0.06;
     parts.forEach((p, k) => {
+      if (!p.dot) p.tx = null;
       p.sx = m + Math.random() * (W - m * 2);
       p.sy = m + Math.random() * (H - m * 2);
       p.delay = (k % 40) * 6; // 한꺼번에 몰리지 않게 살짝 시차
-      if (k < used) { const q = pts[Math.floor(k * pts.length / used)]; p.tx = q[0]; p.ty = q[1]; } else p.tx = null;
     });
 
     const confetti = [];
@@ -423,22 +462,11 @@
       }
     }
 
-    function draw(ctx, now, drawBox) {
+    function draw(ctx, now) {
       if (t0 === null) { t0 = now; last = now; }
       const t = now - t0;
       const dt = Math.min(50, now - last); last = now;
       const R = REVEAL;
-
-      // 상자: 흩어질 때 사라졌다가 복귀할 때 다시 나타남
-      const boxA = t < R.EMPH ? 1 : t < R.RETURN ? 1 - ease((t - R.EMPH) / (R.SCATTER - R.EMPH)) : ease((t - R.RETURN) / R.RETURN_MS);
-      const emphP = clamp01(t / R.EMPH);
-      const emphS = t < R.EMPH ? 1 + Math.sin(emphP * Math.PI) * 0.05 : 1; // 이긴 상자만 살짝 부풀었다 돌아옴
-      const withScale = (side, fn) => {
-        if (tie || side !== opts.winner || emphS === 1) { fn(); return; }
-        const c = opts.centers[side];
-        ctx.save(); ctx.translate(c.x, c.y); ctx.scale(emphS, emphS); ctx.translate(-c.x, -c.y); fn(); ctx.restore();
-      };
-      if (boxA > 0.001) opts.sides.forEach((s, i) => withScale(i, () => drawBox(i, boxA)));
 
       // 점→면: 점이 커져 맞닿고(0~40%) 그 위로 같은 모양의 글자가 차오르며 점은 사라짐(40~100%)
       const solid = t > R.SOLID && t < R.RETURN ? ease((t - R.SOLID) / R.SOLID_MS) * (1 - ease((t - R.UNSOLID) / R.UNSOLID_MS)) : 0;
@@ -451,16 +479,21 @@
         const target = tie ? ink : (i === opts.winner ? numColor : mixHex(numColor, '#ffffff', 0.45));
         return toMorph <= 0 ? s.color : mixHex(s.color, target, toMorph);
       });
+      const emphP = clamp01(t / R.EMPH);
+      const emphS = 1 + Math.sin(emphP * Math.PI) * 0.16; // 이긴 원만 부풀었다 돌아옴(시안)
       const loserDim = tie ? 1 : t < R.EMPH ? 1 - 0.45 * emphP : t < R.SCATTER ? 0.55 + 0.45 * ease((t - R.EMPH) / (R.SCATTER - R.EMPH)) : 1;
 
       parts.forEach((p) => {
         let x, y, r, a = 1;
         const r0 = opts.ballR;
         if (t < R.EMPH) {
-          x = p.hx; y = p.hy; r = r0;
+          if (p.extra) return;
+          const s = !tie && p.side === opts.winner ? emphS : 1, c = opts.centers[p.side];
+          x = c.x + (p.hx - c.x) * s; y = c.y + (p.hy - c.y) * s; r = r0 * s;
         } else if (t < R.SCATTER) {
           const q = ease((t - R.EMPH) / (R.SCATTER - R.EMPH));
           x = p.hx + (p.sx - p.hx) * q; y = p.hy + (p.sy - p.hy) * q; r = r0 + (dotR - r0) * q;
+          if (p.extra) { a = q; r = dotR * q; }
         } else if (t < R.RETURN) {
           if (p.tx === null) {
             x = p.sx; y = p.sy; r = dotR; a = 1 - ease((t - R.SCATTER) / 600);
@@ -473,17 +506,14 @@
           const fx = p.tx === null ? p.sx : p.tx, fy = p.tx === null ? p.sy : p.ty;
           x = fx + (p.hx - fx) * q; y = fy + (p.hy - fy) * q; r = dotR + (r0 - dotR) * q;
           if (p.tx === null) a = q;
+          if (p.extra) a = 1 - q; // 분신 점은 원래 공 위로 겹치며 사라짐
         }
         if (!tie && p.side !== opts.winner) a *= loserDim;
         if (a <= 0.01) return;
-        p.b.x = x; p.b.y = y; // 끝나면 공이 제자리에서 그대로 이어지도록
+        if (p.b) { p.b.x = x; p.b.y = y; } // 끝나면 공이 제자리에서 그대로 이어지도록
         ctx.globalAlpha = a;
         ctx.fillStyle = colors[p.side];
-        if (t < R.EMPH) {
-          withScale(p.side, () => { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); });
-        } else {
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-        }
+        ctx.beginPath(); ctx.arc(x, y, Math.max(0, r), 0, Math.PI * 2); ctx.fill();
       });
       ctx.globalAlpha = 1;
 
@@ -514,13 +544,15 @@
       }
 
       if (t >= R.END) {
-        parts.forEach((p) => { p.b.x = p.hx; p.b.y = p.hy; });
+        parts.forEach((p) => { if (p.b) { p.b.x = p.hx; p.b.y = p.hy; } });
         return true;
       }
       return false;
     }
 
-    return { draw, numColor, text, labelFit, labelMaxW: W * 0.9 };
+    // 원 아래 보기 이름 투명도(페이지가 그림), 연출 시작 기준
+    const labelAlpha = (now) => (t0 === null ? 1 : revealLabelAlpha(now - t0));
+    return { draw, labelAlpha, numColor, text, labelFit, labelMaxW: W * 0.9, dots: N };
   }
 
   // ── 객관식 3지 이상: 막대 경주 (시안 4) ──
@@ -2429,6 +2461,7 @@
   window.LedFx = {
     prefersReduced,
     easeBack,
+    ease,
     text: { fit: fitCanvasText, wrap: wrapCanvasLines, clamp: clampText, ELLIPSIS },
     question,
     timer,
@@ -2455,6 +2488,7 @@
 //  (원래 각 페이지 <script>에 있던 코드를 그대로 옮김: 전역이 아닌 함수 안이라 페이지 전역 변수는 없다)
 // ══════════════════════════════════
 (function () {
+  const ease = (t) => window.LedFx.ease(t); // 공용 감속 곡선 (위 모듈과 같은 것)
   // cfg: {
   //   baseW: 설계 기준 폭(px) — 화면 배율 --u의 기준,
   //   box: 보기 상자 상수 덮어쓰기 (예: { headerH: 48 }),
@@ -2634,6 +2668,27 @@
     // (서버의 votingEndTime을 이 PC 시계로 빼면 LED PC·관리자 PC·폰 시계 차이만큼 남은 초가 달랐음)
     let voteDeadline = null;
     const timerGauge = LedFx.timer.createGauge(document.getElementById('voting-question-card'));
+
+    // ── 2지선다(YES/NO·보기 2개): 시안 1·6의 원형 공 덩어리 (그리기는 아래 roundLayout·drawRound) ──
+    const isRound = () => optCount === 2;
+    const ROUND = {
+      GROW_MS: 900,        // 새 공이 0 → 제 크기로 커지는 시간 (시안 1)
+      FLY_MS: 700,         // 새 표가 화면 아래에서 원 가운데로 날아오는 시간 (시안 1 — 표가 "들어오는" 게 보이게)
+      FLY_ARC: 60,         // 날아오는 곡선의 솟음 높이(논리 px)
+      STAGGER: 60, STAGGER_MAX: 600,
+      SPACING: 1.19,       // 해바라기 배치 간격 = r × SPACING (공 사이가 거의 맞닿게)
+      GAP: 1.06,           // 겹침 풀기 최소 거리 = 2r × GAP
+      PULL: 0.012,         // 원 중심으로 끌어당기는 비율(16ms마다 거리의 1.2%, 시안 1) — 바깥 공일수록 세게 당겨 둥근 덩어리 유지
+      JIGGLE: 0.25,        // 겹침 풀기가 길쭉한 모양으로 굳지 않게 매 프레임 주는 아주 작은 흔들림(논리 px)
+      LABEL_LH: 1.2,
+    };
+    const css = getComputedStyle(document.documentElement);
+    const INK = css.getPropertyValue('--ink').trim() || '#1e1e42';
+    const INK_SOFT = css.getPropertyValue('--ink-soft').trim() || '#6e6a86';
+    let rlay = null;          // 원 배치 캐시 (캔버스 크기·보기가 바뀌면 다시)
+    let resultPer = null;     // 결과 화면 득표 (원 위 비율)
+    let resultShownAt = 0;    // 연출이 끝나 비율이 나타나기 시작한 시각(0 = 바로 보임)
+
     let timerInterval = null;
     let rafHandle = null;
     let currentMode = 'chat';
@@ -2655,10 +2710,7 @@
     function logicalH() { return canvas.height / devicePixelRatio / uScale; }
 
     const canvasWrap = document.getElementById('voting-canvas-wrap');
-    // 2지선다 결과 배너(YES 62% · NO 38%) 자리: 상자 바로 아래에 붙인다. 상자 배치에서 배너 높이만큼만 비워 두고
-    // (예전처럼 화면 아래 22%를 통째로 비우지 않음) 배너는 상자 아래 끝 + 간격에 놓는다
-    const BANNER_GAP = 16; // 논리 px
-    let bannerReserve = 0;  // 논리 px — boxRect가 아래에서 비워 두는 높이
+    // 2지선다 결과(원 + 비율)는 캔버스가 직접 그린다(시안 6) — DOM 결과 배너는 비율 글자 보관용으로만 남음
     // 배너가 숨겨져 있어도(display:none) 잴 수 있게 잠깐 보이지 않는 채로 펼쳐서 fn 실행
     function withBannerShown(fn) {
       if (resultBanner.classList.contains('active')) return fn();
@@ -2669,13 +2721,6 @@
         resultBanner.style.visibility = '';
       }
     }
-    const measureBannerH = () => withBannerShown(() => resultBanner.offsetHeight);
-    function placeBanner() {
-      if (!optCount || optCount > 2) return;
-      const b = boxRect(0);
-      resultBanner.style.bottom = 'auto';
-      resultBanner.style.top = (canvasWrap.offsetTop + (b.y + b.h + BANNER_GAP) * uScale) + 'px';
-    }
 
     function resizeCanvas() {
       const rect = canvasWrap.getBoundingClientRect();
@@ -2684,10 +2729,9 @@
       canvas.style.width = rect.width + 'px';
       canvas.style.height = rect.height + 'px';
       headFit = null; // 상자 폭이 바뀌면 헤더 라벨 줄바꿈도 다시
-      bannerReserve = optCount && optCount <= 2 ? measureBannerH() / uScale + BANNER_GAP : 0;
-      placeBanner();
-      // 캔버스 크기가 바뀌면 클러스터 중심도 바뀐다 → 공 목표 위치 재계산
-      for (let i = 0; i < ballState.length; i++) repackSide(i);
+      rlay = null;    // 2지선다 원 배치도 다시
+      // 캔버스 크기가 바뀌면 클러스터 중심도 바뀐다 → 공 목표 위치 재계산 (원 배치는 해바라기 자리로 바로)
+      for (let i = 0; i < ballState.length; i++) repackSide(i, true);
     }
     // 질문 카드 실제 아래 끝에 맞춰 그 아래 콘텐츠(공 상자·막대·워드클라우드·흘러가는 답변)의 시작 위치를 잡는다.
     // 질문이 길어 카드가 커지면 CSS 기본값(22%/24%)으로는 카드가 콘텐츠를 덮는다. 아래 끝은 CSS(화면 아래 여백만)
@@ -2710,8 +2754,8 @@
     let relayoutTimer = null;
     window.addEventListener('resize', () => {
       applyScreenScale(); layoutBelowQuestion(); resizeCanvas();
-      // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(공 제자리 + 배너)으로
-      if (reveal) { reveal = null; resultBanner.classList.add('active'); }
+      // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(원 + 비율)으로
+      if (reveal) { reveal = null; resultShownAt = 0; }
       cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음 (자체 150ms 지연)
       pickFx.settle(); pinFx.settle(); // 들어올리던 카드는 바로 최종 자리로 (잰 좌표가 어긋나므로)
       if (relayoutTimer) clearTimeout(relayoutTimer);
@@ -2779,7 +2823,7 @@
     // 표가 쌓여 무리가 커지면 셀 크기 한도까지 상자도 함께 커진다.
     function boxRect(i) {
       const w = logicalW();
-      const h = logicalH() - bannerReserve; // 2지선다는 아래에 결과 배너 자리
+      const h = logicalH();
       const n = Math.max(1, optCount);
       const { cols, rows } = clusterLayout(n);
       const row = Math.floor(i / cols);
@@ -2868,6 +2912,11 @@
     // 가장 많은 표(maxCount)가 상자에 딱 담기는 최대 반지름을 이분 탐색으로 찾는다
     function computeBallR(maxCount) {
       if (maxCount <= 0) return BALL_MAX_R;
+      if (isRound()) {
+        // 해바라기 배치 바깥 반지름 ≈ 간격 × √n + r 이 원 반지름 안에 들어가게
+        const R = roundLayout().R;
+        return Math.max(BALL_MIN_R, Math.min(BALL_MAX_R, R * 0.94 / (ROUND.SPACING * Math.sqrt(maxCount * HEADROOM + 0.5) + 1)));
+      }
       const b = boxRect(0);
       const innerW = b.w - BOX.pad * 2;
       const innerH = b.h - headH() - BOX.pad * 2;
@@ -2899,9 +2948,10 @@
       return out;
     }
 
-    function repackSide(i) {
+    function repackSide(i, snap) {
       const slots = ballState[i];
       if (!slots) return;
+      if (isRound()) { if (snap) placeRound(i); return; } // 원 배치는 겹침 풀기가 자리를 잡음 — 스냅 때만 해바라기 자리로
       const pos = hexPositions(boxRect(i), curBallR, slots.balls.length);
       slots.balls.forEach((p, k) => {
         if (!pos[k]) return;
@@ -2914,6 +2964,23 @@
     // snap=true(모드 진입·재접속)면 낙하 없이 제자리에 바로 놓는다.
     function syncBalls(i, desired, snap) {
       const arr = ballState[i].balls;
+      if (isRound()) {
+        // 새 표는 화면 아래 가장자리에서 원 가운데로 곡선을 그리며 날아온 뒤(시안 1), 가운데에서 0부터 커지며
+        // 주변 공을 바깥으로 밀어낸다. 한꺼번에 들어오면 조금씩 시차. 동작 줄이기면 날지 않고 가운데에서 커지기만
+        const c = roundLayout().centers[i];
+        const now = performance.now();
+        const fly = !snap && !LedFx.prefersReduced();
+        let order = 0;
+        while (arr.length < desired) {
+          const a = Math.random() * Math.PI * 2;
+          const w = logicalW();
+          arr.push({ x: c.x + Math.cos(a) * 2, y: c.y + Math.sin(a) * 2, phase: Math.random() * Math.PI * 2,
+            born: snap ? -1e9 : now + Math.min(ROUND.STAGGER_MAX, order++ * ROUND.STAGGER), rr: 0,
+            fly: fly ? { x: w * (0.08 + Math.random() * 0.84), y: logicalH() + 20 } : null });
+        }
+        while (arr.length > desired) arr.pop();
+        return;
+      }
       if (arr.length < desired) {
         const box = boxRect(i);
         const pos = hexPositions(box, curBallR, desired);
@@ -2941,8 +3008,152 @@
       for (let i = 0; i < optCount; i++) {
         if (!ballState[i]) continue;
         syncBalls(i, (perOption && perOption[i]) || 0, snap);
-        repackSide(i);
+        repackSide(i, snap);
       }
+    }
+
+    // ── 2지선다(YES/NO·보기 2개): 시안 1·6의 원형 공 덩어리 ──
+    // 새 표 = 원 가운데에서 커지며 주변 공을 바깥으로 스르륵 밀어냄(겹침 풀기). 원 아래 보기 이름,
+    // 결과 화면에선 원 위에 비율(이긴 쪽 크게). 3지 이상은 상자 + 막대 경주 그대로
+    function roundLayout() {
+      if (rlay) return rlay;
+      const w = logicalW(), h = logicalH();
+      const pctPx = Math.round(Math.min(64, w * 0.068, h * 0.1));
+      const o = { maxW: w * 0.42, maxPx: Math.round(Math.min(40, w * 0.046)), minPx: cfg.boxLabel.minPx, maxLines: 2, family: BOX_FONT, lineH: ROUND.LABEL_LH };
+      let px = o.maxPx;
+      voteOptions.forEach((l) => { px = Math.min(px, LedFx.text.fit(ctx, String(l), o).px); });
+      const labels = voteOptions.map((l) => LedFx.text.fit(ctx, String(l), Object.assign({}, o, { maxPx: px })).lines);
+      const labH = Math.max(1, ...labels.map((ls) => ls.length)) * px * ROUND.LABEL_LH;
+      const pctBand = pctPx * 1.6, gap = 18;
+      const R = Math.max(30, Math.min(w * 0.2, (h - pctBand - gap - labH - 16) / 2));
+      const y0 = Math.max(0, (h - (pctBand + 2 * R + gap + labH)) / 2);
+      const cy = y0 + pctBand + R;
+      const dx = Math.max(w * 0.22, R + w * 0.035);
+      rlay = { R, pctPx, px, labels, pctY: y0 + pctPx * 0.8, labTop: cy + R + gap,
+        centers: [{ x: w / 2 - dx, y: cy }, { x: w / 2 + dx, y: cy }] };
+      return rlay;
+    }
+
+    // 스냅(모드 진입·재접속·창 크기 변경): 해바라기 자리에 바로 놓음
+    function placeRound(i) {
+      const c = roundLayout().centers[i];
+      const step = ballR * ROUND.SPACING;
+      ballState[i].balls.forEach((b, k) => {
+        const d = step * Math.sqrt(k + 0.5), a = k * 2.39996;
+        b.x = c.x + d * Math.cos(a); b.y = c.y + d * Math.sin(a);
+      });
+    }
+
+    // 겹침 풀기: 원 중심으로 살짝 끌어당기고, 겹친 공끼리 조금씩 밀어냄(격자로 이웃만 검사 — 표가 많아도 가벼움)
+    function relaxRound(arr, c, r, dt, now) {
+      const pull = Math.min(0.2, ROUND.PULL * dt / 16);
+      for (const b of arr) {
+        const age = now - b.born - (b.fly ? ROUND.FLY_MS : 0); // 날아오는 동안은 덩어리에 끼지 않음
+        if (b.fly && age >= 0) b.fly = null;
+        b.rr = age <= 0 ? 0 : age >= ROUND.GROW_MS ? r : r * ease(age / ROUND.GROW_MS);
+        b.x += (c.x - b.x) * pull + (b.rr ? (Math.random() - 0.5) * ROUND.JIGGLE : 0);
+        b.y += (c.y - b.y) * pull + (b.rr ? (Math.random() - 0.5) * ROUND.JIGGLE : 0);
+      }
+      const cell = 2 * r * ROUND.GAP;
+      for (let it = 0; it < 4; it++) {
+        const grid = new Map();
+        arr.forEach((b, i) => {
+          if (!b.rr) return;
+          const key = Math.floor(b.x / cell) * 65536 + Math.floor(b.y / cell);
+          let g = grid.get(key); if (!g) grid.set(key, g = []); g.push(i);
+        });
+        arr.forEach((p, i) => {
+          if (!p.rr) return;
+          const gx = Math.floor(p.x / cell), gy = Math.floor(p.y / cell);
+          for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+            const g = grid.get((gx + ox) * 65536 + gy + oy);
+            if (!g) continue;
+            for (const j of g) {
+              if (j <= i) continue;
+              const q = arr[j];
+              let dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
+              const min = (p.rr + q.rr) * ROUND.GAP;
+              if (d >= min) continue;
+              if (d < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); }
+              const push = (min - d) * 0.5 * 0.35; // 한 번에 겹침의 일부만 풀어 부드럽게
+              p.x -= dx / d * push; p.y -= dy / d * push; q.x += dx / d * push; q.y += dy / d * push;
+            }
+          }
+        });
+      }
+    }
+
+    // 원 위 비율 한 줄: YES/NO처럼 짧은 이름은 "YES 62%", 긴 보기 이름은 아래에 있으니 "62%"만
+    function drawRoundPct(L, alpha) {
+      const sum = LedFx.result.summarize(resultPer || []);
+      if (!sum.total) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let i = 0; i < 2; i++) {
+        const pct = Math.round((sum.per[i] || 0) / sum.total * 100);
+        const lab = String(voteOptions[i] || '');
+        const t = lab.length <= 5 ? lab + ' ' + pct + '%' : pct + '%';
+        const win = !sum.tie && sum.top[0] === i;
+        let px = sum.tie || win ? L.pctPx : Math.round(L.pctPx * 0.8);
+        ctx.font = `700 ${px}px ${BOX_FONT}`;
+        const wMax = logicalW() * 0.44, tw = ctx.measureText(t).width;
+        if (tw > wMax) { px = Math.floor(px * wMax / tw); ctx.font = `700 ${px}px ${BOX_FONT}`; }
+        ctx.fillStyle = sum.tie || win ? INK : INK_SOFT;
+        ctx.fillText(t, L.centers[i].x, L.pctY);
+      }
+      ctx.restore();
+    }
+
+    function drawRound(time) {
+      const L = roundLayout();
+      const now = performance.now();
+      const dt = Math.min(50, now - (drawRound.last || now)); drawRound.last = now;
+      if (reveal) {
+        const done = reveal.draw(ctx, time);
+        drawRoundLabels(L, reveal ? reveal.labelAlpha(time) : 1);
+        if (done) { reveal = null; resultShownAt = time; }
+        return;
+      }
+      for (let i = 0; i < 2; i++) {
+        const arr = ballState[i] ? ballState[i].balls : [];
+        relaxRound(arr, L.centers[i], curBallR, dt, now);
+        ctx.fillStyle = colorFor(i);
+        arr.forEach((b) => { if (b.rr > 0.2) { ctx.beginPath(); ctx.arc(b.x, b.y, b.rr, 0, Math.PI * 2); ctx.fill(); } });
+        drawFlying(arr, L.centers[i], now);
+      }
+      drawRoundLabels(L, 1);
+      if (currentMode === 'result') drawRoundPct(L, resultShownAt ? ease((time - resultShownAt) / 500) : 1);
+    }
+
+    // 날아오는 새 표: 화면 아래에서 원 가운데로 위로 솟는 곡선(시안 1) — 살짝 투명, 제 크기의 80%
+    function drawFlying(arr, c, now) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      for (const b of arr) {
+        if (!b.fly) continue;
+        const t = now - b.born;
+        if (t < 0) continue;
+        const p = ease(t / ROUND.FLY_MS);
+        const x = b.fly.x + (c.x - b.fly.x) * p;
+        const y = b.fly.y + (c.y - b.fly.y) * p - Math.sin(p * Math.PI) * ROUND.FLY_ARC;
+        ctx.beginPath(); ctx.arc(x, y, curBallR * 0.8, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 원 아래 보기 이름 (보기 색)
+    function drawRoundLabels(L, alpha) {
+      if (alpha <= 0.01) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `700 ${L.px}px ${BOX_FONT}`;
+      for (let i = 0; i < 2; i++) {
+        ctx.fillStyle = colorFor(i);
+        (L.labels[i] || []).forEach((ln, k) => ctx.fillText(ln, L.centers[i].x, L.labTop + L.px / 2 + k * L.px * ROUND.LABEL_LH));
+      }
+      ctx.restore();
     }
 
     function drawBalls(balls, radius, color, time) {
@@ -2976,19 +3187,10 @@
       curBallR += (ballR - curBallR) * 0.15;
       if (Math.abs(curBallR - ballR) < 0.05) curBallR = ballR;
 
-      // 결과 공개(2지선다) 연출 중: 상자·공은 연출이 그리고, 끝나면 결과 배너를 띄운다
-      if (reveal) {
-        const done = reveal.draw(ctx, time, (i, alpha) => {
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          drawBox(boxRect(i), colorFor(i), i);
-          ctx.restore();
-        });
+      // 2지선다: 원형 공 덩어리 (결과 공개 연출 포함)
+      if (isRound()) {
+        drawRound(time);
         ctx.restore();
-        if (done) {
-          reveal = null;
-          resultBanner.classList.add('active');
-        }
         rafHandle = requestAnimationFrame(drawFrame);
         return;
       }
@@ -3061,6 +3263,8 @@
 
     function stopResultFx() {
       reveal = null;
+      resultPer = null;
+      resultShownAt = 0;
       barRace.clear();
       if (canvasStopTimer) { clearTimeout(canvasStopTimer); canvasStopTimer = null; }
       canvas.classList.remove('fx-hidden');
@@ -3087,29 +3291,24 @@
         return;
       }
 
-      const sum = LedFx.result.summarize(per);
-      // 표가 없거나·동작 줄이기·재접속이면 연출 없이 바로 배너
-      if (!live || !sum.total || LedFx.prefersReduced()) {
-        resultBanner.classList.add('active');
-        return;
-      }
+      // 2지선다: 원 + 비율(시안 6). 실시간으로 넘어오면 숫자 변신 연출 뒤 비율이 나타남
       resultBanner.classList.remove('active');
+      resultPer = per;
+      resultShownAt = 0;
+      const sum = LedFx.result.summarize(per);
+      // 표가 없거나·동작 줄이기·재접속이면 연출 없이 바로 원 + 비율
+      if (!live || !sum.total || LedFx.prefersReduced()) return;
       const winner = sum.tie ? -1 : sum.top[0];
-      const centers = [];
-      for (let i = 0; i < optCount; i++) {
-        const b = boxRect(i);
-        centers.push({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
-      }
       reveal = LedFx.result.createReveal({
         W: logicalW(), H: logicalH(),
         sides: ballState.map((s, i) => ({ color: colorFor(i), balls: s.balls })),
-        centers,
+        centers: roundLayout().centers,
         ballR: curBallR,
         winner,
         pct: sum.pct,
         label: winner < 0 ? '동률' : (voteOptions[winner] || ''),
         labelFamily: BOX_FONT,
-        ink: '#1e1e42',
+        ink: INK,
         confettiColors: OPTION_COLORS,
       });
     }
@@ -3163,7 +3362,7 @@
       votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
-      // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음)
+      // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음). 결과 화면은 아래에서 "마감"
       if (state.mode !== 'voting') { LedFx.timer.reset(votingTimer); timerGauge.stop(); }
 
       const isVote = state.mode === 'voting' || state.mode === 'result';
@@ -3201,9 +3400,10 @@
         };
         tick();
       } else if (state.mode === 'result') {
-        // 타이머만 숨기고, 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
+        // 타이머 원은 "마감"으로 남기고(시안 2), 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
         if (timerInterval) clearInterval(timerInterval);
-        votingTimer.style.display = 'none';
+        votingTimer.style.display = 'inline-flex';
+        LedFx.timer.done(votingTimer);
         // 투표 중이던 화면에서 실시간으로 넘어올 때만 결과 공개 연출
         showResult(state.counts, !isSnapshot && prevMode === 'voting');
       } else if (state.mode === 'subjective') {

@@ -313,50 +313,57 @@
       100% { opacity: 1; transform: scale(1); }
     }
 
-    /* 질문 카드: 흰 카드 위쪽 중앙에 네이비 배지가 걸쳐진 형태 */
+    /* 질문 카드: 질문(어절 단위 등장) 아래에 타이머 원 (시안 2) */
     #voting-question-card {
       position: relative;
       display: inline-block;
       max-width: 100%;
       background: var(--surface);
       border-radius: calc(18px * var(--u));
-      padding: calc(26px * var(--u)) calc(30px * var(--u)) calc(22px * var(--u));
+      padding: calc(22px * var(--u)) calc(30px * var(--u)) calc(22px * var(--u));
       box-shadow: var(--shadow);
     }
 
+    /* 타이머 원 (시안 2): 주황 원 + 네이비 숫자 → 마지막 5초 경고색 맥박 → 0이면 네이비 "마감" */
     #voting-timer {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translate(-50%, -50%);
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: calc(56px * var(--u));
-      height: calc(56px * var(--u));
-      border-radius: 50%;
-      background: var(--ink);
-      color: #fff;
-      font-size: calc(20px * var(--u));
+      margin-top: calc(16px * var(--u));
+      min-width: calc(88px * var(--u));
+      height: calc(88px * var(--u));
+      padding: 0 calc(10px * var(--u));
+      border-radius: calc(88px * var(--u));
+      background: var(--orange);
+      color: var(--ink);
+      font-size: calc(34px * var(--u));
       font-weight: 700;
+      font-variant-numeric: tabular-nums;
       transition: background-color 0.4s ease, color 0.4s ease;
     }
 
-    /* 마지막 5초: 경고색 + 1초 맥박 (LedFx.timer가 .hot 토글).
-       transform이 위치 잡기(translate)에 쓰이므로 맥박 키프레임에도 함께 적는다 */
+    /* 마지막 5초: 경고색 + 1초 맥박 (LedFx.timer가 .hot 토글) */
     #voting-timer.hot {
       background: var(--warn);
       color: var(--surface);
       animation: timerPulse 1s ease-in-out infinite;
     }
 
+    /* 마감 (LedFx.timer.done) */
+    #voting-timer.done {
+      background: var(--ink);
+      color: var(--surface);
+      font-size: calc(26px * var(--u));
+      animation: none;
+    }
+
     @keyframes timerPulse {
-      0%, 100% { transform: translate(-50%, -50%) scale(1); }
-      50%      { transform: translate(-50%, -50%) scale(1.12); }
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.12); }
     }
 
     #voting-question {
-      font-size: calc(22px * var(--u));
+      font-size: calc(28px * var(--u));
       font-weight: 700;
       color: var(--ink);
       line-height: 1.4;
@@ -546,8 +553,8 @@
   <div id="voting-layer">
     <div id="voting-question-wrap">
       <div id="voting-question-card">
-        <div id="voting-timer">30</div>
         <div id="voting-question"></div>
+        <div id="voting-timer">30</div>
       </div>
     </div>
     <div id="voting-canvas-wrap">
