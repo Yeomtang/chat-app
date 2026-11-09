@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* 폼 요소는 브라우저 기본 글꼴을 써서 본문 글꼴을 물려받지 않음 → 본문과 같은 글꼴로 */
+    button, input, textarea, select { font-family: inherit; }
 
     /* ── 디자인 토큰 (블러시 팔레트) ── LED 화면(led.html)과 동일한 값 유지 */
     :root {
@@ -579,15 +581,13 @@
       // 새 메시지 수신
       nickSocket.on('chat', (msg) => {
         // 운영진이 위로 스크롤해 삭제하는 중이면 딸려 내려가지 않게, 맨 아래일 때만 따라감
-        const box = document.getElementById('messages');
-        const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+        const atBottom = isNearBottom();
         addMessage(msg);
         if (atBottom) scrollToBottom();
       });
       // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지
       nickSocket.on('chatBatch', (list) => {
-        const box = document.getElementById('messages');
-        const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+        const atBottom = isNearBottom();
         list.forEach(addMessage);
         if (atBottom) scrollToBottom();
       });
@@ -638,7 +638,7 @@
     const hint = document.getElementById('mode-hint');
     const label = MODE_HINTS[state.mode];
     if (!label) { // 채팅·대기·엔딩 — 안내 없음
-      hint.classList.remove('visible');
+      keepBottomWhile(() => hint.classList.remove('visible'));
       stopHintTimer();
       return;
     }
@@ -647,9 +647,11 @@
     if (state.mode === 'applause') text = '관객 함성을 측정하고 있어요';
     else if (state.mode === 'applauseResult') text = `함성 지수 ${Math.round(((state.applause && state.applause.peak) || 0) * 100)}`;
     const textEl = document.getElementById('mode-hint-text');
-    textEl.textContent = text;
-    textEl.title = text; // 긴 질문은 말줄임 — 마우스를 올리면 전체
-    hint.classList.add('visible');
+    keepBottomWhile(() => {
+      textEl.textContent = text;
+      textEl.title = text; // 긴 질문은 말줄임 — 마우스를 올리면 전체
+      hint.classList.add('visible');
+    });
     if (state.mode === 'voting' && state.votingRemainMs != null) startHintTimer(state.votingRemainMs);
     else stopHintTimer();
   }
@@ -686,12 +688,14 @@
     const key = msg ? JSON.stringify([msg.id, msg.nickname, msg.text]) : null;
     if (key === pinNoticeKey) return; // 같은 공지 재전송이면 등장 애니메이션을 다시 틀지 않음
     pinNoticeKey = key;
-    box.classList.remove('visible');
-    if (!msg) return;
-    document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
-    document.getElementById('pin-notice-text').textContent = msg.text || '';
-    void box.offsetWidth; // 교체 때도 팝인 재시작
-    box.classList.add('visible');
+    keepBottomWhile(() => {
+      box.classList.remove('visible');
+      if (!msg) return;
+      document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
+      document.getElementById('pin-notice-text').textContent = msg.text || '';
+      void box.offsetWidth; // 교체 때도 팝인 재시작
+      box.classList.add('visible');
+    });
   }
 
   // ── 리액션 (하트/붐업/붐따) ──
@@ -771,6 +775,21 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
+  // 목록이 맨 아래(20px 안쪽)에 있는지 — 새 채팅을 따라갈지 정하는 기준
+  function isNearBottom() {
+    const box = document.getElementById('messages');
+    return box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  }
+  // 목록 위·아래 띠(질문 안내·공지·안내 띠)를 켜고 끄면 목록 높이가 바뀐다 →
+  // 바꾸기 전에 맨 아래였으면 바꾼 뒤에도 맨 아래로(안 그러면 바닥에서 떨어져 새 채팅을 따라가지 않음)
+  function keepBottomWhile(change) {
+    const wasBottom = isNearBottom();
+    change();
+    if (!wasBottom) return;
+    scrollToBottom();
+    requestAnimationFrame(scrollToBottom); // 레이아웃이 다음 프레임에 확정되는 경우까지
+  }
+
   // ── 안내 띠 ── 연결 끊김(sticky)은 다시 연결될 때까지 유지, 전송 안내는 3초 뒤 사라짐
   let noticeTimer = null;
   function showNotice(text, { warn = false, sticky = false } = {}) {
@@ -780,15 +799,17 @@
     bar.textContent = text;
     bar.classList.toggle('warn', warn);
     bar.dataset.sticky = sticky ? '1' : '';
-    bar.classList.remove('visible');
-    void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
-    bar.classList.add('visible');
+    keepBottomWhile(() => {
+      bar.classList.remove('visible');
+      void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
+      bar.classList.add('visible');
+    });
     if (!sticky) noticeTimer = setTimeout(hideNotice, 3000);
   }
   function hideNotice() {
     const bar = document.getElementById('notice-bar');
     clearTimeout(noticeTimer);
-    bar.classList.remove('visible');
+    keepBottomWhile(() => bar.classList.remove('visible'));
     bar.dataset.sticky = '';
   }
 

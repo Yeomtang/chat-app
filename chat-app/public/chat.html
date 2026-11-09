@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* 폼 요소는 브라우저 기본 글꼴을 써서 본문 글꼴을 물려받지 않음 → 본문과 같은 글꼴로 */
+    button, input, textarea, select { font-family: inherit; }
 
     /* ── 디자인 토큰 (블러시 팔레트) ── LED 화면(led.html)과 동일한 값 유지 */
     :root {
@@ -494,6 +496,8 @@
       font-weight: 600;
       text-align: center;
       line-height: 1.4;
+      word-break: keep-all;
+      overflow-wrap: break-word;
     }
 
     #subjective-wrap.answered #subjective-form { display: none; }
@@ -896,7 +900,7 @@
           <input type="text" id="answer-input" maxlength="20" placeholder="20자 이내로 답해주세요">
           <button id="answer-submit" onclick="submitAnswer()">보내기</button>
         </div>
-        <div id="answer-done">답변이 접수됐어요! LED 화면을 봐주세요 👀</div>
+        <div id="answer-done">답변이 접수됐어요! LED 화면을 봐주세요&nbsp;👀</div>
       </div>
 
       <!-- 결과 모드 전용: 결과에 붐업/붐따로 반응 -->
@@ -1217,12 +1221,14 @@
     const key = msg ? JSON.stringify([msg.id, msg.nickname, msg.text]) : null;
     if (key === pinNoticeKey) return; // 같은 공지 재전송이면 등장 애니메이션을 다시 틀지 않음
     pinNoticeKey = key;
-    box.classList.remove('visible');
-    if (!msg) return;
-    document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
-    document.getElementById('pin-notice-text').textContent = msg.text || '';
-    void box.offsetWidth; // 교체 때도 팝인 재시작
-    box.classList.add('visible');
+    keepBottomWhile(() => {
+      box.classList.remove('visible');
+      if (!msg) return;
+      document.getElementById('pin-notice-nick').textContent = msg.nickname || '';
+      document.getElementById('pin-notice-text').textContent = msg.text || '';
+      void box.offsetWidth; // 교체 때도 팝인 재시작
+      box.classList.add('visible');
+    });
   }
 
   function applyVoteState(state) {
@@ -1706,6 +1712,21 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
+  // 목록이 맨 아래(20px 안쪽)에 있는지 — 운영진 화면(host.html)과 같은 기준
+  function isNearBottom() {
+    const box = document.getElementById('messages');
+    return box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  }
+  // 목록 위·아래 띠(공지·안내 띠)를 켜고 끄면 목록 높이가 바뀐다 →
+  // 바꾸기 전에 맨 아래였으면 바꾼 뒤에도 맨 아래로(안 그러면 최신 채팅이 띠 뒤로 밀려 보이지 않음)
+  function keepBottomWhile(change) {
+    const wasBottom = isNearBottom();
+    change();
+    if (!wasBottom) return;
+    scrollToBottom();
+    requestAnimationFrame(scrollToBottom); // 레이아웃이 다음 프레임에 확정되는 경우까지
+  }
+
   // ── "내 채팅이 고정됐어요" 알림 ── 배너+색종이는 항상, 말풍선 물들임은 목록에 남아있을 때만
   let pinBannerTimer = null;
   function showPinnedYou(id) {
@@ -1759,15 +1780,17 @@
     bar.textContent = text;
     bar.classList.toggle('warn', warn);
     bar.dataset.sticky = sticky ? '1' : '';
-    bar.classList.remove('visible');
-    void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
-    bar.classList.add('visible');
+    keepBottomWhile(() => {
+      bar.classList.remove('visible');
+      void bar.offsetWidth; // 연속 표시 때 팝인 애니메이션 재시작
+      bar.classList.add('visible');
+    });
     if (!sticky) noticeTimer = setTimeout(hideNotice, duration);
   }
   function hideNotice() {
     const bar = document.getElementById('notice-bar');
     clearTimeout(noticeTimer);
-    bar.classList.remove('visible');
+    keepBottomWhile(() => bar.classList.remove('visible'));
     bar.dataset.sticky = '';
   }
 
