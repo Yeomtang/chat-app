@@ -86,38 +86,10 @@
       text-align: center;
     }
 
-    #nickname-display {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--ink);
-      line-height: 1.3;
-      width: 100%;
-      text-align: center;
-    }
-
-    .btn-reroll {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      background: none;
-      border: 1.5px solid rgba(30, 30, 66, 0.18);
-      border-radius: 100px;
-      padding: 10px 20px;
-      font-size: 14px;
-      color: var(--ink-soft);
-      cursor: pointer;
-      margin: 0 auto 32px;
-      font-family: inherit;
-      transition: background 0.15s;
-    }
-
-    .btn-reroll:active { background: var(--bg-soft); }
-
     .btn-enter {
       width: 100%;
       background: var(--ink);
-      color: #fff;
+      color: var(--surface);
       border: none;
       border-radius: 14px;
       padding: 16px;
@@ -210,7 +182,7 @@
       align-items: center;
       justify-content: center;
       font-size: 14px;
-      color: #fff;
+      color: var(--surface);
       font-weight: 700;
       flex-shrink: 0;
     }
@@ -267,7 +239,7 @@
     /* 운영자 메시지 — 네이비 배경으로 구분 */
     .msg-bubble.operator { background: var(--ink); }
     .msg-bubble.operator .msg-nickname { color: rgba(255, 255, 255, 0.7); }
-    .msg-bubble.operator .msg-text { color: #fff; }
+    .msg-bubble.operator .msg-text { color: var(--surface); }
     /* 운영진 전용: 각 메시지 삭제 버튼 */
     .host-del {
       flex-shrink: 0;
@@ -277,7 +249,7 @@
       font-size: 13px; font-weight: 700; line-height: 1;
       cursor: pointer;
     }
-    .host-del:active { background: var(--warn); color: #fff; }
+    .host-del:active { background: var(--warn); color: var(--surface); }
 
     .msg-nickname {
       font-size: 12px;
@@ -448,6 +420,7 @@
       width: 34px;
       height: 34px;
       background: var(--ink);
+      color: var(--surface); /* 화살표 아이콘(stroke=currentColor) 색 */
       border: none;
       border-radius: 50%;
       display: flex;
@@ -523,7 +496,7 @@
       <textarea id="msg-input" placeholder="메시지 입력..." rows="1" maxlength="100"></textarea>
       <span id="char-counter">0/100</span>
       <button id="send-btn" onclick="sendMessage()" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
         </svg>
       </button>
@@ -533,107 +506,18 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  // ── 테마 ──
-  // 행사마다 닉네임 풀과 입장 문구가 다르다. 주소로 테마를 고른다.
-  //   /          → office  (12월 본 공연: 직장인 썰루션 토크콘서트)
-  //   /concert   → concert (공연장 현장 테스트용)
-  // ?theme=xxx 로도 지정 가능. 서버(server.js)의 NICKNAME_THEMES와 풀이 동일해야
-  // 닉네임이 중복돼 서버가 교체해줄 때도 같은 테마의 닉네임이 내려온다.
-  const THEMES = {
-    office: {
-      title: '익명 채팅',
-      heading: '오늘의 토론에 참여하세요',
-      headerSub: '익명 토론 채팅',
-      prefixes: [
-        '야근하는', '퇴근못한', '커피없는', '월요일싫은', '점심기다리는',
-        '회의중인', '보고서쓰는', '연차쓰고싶은', '상사눈치보는', '월급날기다리는',
-        '카페인의존하는', '스트레스받는', '엑셀여는', '퇴사고민하는', '메신저피하는',
-        '칼퇴원하는', '야식먹는', '재택원하는', '회식싫은', '마감쫓기는',
-        '탕비실숨는', '화장실피신한', '창문바라보는', '점심혼밥하는', '복사실가는',
-      ],
-      suffixes: [
-        '사원', '대리', '과장', '차장', '부장',
-        '팀장', '인턴', '계약직', '신입', '3년차',
-        '5년차', '10년차', '직장인', '사무직', '영업사원',
-        '기획자', '디자이너', '개발자', '마케터', '경리',
-        '총무', '프리랜서', '워커', '비서', '실장',
-      ],
-    },
-    concert: {
-      title: '공연 실시간 채팅',
-      heading: '오늘 공연에 함께해주세요',
-      headerSub: '실시간 익명 채팅',
-      // 무료·공개 공연 기준. 티켓팅/굿즈/투어(첫공·막공·올콘)/응원봉·플카 같은
-      // 유료 공연·아이돌 팬덤 전제 표현은 쓰지 않는다 (어떤 행사에서든 재사용 가능하도록).
-      prefixes: [
-        '소문듣고온', '앞자리사수한', '광대승천한', '앙코르기다리는', '목풀고온',
-        '앞사람머리피하는', '친구따라온', '퇴근하고달려온', '지방에서온', '리허설부터온',
-        '심장뛰는', '눈물참는', '소리지르는', '박수치는', '세트리스트외운',
-        '오늘밤설레는', '두손모은', '무대만보는', '줄서서기다린', '숨죽인',
-        '인트로부터운', '노래따라하는', '발끝세운', '조명바라보는', '한곡도못참는',
-      ],
-      suffixes: [
-        '관객', '팬', '덕후', '직관러', '떼창러',
-        '관람객', '리스너', '애청자', '1열관객', '2층관객',
-        '뒷줄관객', '첫관람객', '감상러', '입장객', '박수러',
-        '늦덕', '입덕러', '고인물', '뉴비', '단골',
-        '동행인', '혼콘러', '최애러', '응원러', '목청러',
-      ],
-    },
-  };
-
-  // 주소로 테마 결정 (?theme= 우선, 없으면 경로)
-  const themeKey = (() => {
-    const q = new URLSearchParams(location.search).get('theme');
-    if (q && THEMES[q]) return q;
-    const path = location.pathname.replace(/\/+$/, '').split('/').pop();
-    return THEMES[path] ? path : 'office';
-  })();
-  const theme = THEMES[themeKey];
-  const PREFIXES = theme.prefixes;
-  const SUFFIXES = theme.suffixes;
-
-
-  let nicknamePool = [];
-  let poolIndex = 0;
-
-  function shuffle(arr) {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
-
-  function initNicknamePool() {
-    const pool = [];
-    for (const p of PREFIXES) {
-      for (const s of SUFFIXES) {
-        pool.push(`${p} ${s}`);
-      }
-    }
-    nicknamePool = shuffle(pool);
-    poolIndex = 0;
-  }
-
-  function getNewNickname() {
-    if (nicknamePool.length === 0 || poolIndex >= nicknamePool.length) {
-      initNicknamePool();
-    }
-    return nicknamePool[poolIndex++];
-  }
-
   let currentNickname = '';
   let socket;
   let nickSocket;
 
   // ── 영구 클라이언트 ID (localStorage) — 투표 중복 방지 키 ──
   function getClientId() {
-    let id = localStorage.getItem('ledClientId');
+    // 저장소가 막힌 브라우저에선 localStorage 접근이 예외 → 페이지가 멈추지 않게 이번 접속용 ID로 대신
+    let id = null;
+    try { id = localStorage.getItem('ledClientId'); } catch (e) {}
     if (!id) {
       id = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
-      localStorage.setItem('ledClientId', id);
+      try { localStorage.setItem('ledClientId', id); } catch (e) {}
     }
     return id;
   }
@@ -713,7 +597,7 @@
       });
       // 관리자가 개별 채팅을 삭제하면 내 화면에서도 제거
       nickSocket.on('chatDeleted', (id) => {
-        const el = document.querySelector('#messages [data-id="' + id + '"]');
+        const el = document.querySelector('#messages [data-id="' + CSS.escape(String(id)) + '"]');
         if (el) el.remove();
       });
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
@@ -721,17 +605,6 @@
       nickSocket.on('modeChange', applyVoteState);
       nickSocket.on('noticePinned', (data) => renderPinNotice(data && data.message));
     }
-  }
-
-  // 서버가 동시 중복을 감지해 새 닉네임을 내려주면 화면에 반영
-  function applyReassignedNickname(name) {
-    currentNickname = name;
-    const display = document.getElementById('nickname-display');
-    if (display) display.textContent = name;
-    const headerNick = document.getElementById('header-nickname');
-    if (headerNick) headerNick.textContent = name;
-    const headerAvatar = document.getElementById('header-avatar');
-    if (headerAvatar) headerAvatar.textContent = name.charAt(0);
   }
 
   // ══════════════════════════════════
@@ -953,7 +826,7 @@
 
   // 입력창 auto-resize + 전송 버튼 활성화
   document.addEventListener('DOMContentLoaded', () => {
-    requestNickname(); // 페이지 로드 시 서버에서 첫 닉네임 배정
+    requestNickname(); // 페이지 로드 시 소켓 연결 (운영자 이름은 입장 때 확정)
 
     const MAX_CHAT_LENGTH = 100;
     const input = document.getElementById('msg-input');

@@ -119,7 +119,7 @@
     .btn-enter {
       width: 100%;
       background: var(--ink);
-      color: #fff;
+      color: var(--surface);
       border: none;
       border-radius: 14px;
       padding: 16px;
@@ -210,7 +210,7 @@
       height: 52px;
       border-radius: 50%;
       background: var(--ink);
-      color: #fff;
+      color: var(--surface);
       font-size: 18px;
       font-weight: 700;
       transition: background 0.4s, color 0.4s;
@@ -219,7 +219,7 @@
     /* 타이머 마지막 5초: 경고색 + 은은한 맥박(LED 화면과 동일 패턴) */
     #voting-timer-phone.hot {
       background: var(--warn);
-      color: #fff;
+      color: var(--surface);
       animation: timerPulse 1s ease-in-out infinite;
     }
     @keyframes timerPulse {
@@ -334,7 +334,7 @@
 
     .vote-btn-head {
       background: var(--strong, var(--ink));
-      color: #fff;
+      color: var(--surface);
       font-size: 18px;
       font-weight: 700;
       padding: 11px 8px;
@@ -471,7 +471,7 @@
 
     #answer-submit {
       background: var(--ink);
-      color: #fff;
+      color: var(--surface);
       border: none;
       border-radius: 14px;
       padding: 0 18px;
@@ -557,7 +557,7 @@
       align-items: center;
       justify-content: center;
       font-size: 14px;
-      color: #fff;
+      color: var(--surface);
       font-weight: 700;
       flex-shrink: 0;
     }
@@ -613,12 +613,12 @@
     /* 운영자 메시지 — 네이비 배경으로 구분 */
     .msg-bubble.operator { background: var(--ink); }
     .msg-bubble.operator .msg-nickname { color: rgba(255, 255, 255, 0.7); }
-    .msg-bubble.operator .msg-text { color: #fff; }
+    .msg-bubble.operator .msg-text { color: var(--surface); }
 
     /* 내 채팅이 LED에 고정됨 — 말풍선이 잠시 주황으로 물들며 은은하게 빛남 */
-    .msg-bubble.pinned { background: var(--orange); color: #fff; box-shadow: 0 0 0 6px rgba(251, 126, 85, 0.25), 0 6px 18px rgba(30, 30, 66, 0.12); }
+    .msg-bubble.pinned { background: var(--orange); color: var(--surface); box-shadow: 0 0 0 6px rgba(251, 126, 85, 0.25), 0 6px 18px rgba(30, 30, 66, 0.12); }
     .msg-bubble.pinned .msg-nickname { color: rgba(255, 255, 255, 0.85); }
-    .msg-bubble.pinned .msg-text { color: #fff; }
+    .msg-bubble.pinned .msg-text { color: var(--surface); }
 
     .msg-nickname {
       font-size: 12px;
@@ -788,6 +788,7 @@
       width: 34px;
       height: 34px;
       background: var(--ink);
+      color: var(--surface); /* 화살표 아이콘(stroke=currentColor) 색 */
       border: none;
       border-radius: 50%;
       display: flex;
@@ -861,7 +862,7 @@
       <textarea id="msg-input" placeholder="메시지 입력..." rows="1" maxlength="200"></textarea>
       <span id="char-counter">0/200</span>
       <button id="send-btn" onclick="sendMessage()" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
         </svg>
       </button>
@@ -937,9 +938,9 @@
   // 주소로 테마 결정 (?theme= 우선, 없으면 경로)
   const themeKey = (() => {
     const q = new URLSearchParams(location.search).get('theme');
-    if (q && THEMES[q]) return q;
+    if (q && Object.prototype.hasOwnProperty.call(THEMES, q)) return q;
     const path = location.pathname.replace(/\/+$/, '').split('/').pop();
-    return THEMES[path] ? path : 'office';
+    return Object.prototype.hasOwnProperty.call(THEMES, path) ? path : 'office';
   })();
   const theme = THEMES[themeKey];
   const PREFIXES = theme.prefixes;
@@ -986,10 +987,12 @@
 
   // ── 영구 클라이언트 ID (localStorage) — 투표 중복 방지 키 ──
   function getClientId() {
-    let id = localStorage.getItem('ledClientId');
+    // 저장소가 막힌 브라우저에선 localStorage 접근이 예외 → 페이지가 멈추지 않게 이번 접속용 ID로 대신
+    let id = null;
+    try { id = localStorage.getItem('ledClientId'); } catch (e) {}
     if (!id) {
       id = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
-      localStorage.setItem('ledClientId', id);
+      try { localStorage.setItem('ledClientId', id); } catch (e) {}
     }
     return id;
   }
@@ -1056,13 +1059,12 @@
       });
       // 관리자가 개별 채팅을 삭제하면 내 화면에서도 제거
       nickSocket.on('chatDeleted', (id) => {
-        const el = document.querySelector('#messages [data-id="' + id + '"]');
+        const el = document.querySelector('#messages [data-id="' + CSS.escape(String(id)) + '"]');
         if (el) el.remove();
       });
       // 투표 상태 동기화는 입장 전에도 받아야 함 (연결 즉시 시작)
       nickSocket.on('state', applyVoteState);
       nickSocket.on('modeChange', applyVoteState);
-      nickSocket.on('voteUpdate', (data) => updateRatio(data.counts, voteTypeCur));
       // 관리자가 "내 채팅"을 LED에 고정했을 때만 작성자 본인에게 옴 (다른 사람 폰에는 안 옴)
       // late: 핀 순간 끊겨 있다가 다시 접속했을 때 오는 알림 — 이 폰에서 이미 본 핀이면 다시 띄우지 않는다
       nickSocket.on('chatPinnedYou', ({ id, late }) => {
@@ -1178,9 +1180,7 @@
       body.className = 'vote-btn-body'; // 투표 중엔 선택 표시(✓), 결과에선 비율(%)
       b.appendChild(head);
       b.appendChild(body);
-      b.style.setProperty('--tint', s.tint);
       b.style.setProperty('--strong', s.strong);
-      b.style.setProperty('--on', s.on);
       b.addEventListener('click', () => castVote(i));
       el.appendChild(b);
     });
