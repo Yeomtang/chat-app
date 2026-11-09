@@ -217,6 +217,23 @@ function cleanPreset(p) {
 const CANONICAL_ORIGIN = 'https://chat-app-s6y2.onrender.com';
 const LEGACY_HOSTS = ['chat-app-6kl5.onrender.com'];
 const isLegacyHost = (host) => LEGACY_HOSTS.includes(String(host || '').split(':')[0].toLowerCase());
+
+// ── 서버 상태 확인 (/health) ── Render health check·행사 전 점검용. 가볍게: 키·개인정보·채팅 내용 없이 숫자만.
+// 옛 주소 리다이렉트보다 먼저 둔다(상태 확인은 어느 주소로 와도 그 서버 자신의 상태를 답함)
+const SERVER_STARTED_AT = Date.now(); // 서버(프로세스) 시작 시각 — 재시작 알림·가동 시간 표시에도 쓴다
+app.get('/health', (req, res) => {
+  const screens = io.sockets.adapter.rooms.get(SCREENS);
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    uptime: Math.round((Date.now() - SERVER_STARTED_AT) / 1000), // 초
+    mode: appState.mode,
+    audience: audienceSockets.size,
+    screens: screens ? screens.size : 0, // LED + 관리자 + 운영진 화면 소켓 수
+    startedAt: new Date(SERVER_STARTED_AT).toISOString(),
+  });
+});
+
 app.use((req, res, next) => {
   if (isLegacyHost(req.headers.host)) return res.redirect(301, CANONICAL_ORIGIN + req.originalUrl);
   next();
