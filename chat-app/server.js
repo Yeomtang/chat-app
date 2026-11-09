@@ -223,6 +223,8 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+// 아이콘 파일이 없어 모든 화면 콘솔에 favicon.ico 404 오류가 찍히던 것 방지(빈 응답)
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // 라우트
 app.get('/', (req, res) => {
