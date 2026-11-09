@@ -711,6 +711,30 @@
     #char-counter.limit { color: var(--warn); font-weight: 700; }
 
     /* ── 안내 띠 (연결 상태·전송 안내) ── 입력창 바로 위. 연결 끊김은 계속, 전송 안내는 잠깐 표시 */
+    /* 위로 올려 읽는 중에 새 채팅이 오면 목록 아래쪽에 뜨는 알림 (누르면 맨 아래로) — 위치(bottom)는 JS가 입력창 위로 */
+    .new-msg-pill {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      width: fit-content;
+      margin: 0 auto;
+      padding: 7px 14px;
+      border: none;
+      border-radius: 16px;
+      background: var(--ink);
+      color: var(--surface);
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      z-index: 5;
+    }
+    .new-msg-pill.visible {
+      display: block;
+      animation: voteCardIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; /* 공용 popIn 패턴 */
+    }
+
     .notice-bar {
       display: none;
       margin: 0 12px 8px;
@@ -865,6 +889,7 @@
     </div>
 
     <div id="messages"></div>
+    <button class="new-msg-pill" id="new-msg-pill" type="button" onclick="jumpToLatest()">새 메시지 ↓</button>
 
     <div class="notice-bar" id="notice-bar" role="status" aria-live="polite"></div>
 
@@ -1056,15 +1081,11 @@
         scrollToBottom();
       });
       // 새 메시지 수신
-      nickSocket.on('chat', (msg) => {
-        addMessage(msg);
-        scrollToBottom();
-      });
+      // 맨 아래를 보고 있을 때만 따라 내려감(운영진 화면과 같은 방식) — 위로 올려 읽는 중이면 위치 유지 + "새 메시지" 알림.
+      // 내가 방금 보낸 글이 돌아오면 그때는 맨 아래로
+      nickSocket.on('chat', (msg) => receiveMessages([msg]));
       // 채팅이 몰릴 때 서버가 묶어서 보내는 메시지 (화면 갱신·스크롤은 한 번만)
-      nickSocket.on('chatBatch', (list) => {
-        list.forEach(addMessage);
-        scrollToBottom();
-      });
+      nickSocket.on('chatBatch', (list) => receiveMessages(list));
       // 관리자가 채팅을 초기화하면 내 화면의 목록도 비운다
       nickSocket.on('chatCleared', () => {
         document.getElementById('messages').innerHTML = '';
@@ -1721,6 +1742,35 @@
   function scrollToBottom() {
     const messages = document.getElementById('messages');
     messages.scrollTop = messages.scrollHeight;
+    hideNewMsgPill();
+  }
+
+  // 새 채팅 받기: 맨 아래였거나 내가 보낸 글이면 맨 아래로, 아니면 읽던 자리 그대로 두고 "새 메시지" 알림
+  let pendingOwnText = null; // 방금 보낸 글 (서버를 거쳐 돌아오면 맨 아래로 내려 보여 줌)
+  function receiveMessages(list) {
+    const atBottom = isNearBottom();
+    let mine = false;
+    list.forEach((m) => {
+      if (pendingOwnText != null && m && m.nickname === currentNickname && m.text === pendingOwnText) { mine = true; pendingOwnText = null; }
+      addMessage(m);
+    });
+    if (atBottom || mine) scrollToBottom();
+    else showNewMsgPill();
+  }
+  function showNewMsgPill() {
+    const pill = document.getElementById('new-msg-pill');
+    const content = document.getElementById('chat-content').getBoundingClientRect();
+    const list = document.getElementById('messages').getBoundingClientRect();
+    pill.style.bottom = Math.round(content.bottom - list.bottom + 10) + 'px'; // 목록 아래 끝(입력창·안내 띠 위) 10px 위
+    pill.classList.add('visible');
+  }
+  function hideNewMsgPill() { document.getElementById('new-msg-pill').classList.remove('visible'); }
+  // 직접 맨 아래까지 내리면 알림을 거둠
+  document.getElementById('messages').addEventListener('scroll', () => { if (isNearBottom()) hideNewMsgPill(); }, { passive: true });
+  function jumpToLatest() {
+    const messages = document.getElementById('messages');
+    messages.scrollTo({ top: messages.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    hideNewMsgPill();
   }
 
   // 목록이 맨 아래(20px 안쪽)에 있는지 — 운영진 화면(host.html)과 같은 기준
@@ -1821,6 +1871,7 @@
       return;
     }
     const sent = text.slice(0, MAX_CHAT_LENGTH);
+    pendingOwnText = sent; // 돌아오면 맨 아래로 (서버가 비속어를 가리면 글이 달라져 못 알아볼 수 있음 — 그땐 맨 아래일 때만 따라감)
     // 서버가 결과를 알려준다 — 거절되면 이유를 안내하고 보내려던 내용을 되살린다
     socket.timeout(5000).emit('chat', { nickname: currentNickname, text: sent }, (err, res) => {
       if (err) return showNotice('전송 확인이 늦어지고 있어요. 잠시만 기다려 주세요.');
