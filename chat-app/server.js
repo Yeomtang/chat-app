@@ -298,36 +298,10 @@ const MAX_OPERATOR_CHAT_LENGTH = 100; // 운영진(/host) 채팅 상한 — 화�
 const MAX_NICKNAME_LENGTH = 20; // 닉네임 길이 상한 — 실제 풀은 17자 이하지만
                                 // 클라이언트가 보낸 값을 그대로 쓰므로 LED 레이아웃 보호용으로 자름
 
-// ── 비속어 필터 ── 매칭 부분을 글자 수만큼 * 로 마스킹(차단이 아니라 가림).
-// 방송 노출 화면 보호가 목적이라 오탐(정상 단어 차단)이 큰 단어는 넣지 않음.
-// 완벽한 차단은 불가능(자모 분리·띄어쓰기 우회 등) — 명백한 욕설 + 흔한 초성체/영타 위주.
-const PROFANITY = [
-  // 대표 욕설(변형 포함)
-  '씨발','씨발놈','씨발년','시발','시발놈','시발년','씨바','시바','씨빨','시빨','씨발새끼','시발새끼',
-  '개새끼','개색기','개세끼','개새기','개쌔끼','새끼','쌔끼','새키',
-  '병신','븅신','빙신','병맛',
-  '지랄','지럴','염병','엿먹어','닥쳐','닥치','꺼져',
-  '좆','좆같','좆나','존나','존니','존만','조까',
-  '씹','씹새','씹창','씹할','씨부럴','씨부랄','개씹',
-  '보지','자지','걸레','창녀','창놈','호로','후장',
-  '미친놈','미친년','또라이','돌아이','썅','쌍놈','쌍년',
-  // 초성체
-  'ㅅㅂ','ㅆㅂ','ㅄ','ㅂㅅ','ㅈㄹ','ㄲㅈ','ㅅㅃ','ㅆㅃ','ㅗ',
-  // 영문/영타
-  'fuck','fxxk','shit','bitch','asshole','tlqkf','tprtl','qudtls','wlfkf',
-].sort((a, b) => b.length - a.length); // 긴 단어 우선 매칭(개새끼 → 새끼보다 먼저)
-
-function escapeRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-const PROFANITY_RE = PROFANITY.map(w => new RegExp(escapeRegex(w), 'gi'));
-
-function maskProfanity(text) {
-  if (!text) return text;
-  let out = text;
-  for (const re of PROFANITY_RE) {
-    out = out.replace(re, (m) => '*'.repeat([...m].length));
-  }
-  return out;
-}
+// ── 비속어 필터 ── 매칭 부분을 원문 위치에서 * 로 가림(차단이 아니라 가림).
+// 규칙(욕설 목록·정상 단어 예외·고위험 단어 앞뒤 조건·우회형 정규화)은 profanity.js 에 있음.
+// 채팅·운영진 채팅·주관식 답변·닉네임·관리자 핀/별표/차단 샘플·결과 복원이 모두 이 함수를 쓴다.
+const { maskProfanity } = require('./profanity');
 
 // ── 투표(질문) 상태 관리 ──
 // mode: 'chat' | 'voting' | 'result' | 'subjective' | 'subjectiveResult' | 'emoji'
