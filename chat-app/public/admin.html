@@ -1045,7 +1045,7 @@
     updateResultsRestoreButton();
     if (prev && prev !== info.bootId) {
       document.getElementById('boot-bar-text').textContent =
-        `서버가 ${hhmm(info.startedAt)}에 다시 시작됐어요 — 채팅·결과 기록이 초기화됐어요`;
+        `서버가 ${hhmm(info.startedAt)}에 다시 시작됐어요 — 채팅·결과 기록·차단 목록·숨긴 답이 초기화됐어요`;
       const bar = document.getElementById('boot-bar');
       bar.classList.remove('visible');
       void bar.offsetWidth;

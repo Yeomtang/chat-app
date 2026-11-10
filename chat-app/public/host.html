@@ -256,7 +256,8 @@
       font-size: 13px; font-weight: 700; line-height: 1;
       cursor: pointer;
     }
-    .host-del:active { background: var(--warn); color: var(--surface); }
+    .host-del:active,
+    .host-del.confirming { background: var(--warn); color: var(--surface); }
 
     .msg-nickname {
       font-size: 12px;
@@ -742,6 +743,14 @@
     document.getElementById('header-nickname').textContent = currentNickname;
   }
 
+  // 삭제 2단 확인 상태 — 한 번에 한 채팅만 "삭제?" 대기
+  const hostDelArm = { btn: null, timer: null };
+  function disarmHostDel() {
+    clearTimeout(hostDelArm.timer);
+    if (hostDelArm.btn) { hostDelArm.btn.textContent = '삭제'; hostDelArm.btn.classList.remove('confirming'); }
+    hostDelArm.btn = null; hostDelArm.timer = null;
+  }
+
   function addMessage(msg) {
     const messages = document.getElementById('messages');
     const group = document.createElement('div');
@@ -769,9 +778,19 @@
       del.className = 'host-del';
       del.textContent = '삭제';
       del.title = '이 채팅 삭제';
+      // 2단 확인: 한 번 누르면 "삭제?"로 바뀌고 3초 안에 다시 누르면 삭제.
+      // (confirm() 창은 떠 있는 동안 화면 갱신을 멈추게 해서 쓰지 않는다 — 관리자 화면과 같은 패턴)
       del.onclick = () => {
-        if (!confirm('이 채팅을 모든 화면에서 삭제할까요?\n\n' + msg.nickname + ': ' + msg.text)) return;
-        nickSocket.emit('admin:deleteMessage', msg.id);
+        if (hostDelArm.btn === del) {
+          disarmHostDel();
+          nickSocket.emit('admin:deleteMessage', msg.id);
+          return;
+        }
+        disarmHostDel();
+        hostDelArm.btn = del;
+        del.textContent = '삭제?';
+        del.classList.add('confirming');
+        hostDelArm.timer = setTimeout(disarmHostDel, 3000);
       };
       group.appendChild(del);
     }
