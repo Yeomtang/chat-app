@@ -200,10 +200,22 @@
 }
 .fx-cc-leg-pct { flex: none; font-variant-numeric: tabular-nums; }
 
+/* 엔딩 "오늘의 결과" 객관식 장에 끼워 넣은 카드 화면: 화면 전체 덮개가 아니라 슬라이드 안 칸(위 머리글과 아래 페이지 점 사이)을 채움 */
+.fx-choice.fx-choice-flow {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  padding: 0;
+  z-index: auto;
+}
+
 /* 등장 연출(실시간 결과만, .fx-cc-anim): 카드 차례로 공용 popIn → % 카운트업(JS) → 1위 테두리·막대 채움·범례 */
 .fx-choice.fx-cc-still * { transition: none !important; } /* 연출 시작 모양으로 순간 이동 (JS가 한 프레임만 붙임) */
-.fx-choice.fx-cc-anim.active .fx-cc-title { animation: fxCcFade 0.4s ease both; }
-.fx-choice.fx-cc-anim.active .fx-cc-card { animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.fx-choice.fx-cc-anim.active:not(.fx-cc-short) .fx-cc-title { animation: fxCcFade 0.4s ease both; }
+.fx-choice.fx-cc-anim.active:not(.fx-cc-short) .fx-cc-card { animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+/* .fx-cc-short (엔딩 슬라이드 넘김): 카드는 슬라이드와 함께 밀려 들어오므로 popIn 없이 % 카운트업·막대만 */
 .fx-choice.fx-cc-anim .fx-cc-seg { width: 0; transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .fx-choice.fx-cc-anim.fx-cc-done .fx-cc-seg { width: var(--fx-cc-w); }
 .fx-choice.fx-cc-anim .fx-cc-legend { opacity: 0; transition: opacity 0.5s ease; }

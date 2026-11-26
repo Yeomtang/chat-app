@@ -585,6 +585,7 @@
   const CHOICE = {
     DELAY: 350,     // 질문 카드·상자가 걷히는 시간(0.4초) 뒤 시작
     STAGGER: 70,    // 카드 popIn 간격(ms)
+    SHORT: { DELAY: 0, COUNT_AT: 0, COUNT_MS: 500, FINISH_AT: 450 }, // 엔딩 슬라이드 넘김용 축약 연출 (약 0.95초)
     COUNT_AT: 120,  // % 카운트업 시작
     COUNT_MS: 700,  // % 카운트업 길이
     FINISH_AT: 820, // 1위 테두리·막대 채움·범례 시작 (CSS 전환 0.5초)
@@ -608,7 +609,7 @@
     function clear() {
       stopTimers();
       inner = null; cards = []; data = null; finished = true;
-      container.classList.remove('active', 'fx-cc-anim', 'fx-cc-done', 'fx-cc-still');
+      container.classList.remove('active', 'fx-cc-anim', 'fx-cc-done', 'fx-cc-still', 'fx-cc-short');
       container.innerHTML = '';
     }
 
@@ -637,13 +638,13 @@
         container.style.setProperty(prop, String(Math.min(s, floor)));
         els.forEach((el, i) => clampText(el, texts[i], max));
       };
-      const apply = (s) => {
+      const apply = (s, tLines = CHOICE.TITLE_LINES, legFloor = CHOICE.LEGEND_MIN) => {
         container.style.setProperty('--fx-cc-s', String(s));
         inner.style.removeProperty('--fx-cc-headh');
-        fitLines('--fx-cc-ts', [title], [data.question], CHOICE.TITLE_LINES, s);
+        fitLines('--fx-cc-ts', [title], [data.question], tLines, s);
         fitLines('--fx-cc-ns', names, data.labels, CHOICE.HEAD_LINES, s);
         // 범례 이름은 한 줄 — 너무 작아지지 않게 0.76(세로형 16.7px)까지만 줄이고 넘치면 "…" (전체 이름은 카드에 있음)
-        fitLines('--fx-cc-ls', legs, data.labels, 1, s, CHOICE.LEGEND_MIN);
+        fitLines('--fx-cc-ls', legs, data.labels, 1, s, legFloor);
         const headH = Math.max(...cards.map((c) => c.querySelector('.fx-cc-head').offsetHeight));
         inner.style.setProperty('--fx-cc-headh', headH + 'px');
         return inner.offsetHeight <= availH + 0.5;
@@ -657,6 +658,8 @@
       }
       inner.style.setProperty('--fx-cc-cols', String(data.cols[0]));
       for (const s of STEPS) { if (apply(s)) return; }
+      // 최소 배율로도 칸을 넘치면(엔딩 장처럼 칸이 더 좁을 때 + 긴 질문·긴 이름 6지): 범례 글자를 최소까지, 그다음 제목을 2줄·1줄로
+      for (const [t, lf] of [[CHOICE.TITLE_LINES, MIN], [2, MIN], [1, MIN]]) { if (apply(MIN, t, lf)) return; }
     }
 
     function setPct(k) { // k: 0~1 카운트업 진행
@@ -678,7 +681,7 @@
       const pcts = labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
       // 열 수 후보(페이지 설정: 숫자 하나 또는 배열 — 앞에서부터 시도)
       const cols = [].concat(opts.cols(labels.length)).map((c) => Math.max(1, Math.min(labels.length, c)));
-      data = { question: String(o.question || ''), labels, pcts, cols };
+      data = { question: String(o.question || ''), labels, pcts, cols, total: sum.total };
       inner = document.createElement('div');
       inner.className = 'fx-cc-inner';
       inner.style.setProperty('--fx-cc-cols', String(cols[0]));
@@ -722,34 +725,54 @@
         container.classList.add('fx-cc-done', 'active');
         return;
       }
+      run(false);
+    }
+
+    // 연출 재생. short = 엔딩 슬라이드 넘김용 축약판(슬라이드가 밀려 들어오는 움직임이 있으니 카드 popIn·대기 없이
+    // % 카운트업 0.5초 → 1위 테두리·막대 채움·범례) — 빠르게 연달아 넘겨도 타이머를 지우고 다시 시작해 깨지지 않음
+    function run(short) {
+      stopTimers();
+      const T = short ? CHOICE.SHORT : CHOICE;
       finished = false;
       setPct(0);
       cards.forEach((c, i) => { c.style.animationDelay = (i * CHOICE.STAGGER) + 'ms'; });
       // 연출 시작 모양(막대 0·범례 투명)은 전환 없이 바로 — 안 그러면 다 찬 막대가 줄어드는 게 잠깐 보임
+      container.classList.remove('fx-cc-done');
+      container.classList.toggle('fx-cc-short', !!short);
       container.classList.add('fx-cc-still', 'fx-cc-anim');
       void container.offsetWidth;
       container.classList.remove('fx-cc-still');
-      // 질문 카드·공 상자가 걷히는 동안(0.4초)은 비워 두었다가 시작 — 사라지는 카드와 새 제목이 겹쳐 보이지 않게
+      // (결과 화면) 질문 카드·공 상자가 걷히는 동안(0.4초)은 비워 두었다가 시작 — 사라지는 카드와 새 제목이 겹쳐 보이지 않게
       timers.push(setTimeout(() => {
         container.classList.add('active');
         timers.push(setTimeout(() => {
           const t0 = performance.now();
           const step = (now) => {
-            const t = Math.min(1, (now - t0) / CHOICE.COUNT_MS);
+            const t = Math.min(1, (now - t0) / T.COUNT_MS);
             setPct(ease(t));
             raf = t < 1 ? requestAnimationFrame(step) : null;
           };
           raf = requestAnimationFrame(step);
-        }, CHOICE.COUNT_AT));
-        timers.push(setTimeout(finish, CHOICE.FINISH_AT));
-      }, CHOICE.DELAY));
+        }, T.COUNT_AT));
+        timers.push(setTimeout(finish, T.FINISH_AT));
+      }, T.DELAY));
     }
 
     // 연출 중 탭이 가려지면(타이머·rAF가 멈춤) 바로 최종 화면
-    document.addEventListener('visibilitychange', () => { if (document.hidden && !finished) finish(); });
+    const onVis = () => { if (document.hidden && !finished) finish(); };
+    document.addEventListener('visibilitychange', onVis);
 
     return {
       show, clear,
+      // 엔딩 슬라이드에 들어올 때: 표가 있으면 축약 연출, 아니면(0표·동작 줄이기·탭 숨김) 최종 화면 그대로
+      replay() {
+        if (!inner || !data) return;
+        if (!data.total || prefersReduced() || document.hidden) { finish(); return; }
+        run(true);
+      },
+      finish,
+      // 엔딩 슬라이드를 새로 만들 때 이전 것 정리 (이벤트 리스너까지)
+      destroy() { clear(); document.removeEventListener('visibilitychange', onVis); },
       isActive: () => container.classList.contains('active'),
       // 창 크기·글꼴 로딩: 다시 맞추고 연출 중이면 바로 최종 화면(잰 크기가 어긋나지 않게)
       relayout() { if (!inner) return; if (!finished) finish(); layout(); },
@@ -2179,7 +2202,7 @@
   }
 
   // ── 엔딩 "오늘의 결과": 관리자가 넘기는 대로(state.ending.index) 한 장씩, 왼쪽으로 밀리며 바뀜 ──
-  // opts: { layer, colors: OPTION_COLORS, yesnoColors }
+  // opts: { layer, colors: OPTION_COLORS, yesnoColors, choiceCols(객관식 카드 열 수 — 결과 화면과 같은 페이지 설정) }
   // 엔딩 슬라이드 맞춤 단계 [글자 배율, 질문 최대 줄 수(0 = 제한 없음)] — 앞에서부터 처음 맞는 단계를 씀.
   // 먼저 배율만 0.85까지, 그래도 넘치면 질문을 4→3→2줄로 줄이며(말줄임) 배율을 0.6까지. 0.6 = 세로형 막대 이름 15.6px(800 기준)
   const END_FIT = [[1, 0], [0.92, 0], [0.85, 0], [0.85, 4], [0.78, 3], [0.72, 3], [0.66, 2], [0.6, 2]];
@@ -2187,6 +2210,7 @@
   function createEnding(opts) {
     const layer = opts.layer;
     let key = null, slides = [], dots = [], index = -1, frameReq = null;
+    let cardFx = []; // 슬라이드별 객관식 결과 카드(createChoiceCards) — 객관식(3지 이상) 장만, 나머지는 null
     let fitted = false; // 지금 화면 크기로 슬라이드 맞춤을 했는지
 
     // 내용(질문·막대·안내)이 위아래 여백(아래는 페이지 점 자리) 안에 들어가도록 글자 배율을 줄이고, 그래도 넘치면 질문 줄 수를 제한.
@@ -2218,8 +2242,30 @@
 
     function fitAll() {
       if (!layer.classList.contains('active') || !layer.clientHeight) return;
-      slides.forEach(fitSlide);
+      // 객관식 카드 장은 카드 화면이 스스로 칸에 맞춤(결과 화면과 같은 규칙) — 나머지 장은 엔딩 배율 규칙
+      slides.forEach((d, i) => {
+        if (!cardFx[i]) { fitSlide(d); return; }
+        // 칸 전체(머리글 아래 ~ 페이지 점 위)로 재서 맞춘 뒤, 칸을 카드 덩어리 높이로 줄여 머리글과 한 덩어리로 가운데 정렬
+        const box = d.querySelector('.fx-choice-flow');
+        box.style.flex = '';
+        cardFx[i].relayout();
+        const inner = box.querySelector('.fx-cc-inner');
+        if (inner) box.style.flex = `0 0 ${inner.offsetHeight}px`;
+      });
       fitted = true;
+    }
+
+    // 객관식(3지 이상) 장: 결과 화면과 같은 카드 모양 — createChoiceCards를 그대로 쓴다(제목 = 질문, 카드·막대·범례).
+    // 엔딩 틀(위 "질문 n · 객관식", 아래 페이지 점)은 그대로, 카드 덩어리는 그 사이 칸(.fx-choice-flow)에 맞춰 줄어듦
+    function choiceSlide(s, n, i) {
+      const d = el('div', 'fx-end-slide fx-end-cards');
+      d.appendChild(el('div', 'fx-end-kicker', `질문 ${n} · 객관식`));
+      const box = el('div', 'fx-choice fx-choice-flow');
+      d.appendChild(box);
+      const fx = createChoiceCards(box, { cols: opts.choiceCols || (() => 2) });
+      cardFx[i] = fx;
+      fx.show({ question: s.question || '', labels: s.options, colors: opts.colors, perOption: Array.isArray(s.perOption) ? s.perOption : [], animate: false });
+      return d;
     }
 
     function voteSlide(s, n) {
@@ -2273,6 +2319,7 @@
     }
 
     function makeSlide(s, n) {
+      if (s && s.kind === 'vote' && s.voteType !== 'yesno' && Array.isArray(s.options) && s.options.length >= 3) return choiceSlide(s, n, n);
       if (s && s.kind === 'vote') return voteSlide(s, n);
       if (s && s.kind === 'subjective') return subjectiveSlide(s, n);
       const d = el('div', 'fx-end-slide');
@@ -2288,6 +2335,8 @@
     }
 
     function build(list) {
+      cardFx.forEach((fx) => fx && fx.destroy());
+      cardFx = [];
       layer.innerHTML = '';
       slides = list.map((s, i) => { const d = makeSlide(s, i); layer.appendChild(d); return d; });
       const dw = el('div', 'fx-end-dots');
@@ -2317,6 +2366,9 @@
       index = n;
       const fill = () => slides[n].querySelectorAll('.fx-end-fil').forEach((f) => { f.style.width = f.dataset.w + '%'; });
       if (!barAnim) fill();
+      // 객관식 카드 장: 들어올 때 축약 연출(% 카운트업 → 1위·막대), 재접속이면 최종 그대로. 떠나는 장은 바로 최종 모양으로
+      cardFx.forEach((fx, i) => { if (fx && i !== n) fx.finish(); });
+      if (cardFx[n] && barAnim) cardFx[n].replay();
       void layer.offsetWidth; // 바로 바뀐 상태를 먼저 확정한 뒤 전환을 다시 켬
       layer.classList.remove('fx-instant');
       // 다음 프레임에 막대 폭을 줘야 0에서 차오름
@@ -3743,7 +3795,7 @@
     const SPECIAL_MODES = ['idle', 'ending', 'applause', 'applauseResult'];
     // 대기 화면 QR = 이 LED 테마의 관객 주소 (cfg.audiencePath — 세로형 '/', 가로형 '/concert')
     const idleFx = LedFx.idle.create({ layer: document.getElementById('idle-layer'), url: location.origin + cfg.audiencePath, colors: OPTION_COLORS, scale: () => uScale });
-    const endingFx = LedFx.ending.create({ layer: document.getElementById('ending-layer'), colors: OPTION_COLORS, yesnoColors: YESNO_COLORS });
+    const endingFx = LedFx.ending.create({ layer: document.getElementById('ending-layer'), colors: OPTION_COLORS, yesnoColors: YESNO_COLORS, choiceCols: cfg.choiceCols });
     const applauseFx = LedFx.applause.create({ layer: document.getElementById('applause-layer'), colors: OPTION_COLORS });
     // 주소에 ?mic=1 인 화면만 마이크로 함성을 잰다 (그 외 화면은 마이크를 요청하지 않음 → null)
     const micFx = LedFx.applause.createMic({
