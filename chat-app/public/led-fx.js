@@ -608,7 +608,7 @@
     function clear() {
       stopTimers();
       inner = null; cards = []; data = null; finished = true;
-      container.classList.remove('active', 'fx-cc-anim', 'fx-cc-done');
+      container.classList.remove('active', 'fx-cc-anim', 'fx-cc-done', 'fx-cc-still');
       container.innerHTML = '';
     }
 
@@ -725,9 +725,13 @@
       finished = false;
       setPct(0);
       cards.forEach((c, i) => { c.style.animationDelay = (i * CHOICE.STAGGER) + 'ms'; });
+      // 연출 시작 모양(막대 0·범례 투명)은 전환 없이 바로 — 안 그러면 다 찬 막대가 줄어드는 게 잠깐 보임
+      container.classList.add('fx-cc-still', 'fx-cc-anim');
+      void container.offsetWidth;
+      container.classList.remove('fx-cc-still');
       // 질문 카드·공 상자가 걷히는 동안(0.4초)은 비워 두었다가 시작 — 사라지는 카드와 새 제목이 겹쳐 보이지 않게
       timers.push(setTimeout(() => {
-        container.classList.add('fx-cc-anim', 'active');
+        container.classList.add('active');
         timers.push(setTimeout(() => {
           const t0 = performance.now();
           const step = (now) => {
