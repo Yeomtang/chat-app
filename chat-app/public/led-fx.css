@@ -52,6 +52,10 @@
    LED·방송 카메라용: 굵은 도형·큰 글자만 (가는 선·미세 무늬 없음 — 모아레 방지) */
 .fx-choice {
   --fx-cc-u: calc(var(--u) * var(--fx-k, 1) * var(--fx-cc-s, 1));
+  /* 제목·보기 이름·범례는 각자 배율(JS --fx-cc-ts·ns·ls, 전체 배율 이하)로 줄 수를 맞춤 */
+  --fx-cc-tu: calc(var(--u) * var(--fx-k, 1) * var(--fx-cc-ts, 1));
+  --fx-cc-nu: calc(var(--u) * var(--fx-k, 1) * var(--fx-cc-ns, 1));
+  --fx-cc-lu: calc(var(--u) * var(--fx-k, 1) * var(--fx-cc-ls, 1)); /* 범례 (--fx-cc-ls) */
   position: absolute;
   inset: 0;
   display: flex;
@@ -74,7 +78,7 @@
 }
 
 .fx-cc-title {
-  font-size: calc(30px * var(--fx-cc-u));
+  font-size: calc(30px * var(--fx-cc-tu));
   font-weight: 700;
   line-height: 1.35;
   color: var(--ink);
@@ -123,7 +127,7 @@
 .fx-cc-name {
   display: block;
   width: 100%;
-  font-size: calc(28px * var(--fx-cc-u));
+  font-size: calc(28px * var(--fx-cc-nu));
   font-weight: 700;
   line-height: 1.25;
   text-align: center;
@@ -169,23 +173,23 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: calc(10px * var(--fx-cc-u)) calc(28px * var(--fx-cc-u));
-  margin-top: calc(22px * var(--fx-cc-u));
+  gap: calc(10px * var(--fx-cc-lu)) calc(28px * var(--fx-cc-lu));
+  margin-top: calc(22px * var(--fx-cc-lu));
 }
 .fx-cc-leg {
   display: flex;
   align-items: center;
-  gap: calc(10px * var(--fx-cc-u));
+  gap: calc(10px * var(--fx-cc-lu));
   min-width: 0;
   max-width: 100%;
-  font-size: calc(22px * var(--fx-cc-u));
+  font-size: calc(22px * var(--fx-cc-lu));
   font-weight: 700;
   line-height: 1.3;
   color: var(--ink-soft);
 }
 .fx-cc-dot {
-  width: calc(18px * var(--fx-cc-u));
-  height: calc(18px * var(--fx-cc-u));
+  width: calc(18px * var(--fx-cc-lu));
+  height: calc(18px * var(--fx-cc-lu));
   border-radius: 50%;
   flex: none;
 }

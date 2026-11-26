@@ -593,9 +593,10 @@
     // 투표 중 상자 머리 최소 크기(세로형 15·가로형 19px, cfg.boxLabel.minPx)와 같은 선
     STEPS: [1.3, 1.2, 1.1, 1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.54],
     TITLE_LINES: 3, HEAD_LINES: 2,
+    LEGEND_MIN: 0.76,
   };
 
-  // container: #choice-result. opts.cols(n) = 열 수(페이지 설정 — 세로형 2열, 가로형 3~6지 조정)
+  // container: #choice-result. opts.cols(n) = 열 수 또는 열 수 후보 배열(페이지 설정 — 세로형 2열, 가로형 3~6지 조정)
   function createChoiceCards(container, opts) {
     let inner = null, cards = [], data = null, timers = [], raf = null, finished = true;
 
@@ -623,20 +624,39 @@
       const names = cards.map((c) => c.querySelector('.fx-cc-name'));
       const legs = [...inner.querySelectorAll('.fx-cc-leg-name')];
       const lines = (el) => el.scrollHeight / parseFloat(getComputedStyle(el).lineHeight);
-      const apply = (s, cut) => {
+      const STEPS = CHOICE.STEPS, MIN = STEPS[STEPS.length - 1];
+      // 제목(3줄)·보기 이름(2줄)·범례 이름(1줄)은 각자 배율(≤ 전체 배율 s)로 줄 수를 맞춘다 — 긴 이름 때문에 % 숫자·카드·막대까지
+      // 같이 작아져 화면이 비지 않게. 최소 배율로도 넘치면 그 글자만 말줄임
+      const fitLines = (prop, els, texts, max, s, floor = MIN) => {
+        for (const k of STEPS) {
+          if (k > s || k < floor) continue;
+          container.style.setProperty(prop, String(k));
+          els.forEach((el, i) => { el.textContent = texts[i]; });
+          if (els.every((el) => lines(el) <= max + 0.25)) return;
+        }
+        container.style.setProperty(prop, String(Math.min(s, floor)));
+        els.forEach((el, i) => clampText(el, texts[i], max));
+      };
+      const apply = (s) => {
         container.style.setProperty('--fx-cc-s', String(s));
         inner.style.removeProperty('--fx-cc-headh');
-        if (cut) clampText(title, data.question, CHOICE.TITLE_LINES); else title.textContent = data.question;
-        names.forEach((el, i) => { if (cut) clampText(el, data.labels[i], CHOICE.HEAD_LINES); else el.textContent = data.labels[i]; });
-        legs.forEach((el, i) => clampText(el, data.labels[i], 1));
+        fitLines('--fx-cc-ts', [title], [data.question], CHOICE.TITLE_LINES, s);
+        fitLines('--fx-cc-ns', names, data.labels, CHOICE.HEAD_LINES, s);
+        // 범례 이름은 한 줄 — 너무 작아지지 않게 0.76(세로형 16.7px)까지만 줄이고 넘치면 "…" (전체 이름은 카드에 있음)
+        fitLines('--fx-cc-ls', legs, data.labels, 1, s, CHOICE.LEGEND_MIN);
         const headH = Math.max(...cards.map((c) => c.querySelector('.fx-cc-head').offsetHeight));
         inner.style.setProperty('--fx-cc-headh', headH + 'px');
-        return inner.offsetHeight <= availH + 0.5
-          && lines(title) <= CHOICE.TITLE_LINES + 0.25 && names.every((el) => lines(el) <= CHOICE.HEAD_LINES + 0.25);
+        return inner.offsetHeight <= availH + 0.5;
       };
-      let ok = false;
-      for (const s of CHOICE.STEPS) { if (apply(s, false)) { ok = true; break; } }
-      if (!ok) apply(CHOICE.STEPS[CHOICE.STEPS.length - 1], true);
+      const cut = () => title.textContent !== data.question || names.some((el, i) => el.textContent !== data.labels[i]);
+      // 열 수 후보를 차례로(예: 가로형 긴 이름 3지 → 3열에서 말줄임이 나면 2열). 말줄임 없이 들어가는 첫 조합을 쓰고,
+      // 어느 후보로도 말줄임이 남으면 첫 후보에서 들어가는 가장 큰 배율
+      for (const cols of data.cols) {
+        inner.style.setProperty('--fx-cc-cols', String(cols));
+        for (const s of STEPS) { if (apply(s) && !cut()) return; }
+      }
+      inner.style.setProperty('--fx-cc-cols', String(data.cols[0]));
+      for (const s of STEPS) { if (apply(s)) return; }
     }
 
     function setPct(k) { // k: 0~1 카운트업 진행
@@ -656,11 +676,12 @@
       const sum = summarize(o.perOption);
       const labels = o.labels.map((l) => String(l));
       const pcts = labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
-      data = { question: String(o.question || ''), labels, pcts };
-      const cols = Math.max(1, Math.min(labels.length, opts.cols(labels.length)));
+      // 열 수 후보(페이지 설정: 숫자 하나 또는 배열 — 앞에서부터 시도)
+      const cols = [].concat(opts.cols(labels.length)).map((c) => Math.max(1, Math.min(labels.length, c)));
+      data = { question: String(o.question || ''), labels, pcts, cols };
       inner = document.createElement('div');
       inner.className = 'fx-cc-inner';
-      inner.style.setProperty('--fx-cc-cols', String(cols));
+      inner.style.setProperty('--fx-cc-cols', String(cols[0]));
       inner.innerHTML = '<div class="fx-cc-title"></div><div class="fx-cc-grid"></div>' +
         '<div class="fx-cc-ratio"></div><div class="fx-cc-legend"></div>';
       const grid = inner.querySelector('.fx-cc-grid');
@@ -733,8 +754,9 @@
         if (!inner) return null;
         const r = (el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
         const q = (sel) => inner.querySelector(sel);
+        const v = (p) => parseFloat(container.style.getPropertyValue(p)) || 1;
         return {
-          s: parseFloat(container.style.getPropertyValue('--fx-cc-s')) || 1,
+          s: v('--fx-cc-s'), ts: v('--fx-cc-ts'), ns: v('--fx-cc-ns'), cols: +inner.style.getPropertyValue('--fx-cc-cols'),
           inner: r(inner), title: r(q('.fx-cc-title')), grid: r(q('.fx-cc-grid')), ratio: r(q('.fx-cc-ratio')), legend: r(q('.fx-cc-legend')),
           cards: cards.map((c) => Object.assign(r(c), { head: r(c.querySelector('.fx-cc-head')), win: c.classList.contains('win'), name: c.querySelector('.fx-cc-name').textContent, pct: c.querySelector('.fx-cc-pct').textContent })),
           titleText: q('.fx-cc-title').textContent,
