@@ -311,6 +311,16 @@ body {
   100% { opacity: 1; transform: scale(1); }
 }
 
+/* 투표 결과 화면: 질문·"마감" 카드는 걷어내고 결과만 보여 준다(사용자 결정 2026-11-26).
+   카드는 서서히 사라지고, 다음 질문에서 클래스가 빠지면 popIn이 다시 재생된다 */
+#voting-layer.active #voting-question-wrap.result-hidden {
+  animation: questionFadeOut 0.4s ease forwards;
+}
+@keyframes questionFadeOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.96); visibility: hidden; }
+}
+
 /* 질문 카드: 질문(어절 단위 등장) 아래에 타이머 원 (시안 2) */
 #voting-question-card {
   position: relative;

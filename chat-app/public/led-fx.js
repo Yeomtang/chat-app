@@ -3569,7 +3569,9 @@
       // 채팅 등 다른 화면에서 질문이 새로 시작될 때만 어절 단위 등장 (투표→결과·재접속 땐 그대로)
       votingQuestion.dataset.fxSrc = state.question || ''; // 맞추기 전 원래 질문 (화면 크기가 바뀌면 다시 맞춤)
       LedFx.question.render(votingQuestion, fitQuestion(state.question), LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
-      votingQuestion.style.display = 'block'; // 질문은 결과에서도 항상 유지
+      votingQuestion.style.display = 'block';
+      // 투표 결과 화면에선 질문·"마감" 카드를 걷어내고 결과만 (주관식 결과·다른 모드에선 그대로)
+      document.getElementById('voting-question-wrap').classList.toggle('result-hidden', state.mode === 'result');
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
       // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음). 결과 화면은 아래에서 "마감"
@@ -3610,7 +3612,7 @@
         };
         tick();
       } else if (state.mode === 'result') {
-        // 타이머 원은 "마감"으로 남기고(시안 2), 질문은 상단에 유지해 무엇에 대한 결과인지 상기시킴
+        // 질문·"마감" 카드는 위에서 result-hidden으로 걷어냄(2026-11-26 사용자 결정) — 타이머는 마감 상태로만 정리
         if (timerInterval) clearInterval(timerInterval);
         votingTimer.style.display = 'inline-flex';
         LedFx.timer.done(votingTimer);
