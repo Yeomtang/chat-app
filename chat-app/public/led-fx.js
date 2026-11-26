@@ -2921,7 +2921,7 @@
         if (!votingLayer.classList.contains('active') || qCard.offsetHeight === qCardH) return;
         const prevTop = canvasWrap.style.top, prevCloud = cloudWrap.style.top;
         layoutBelowQuestion();
-        if (canvasWrap.style.top !== prevTop) resizeCanvas();
+        if (canvasWrap.style.top !== prevTop) { resizeCanvas(); if (resultShiftOn) applyResultShift(true, false); }
         if (cloudWrap.style.top !== prevCloud) cloudFx.relayout();
       }).observe(document.getElementById('voting-question-card'));
     }
@@ -2983,6 +2983,7 @@
     }
     window.addEventListener('resize', () => {
       applyScreenScale(); refitQuestion(); layoutBelowQuestion(); resizeCanvas();
+      if (resultShiftOn) applyResultShift(true, false); // 2지선다 결과 가운데 맞춤도 새 크기로
       // 숫자 변신 중 크기가 바뀌면 글자 위치가 어긋나므로 바로 최종 화면(원 + 비율)으로
       if (reveal) { reveal = null; resultShownAt = 0; }
       cloudFx.relayout(); // 워드클라우드 자리도 새 크기로 다시 잡음 (자체 150ms 지연)
@@ -3000,7 +3001,7 @@
     // (워드클라우드는 자리를 다시 섞어 깜빡이므로 제외 — 질문 카드는 클라우드보다 먼저 그려져 이미 글꼴이 있음)
     if (document.fonts && document.fonts.addEventListener) {
       document.fonts.addEventListener('loadingdone', () => {
-        if (votingLayer.classList.contains('active')) { qFitKey = null; refitQuestion(); layoutBelowQuestion(); resizeCanvas(); barRace.relayout(); }
+        if (votingLayer.classList.contains('active')) { qFitKey = null; refitQuestion(); layoutBelowQuestion(); resizeCanvas(); if (resultShiftOn) applyResultShift(true, false); barRace.relayout(); }
         endingFx.relayout();
         idleFx.refitUrl();
       });
@@ -3016,6 +3017,17 @@
         question: qFit && { px: qFit.px, cut: qFit.cut },
         header: f ? { px: f.px, maxW: Math.round(f.maxW), h: f.h, labels: f.labels.map((ls) => measure(f.px, ls)) } : null,
         reveal: reveal ? { px: reveal.labelFit.px, maxW: Math.round(reveal.labelMaxW), cut: reveal.labelFit.cut, lines: measure(reveal.labelFit.px, reveal.labelFit.lines) } : null,
+        // 겹침 점검용: 화면(뷰포트) 좌표의 상자(머리 포함)·2지선다 원 덩어리
+        boxes: (() => {
+          if (!optCount || isRound() || !canvas.width) return null;
+          const c = canvas.getBoundingClientRect();
+          return Array.from({ length: optCount }, (_, i) => { const b = boxRect(i); return { left: c.left + b.x * uScale, top: c.top + b.y * uScale, right: c.left + (b.x + b.w) * uScale, bottom: c.top + (b.y + b.h) * uScale, headBottom: c.top + (b.y + headH()) * uScale }; });
+        })(),
+        round: (() => {
+          if (!isRound() || !canvas.width) return null;
+          const c = canvas.getBoundingClientRect(), L = roundLayout();
+          return { top: c.top + L.groupTop * uScale, bottom: c.top + L.groupBottom * uScale, circles: L.centers.map((p) => ({ left: c.left + (p.x - L.R) * uScale, right: c.left + (p.x + L.R) * uScale, top: c.top + (p.y - L.R) * uScale, bottom: c.top + (p.y + L.R) * uScale })), shift: canvasWrap.style.transform };
+        })(),
       };
     };
 
@@ -3253,6 +3265,7 @@
       const cy = y0 + pctBand + R;
       const dx = Math.max(w * 0.22, R + w * 0.035);
       rlay = { R, pctPx, px, labels, pctY: y0 + pctPx * 0.8, labTop: cy + R + gap,
+        groupTop: y0, groupBottom: y0 + pctBand + 2 * R + gap + labH, // 비율 글자 ~ 보기 이름 덩어리 (결과 화면 가운데 맞춤용)
         centers: [{ x: w / 2 - dx, y: cy }, { x: w / 2 + dx, y: cy }] };
       return rlay;
     }
@@ -3484,6 +3497,24 @@
     let resultKey = null;       // 지금 보여주는 결과(질문·보기·득표) — 같은 결과 재전송 판별용
     const barRace = LedFx.result.createBarRace(document.getElementById('bar-race'));
 
+    // ── 2지선다 결과 화면 세로 가운데 맞춤 ── 결과에선 질문·"마감" 카드가 걷히므로(result-hidden) 카드 아래 기준으로 잡힌
+    // 원 + 비율 + 보기 이름 덩어리를 화면 세로 가운데로 올린다. 캔버스 크기는 그대로 두고 캔버스 칸을 translateY로만 옮겨
+    // 결과 공개 연출(공 흩어짐·점 글자·점→면·원 복귀)의 좌표가 바뀌지 않음 → 카드가 사라지는 0.4초와 같이 0.5초 ease로 미끄러짐.
+    // 재접속·창 크기 변경은 전환 없이 바로. 다음 질문이 시작되면 원래 자리(카드 아래)로.
+    let resultShiftOn = false;
+    function applyResultShift(on, animate) {
+      resultShiftOn = !!on;
+      let y = 0;
+      if (on) {
+        const L = roundLayout();
+        const layerH = votingLayer.clientHeight;
+        const mid = canvasWrap.offsetTop + (L.groupTop + L.groupBottom) / 2 * uScale; // 지금 덩어리 가운데(px, 레이어 기준)
+        y = Math.round(layerH / 2 - mid);
+      }
+      canvasWrap.style.transition = animate && y ? 'transform 0.5s ease' : 'none';
+      canvasWrap.style.transform = y ? `translateY(${y}px)` : '';
+    }
+
     function stopResultFx() {
       reveal = null;
       resultPer = null;
@@ -3573,6 +3604,7 @@
         timerGauge.stop();
         if (state.mode === 'chat') pinFx.show(state.pinnedChat || null, false); // 재접속·채팅 복귀 시 핀 상태 복원 (같은 핀이면 그대로)
         else pinFx.clear(); // 대기·엔딩·함성 화면에선 핀 숨김
+        applyResultShift(false, false);
         return;
       }
 
@@ -3659,6 +3691,8 @@
         pickFx.clear();
         cloudFx.clear();
       }
+      // 2지선다 결과: 원 + 비율 덩어리를 화면 세로 가운데로 (투표 중에서 실시간으로 넘어올 때만 미끄러지듯)
+      applyResultShift(state.mode === 'result' && isRound(), !isSnapshot && prevMode === 'voting' && !LedFx.prefersReduced());
     }
 
     // ── 대기 화면 · 엔딩 · 함성 미터 ── 움직임은 LedFx, 여기서는 레이어와 설정만
