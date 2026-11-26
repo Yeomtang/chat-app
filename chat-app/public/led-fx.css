@@ -40,97 +40,170 @@
 
 .fx-burst-dot { border-radius: 50%; }
 
-/* ── 결과: 막대 경주로 넘어갈 때 공 상자 캔버스를 서서히 숨김 ── */
+/* ── 결과: 객관식 결과 카드 화면으로 넘어갈 때 공 상자 캔버스를 서서히 숨김 ── */
 .fx-hidden {
   opacity: 0;
   transition: opacity 0.4s ease;
 }
 
-/* ── 객관식 막대 경주 (LedFx.result.createBarRace) — 공 상자와 같은 자리 ── */
-.fx-bars {
+/* ── 객관식 3지 이상 결과 카드 화면 (LedFx.result.createChoiceCards) — 관객 폰 결과 화면과 같은 모양 ──
+   질문 제목 → 보기 카드(컬러 머리 + 연한 본문의 큰 %) 격자 → 전체 비율 막대 → 범례. 덩어리 전체가 화면 가운데.
+   크기는 --u(화면 배율) × --fx-k(가로형 1.3) × --fx-cc-s(화면에 안 들어가면 JS가 줄이는 배율).
+   LED·방송 카메라용: 굵은 도형·큰 글자만 (가는 선·미세 무늬 없음 — 모아레 방지) */
+.fx-choice {
+  --fx-cc-u: calc(var(--u) * var(--fx-k, 1) * var(--fx-cc-s, 1));
   position: absolute;
   inset: 0;
-  padding: 0 calc(48px * var(--u));
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
-}
-
-.fx-bars.active { opacity: 1; }
-
-.fx-bars-area {
-  position: relative;
-  height: 100%;
-}
-
-/* 순위가 바뀌면 줄이 부드럽게 자리를 바꿈 (top·height는 JS가 이름 줄 수와 칸 높이로 지정 — 행끼리 겹치지 않음).
-   --fx-bar-s: 칸이 모자랄 때 JS가 줄이는 글자 배율 (최소 0.75) */
-.fx-bar-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  display: grid;
-  /* 이름 칸 = 가장 긴 이름의 실제 폭(JS가 --fx-bar-labw로, 최대 32%) — 이름이 짧아도 묶음이 오른쪽으로 쏠리지 않고 가운데 */
-  grid-template-columns: var(--fx-bar-labw, minmax(0, 32%)) minmax(0, 1fr) calc(84px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
-  gap: calc(16px * var(--u));
-  align-items: center;
-  transition: top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.fx-bars.fx-instant .fx-bar-row { transition: none; }
-
-.fx-bar-label {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: calc(6px * var(--u));
-  min-width: 0;
-  font-size: calc(20px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
-  font-weight: 700;
-  color: var(--ink);
-  line-height: 1.25;
-  text-align: right;
+  justify-content: center;
+  padding: calc(36px * var(--u)) calc(44px * var(--u));
+  z-index: 2;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+  pointer-events: none;
+}
+.fx-choice.active { opacity: 1; visibility: visible; transition: opacity 0.3s ease; }
+
+.fx-cc-inner {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
-/* 긴 보기 이름은 두 줄까지 — 넘치면 JS(clampText)가 "…"로 자름. 띄어쓰기 없는 긴 이름도 칸 안에서 줄바꿈 */
-.fx-bar-name {
+.fx-cc-title {
+  font-size: calc(30px * var(--fx-cc-u));
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+  margin-bottom: calc(30px * var(--fx-cc-u));
+}
+
+/* 카드 격자: 열 수 = --fx-cc-cols, 덜 찬 마지막 줄은 가운데 (flex-wrap) */
+.fx-cc-grid {
+  --fx-cc-gap: calc(24px * var(--fx-cc-u));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--fx-cc-gap);
+}
+
+.fx-cc-card {
+  width: calc((100% - var(--fx-cc-gap) * (var(--fx-cc-cols) - 1)) / var(--fx-cc-cols));
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: calc(18px * var(--u));
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.5s ease;
+}
+/* 1위(동률이면 모두): 보기 색 굵은 테두리 — 칸 사이 간격보다 얇아 이웃 카드와 겹치지 않음 */
+.fx-choice.fx-cc-done .fx-cc-card.win {
+  box-shadow: 0 0 0 calc(6px * var(--u) * var(--fx-k, 1)) var(--fx-cc-c), var(--shadow-lg);
+}
+
+.fx-cc-head {
+  background: var(--fx-cc-c);
+  color: var(--surface);
+  min-height: var(--fx-cc-headh, 0px); /* 모든 카드 머리 높이 같게 (JS가 가장 높은 머리에 맞춤) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px * var(--fx-cc-u)) calc(16px * var(--fx-cc-u));
+  box-sizing: border-box;
+}
+.fx-cc-name {
+  display: block;
+  width: 100%;
+  font-size: calc(28px * var(--fx-cc-u));
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 이름도 카드 폭 안에서 줄바꿈 */
+  text-wrap: balance;
+}
+
+/* 본문: 보기 색을 아주 옅게 섞은 바탕 + 보기 색 큰 % */
+.fx-cc-body {
+  background: color-mix(in srgb, var(--fx-cc-c) 10%, var(--surface));
+  height: calc(112px * var(--fx-cc-u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fx-cc-pct {
+  font-size: calc(60px * var(--fx-cc-u));
+  font-weight: 700;
+  line-height: 1;
+  color: var(--fx-cc-c);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 전체 비율 막대: 굵은 한 줄, 조각 = 보기 색 */
+.fx-cc-ratio {
+  display: flex;
+  height: calc(28px * var(--fx-cc-u));
+  margin-top: calc(40px * var(--fx-cc-u));
+  border-radius: calc(100px * var(--u));
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.fx-cc-seg {
+  height: 100%;
+  width: var(--fx-cc-w);
+  flex: none;
+}
+
+/* 범례: ● 이름 % — 한 줄에 여러 개, 넘치면 다음 줄 (가운데) */
+.fx-cc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(10px * var(--fx-cc-u)) calc(28px * var(--fx-cc-u));
+  margin-top: calc(22px * var(--fx-cc-u));
+}
+.fx-cc-leg {
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--fx-cc-u));
+  min-width: 0;
+  max-width: 100%;
+  font-size: calc(22px * var(--fx-cc-u));
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink-soft);
+}
+.fx-cc-dot {
+  width: calc(18px * var(--fx-cc-u));
+  height: calc(18px * var(--fx-cc-u));
+  border-radius: 50%;
+  flex: none;
+}
+.fx-cc-leg-name {
   min-width: 0;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+.fx-cc-leg-pct { flex: none; font-variant-numeric: tabular-nums; }
 
-.fx-bar-rank {
-  display: none;
-  flex-shrink: 0;
-  white-space: nowrap;
-  color: var(--orange-deep);
-}
-
-.fx-bar-row.win .fx-bar-rank { display: inline; }
-
-.fx-bar-track {
-  height: 62%;
-  min-height: calc(18px * var(--u));
-  max-height: calc(48px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1)); /* 칸이 넓어도 막대가 뭉툭해지지 않게 */
-  background: var(--surface);
-  border-radius: calc(12px * var(--u));
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-
-.fx-bar-fill {
-  height: 100%;
-  width: 0;
-  border-radius: calc(12px * var(--u));
-}
-
-.fx-bar-pct {
-  font-size: calc(24px * var(--u) * var(--fx-k, 1) * var(--fx-bar-s, 1));
-  font-weight: 700;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  text-align: right; /* 자릿수가 달라도(5%·100%) % 끝이 세로로 맞게 */
-}
+/* 등장 연출(실시간 결과만, .fx-cc-anim): 카드 차례로 공용 popIn → % 카운트업(JS) → 1위 테두리·막대 채움·범례 */
+.fx-choice.fx-cc-anim .fx-cc-title { animation: fxCcFade 0.4s ease both; }
+.fx-choice.fx-cc-anim .fx-cc-card { animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.fx-choice.fx-cc-anim .fx-cc-seg { width: 0; transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.fx-choice.fx-cc-anim.fx-cc-done .fx-cc-seg { width: var(--fx-cc-w); }
+.fx-choice.fx-cc-anim .fx-cc-legend { opacity: 0; transition: opacity 0.5s ease; }
+.fx-choice.fx-cc-anim.fx-cc-done .fx-cc-legend { opacity: 1; }
+@keyframes fxCcFade { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── 주관식 워드클라우드 (LedFx.cloud) ──
    처음엔 flex로 최종 배치를 잡고(.fx-cloud), 잰 자리에 절대 위치로 고정(.placed)한 뒤
@@ -714,8 +787,10 @@
 @media (prefers-reduced-motion: reduce) {
   .fx-word.in { animation: none; opacity: 1; }
   .fx-hidden,
-  .fx-bars,
-  .fx-bar-row,
+  .fx-choice,
+  .fx-cc-card,
+  .fx-cc-seg,
+  .fx-cc-legend,
   .fx-cloud.placed .fx-cloud-word,
   .fx-cloud-count,
   .fx-screen,

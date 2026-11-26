@@ -577,153 +577,169 @@
     return { draw, labelAlpha, numColor, text, labelFit, labelMaxW: W * 0.9, dots: N };
   }
 
-  // ── 객관식 3지 이상: 막대 경주 (시안 4) ──
-  // 막대가 흔들리며 자라 중간에 순위가 바뀌다가, 3.2초 뒤 정렬된 결과로 확정
-  const RACE_MS = 3200;
-  // 막대 경주 중 순위 바꾸기 조건 — 매 프레임 바꾸면 접전일 때 행이 오가다 한자리에 겹쳐 보임(비율 숫자 섞임)
-  const RACE_SWAP_PCT = 1.5;  // 뒤 행이 앞 행보다 이만큼(%p) 앞서야 자리를 바꿈
-  const RACE_SWAP_GAP = 550;  // 직전 자리바꿈 후 이 시간(ms) 안엔 다시 바꾸지 않음 (행 이동 전환 0.5초가 끝난 뒤)
+  // ── 객관식 3지 이상 결과: 관객 폰 결과 화면과 같은 모양 (2026-11-26 사용자 요청 — 막대 경주 대체) ──
+  // 위에 질문 제목(카드 없음) → 보기마다 컬러 머리(이름) + 연한 본문(큰 %) 카드 격자(1위는 보기 색 테두리, 동률이면 모두)
+  // → 전체 비율 가로 막대 → 범례(● 이름 %). 덩어리 전체가 화면 세로 가운데. 색은 OPTION_COLORS 순서 그대로.
+  // 등장(실시간 결과일 때만): 0.35초 뒤 카드가 차례로 popIn + % 카운트업 → 1위 테두리·아래 막대 채움·범례 (끝까지 약 1.7초).
+  // 재접속·탭 숨김·동작 줄이기·0표면 바로 최종 화면.
+  const CHOICE = {
+    DELAY: 350,     // 질문 카드·상자가 걷히는 시간(0.4초) 뒤 시작
+    STAGGER: 70,    // 카드 popIn 간격(ms)
+    COUNT_AT: 120,  // % 카운트업 시작
+    COUNT_MS: 700,  // % 카운트업 길이
+    FINISH_AT: 820, // 1위 테두리·막대 채움·범례 시작 (CSS 전환 0.5초)
+    // 글자 배율 단계(--fx-cc-s): 덩어리가 화면에 안 들어가면 한 단계씩 줄임.
+    // 1.3에서 시작(보기가 적으면 멀리서도 크게). 마지막 0.54 = 보기 이름 세로형 15.1px·가로형 19.7px(논리) —
+    // 투표 중 상자 머리 최소 크기(세로형 15·가로형 19px, cfg.boxLabel.minPx)와 같은 선
+    STEPS: [1.3, 1.2, 1.1, 1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.54],
+    TITLE_LINES: 3, HEAD_LINES: 2,
+  };
 
-  // 글자 배율 단계(--fx-bar-s): 행이 칸에 다 안 들어가면 한 단계씩 줄임. 0.75 = 보기 이름 15px(세로형 800 기준) — 이보다 작게는 안 줄임
-  const BAR_STEPS = [1, 0.92, 0.84, 0.75];
+  // container: #choice-result. opts.cols(n) = 열 수(페이지 설정 — 세로형 2열, 가로형 3~6지 조정)
+  function createChoiceCards(container, opts) {
+    let inner = null, cards = [], data = null, timers = [], raf = null, finished = true;
 
-  function createBarRace(container) {
-    let raf = null;
-    let rows = [], area = null, labels = [], winners = [];
-    let cur = null; // 지금 자리 { vals, order, done } — 창 크기가 바뀌면 이 상태로 다시 배치
-    let geo = null; // 행 배치 { y0, pitch, rowH } (px)
-
-    function clear() {
+    function stopTimers() {
+      timers.forEach(clearTimeout); timers = [];
       if (raf) cancelAnimationFrame(raf);
       raf = null;
-      rows = []; area = null; cur = null; geo = null;
-      container.classList.remove('active');
+    }
+    function clear() {
+      stopTimers();
+      inner = null; cards = []; data = null; finished = true;
+      container.classList.remove('active', 'fx-cc-anim');
       container.innerHTML = '';
     }
 
-    // 행 높이 = 보기 이름 줄 수(최대 2줄)에 맞춘 실제 높이. 행끼리 겹치지 않게 칸이 모자라면 글자를 한 단계씩 줄이고,
-    // 그래도 모자라면 이름을 1줄로. 남으면 행 간격을 행 높이의 45%까지만 벌리고 가운데 모음 (3지에서 빈 띠 방지)
+    // 화면에 맞추기: 큰 배율부터 — 제목 3줄·보기 이름 2줄 안에 들고 덩어리가 칸 높이 안에 들면 그 배율.
+    // 최소 배율로도 안 되면 제목·이름을 말줄임(장평 압축 없음). 범례 이름은 한 줄(넘치면 "…" — 전체 이름은 카드에 있음).
+    // 카드 머리 높이는 모든 카드가 같게(같은 역할 = 같은 모양) — 가장 높은 머리에 맞춤
     function layout() {
-      if (!area || !rows.length) return;
-      const H = area.clientHeight;
-      if (!H) return;
-      const u = parseFloat(getComputedStyle(container).getPropertyValue('--u')) || 1;
-      const n = rows.length;
-      const gapMin = 8 * u;
-      // 재는 동안은 최종 1위 표시(· 1위)를 켜 둔다 — 결과가 확정되며 배지가 붙어도 줄 수가 늘지 않게
-      container.style.removeProperty('--fx-bar-labw'); // 이름 칸은 최대 폭(32%)에서 줄바꿈을 정한 뒤 실제 폭으로 좁힘
-      rows.forEach((r, i) => { r.style.height = ''; r.classList.toggle('win', winners.includes(i)); });
-      const measure = (lines) => {
-        rows.forEach((r, i) => clampText(r.querySelector('.fx-bar-name'), labels[i], lines));
-        return Math.max(...rows.map((r) => r.offsetHeight));
+      if (!inner || !data) return;
+      const cs = getComputedStyle(container);
+      const availH = container.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      if (!(availH > 0)) return;
+      const title = inner.querySelector('.fx-cc-title');
+      const names = cards.map((c) => c.querySelector('.fx-cc-name'));
+      const legs = [...inner.querySelectorAll('.fx-cc-leg-name')];
+      const lines = (el) => el.scrollHeight / parseFloat(getComputedStyle(el).lineHeight);
+      const apply = (s, cut) => {
+        container.style.setProperty('--fx-cc-s', String(s));
+        inner.style.removeProperty('--fx-cc-headh');
+        if (cut) clampText(title, data.question, CHOICE.TITLE_LINES); else title.textContent = data.question;
+        names.forEach((el, i) => { if (cut) clampText(el, data.labels[i], CHOICE.HEAD_LINES); else el.textContent = data.labels[i]; });
+        legs.forEach((el, i) => clampText(el, data.labels[i], 1));
+        const headH = Math.max(...cards.map((c) => c.querySelector('.fx-cc-head').offsetHeight));
+        inner.style.setProperty('--fx-cc-headh', headH + 'px');
+        return inner.offsetHeight <= availH + 0.5
+          && lines(title) <= CHOICE.TITLE_LINES + 0.25 && names.every((el) => lines(el) <= CHOICE.HEAD_LINES + 0.25);
       };
-      let rowH = 0, ok = false;
-      for (const lines of [2, 1]) {
-        for (const s of BAR_STEPS) {
-          container.style.setProperty('--fx-bar-s', String(s));
-          rowH = Math.max(measure(lines), 44 * u * s);
-          if (n * rowH + (n - 1) * gapMin <= H) { ok = true; break; }
-        }
-        if (ok) break;
-      }
-      // 극단적으로 좁을 때(글자는 이미 최소·1줄): 행 높이를 글자 높이 아래로 줄이지 않는다(행끼리 겹침 방지) —
-      // 행 간격은 하한(gapMin)만 두고 칸 위 끝부터 쌓아, 모자라는 만큼은 아래 여백 쪽으로 넘침
-      // 이름 칸을 가장 긴 이름(1위 배지 포함)의 실제 폭으로 — 막대·% 묶음이 화면 가운데에 오게 (줄바꿈은 그대로)
-      const labW = maxInkWidth(rows.map((r) => r.querySelector('.fx-bar-label')));
-      if (labW > 0) container.style.setProperty('--fx-bar-labw', Math.ceil(labW + 1) + 'px');
-      const pitch = !ok ? rowH + gapMin : n > 1 ? Math.min((H - rowH) / (n - 1), rowH * 1.45) : 0;
-      geo = { y0: ok ? (H - rowH - (n - 1) * pitch) / 2 : 0, pitch, rowH };
-      rows.forEach((r) => { r.style.height = rowH + 'px'; r.classList.remove('win'); });
-      if (cur) place(cur.vals, cur.order, cur.done);
+      let ok = false;
+      for (const s of CHOICE.STEPS) { if (apply(s, false)) { ok = true; break; } }
+      if (!ok) apply(CHOICE.STEPS[CHOICE.STEPS.length - 1], true);
     }
 
-    let scaleMax = 10, top = [];
-    function place(vals, order, done) {
-      cur = { vals, order, done };
-      rows.forEach((r, i) => {
-        if (geo) r.style.top = (geo.y0 + order.indexOf(i) * geo.pitch) + 'px';
-        r.querySelector('.fx-bar-fill').style.width = (vals[i] / scaleMax * 100) + '%';
-        r.querySelector('.fx-bar-pct').textContent = Math.round(vals[i]) + '%';
-        r.classList.toggle('win', done && top.includes(i)); // 1위 동률이면 모두 표시
-      });
+    function setPct(k) { // k: 0~1 카운트업 진행
+      cards.forEach((c, i) => { c.querySelector('.fx-cc-pct').textContent = Math.round(data.pcts[i] * k) + '%'; });
+    }
+    function finish() {
+      stopTimers();
+      finished = true;
+      if (!inner) return;
+      setPct(1);
+      container.classList.add('fx-cc-done');
     }
 
-    // opts: { labels, colors, perOption, animate }
-    function show(opts) {
+    // o: { question, labels, colors, perOption, animate }
+    function show(o) {
       clear();
-      const sum = summarize(opts.perOption);
-      labels = opts.labels.map((l) => String(l));
+      const sum = summarize(o.perOption);
+      const labels = o.labels.map((l) => String(l));
       const pcts = labels.map((_, i) => (sum.total ? Math.round((sum.per[i] || 0) / sum.total * 100) : 0));
-      const maxPct = Math.max(0, ...pcts);
-      scaleMax = Math.max(10, maxPct * 1.12); // 1위 막대가 트랙을 거의 채우게
-      top = sum.top;
-      winners = sum.total ? sum.top : [];
-      // 흔들림 폭: 중간에 순위가 뒤집히는 재미용. 접전(이웃 순위 차 3%p 미만)이면 줄여 자리바꿈이 잦지 않게
-      const sorted = pcts.slice().sort((x, y) => y - x);
-      const tight = sorted.some((v, i) => i > 0 && sorted[i - 1] - v < 3);
-      const wobbleAmp = maxPct * (tight ? 0.16 : 0.26);
-      // 최종 순서: 득표 내림차순, 같으면 보기 순서
-      const finalOrder = pcts.map((v, i) => [sum.per[i] || 0, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map((x) => x[1]);
-
-      area = document.createElement('div');
-      area.className = 'fx-bars-area';
-      rows = labels.map((label, i) => {
-        const r = document.createElement('div');
-        r.className = 'fx-bar-row';
-        r.innerHTML = '<div class="fx-bar-label"><span class="fx-bar-name"></span><span class="fx-bar-rank">· 1위</span></div>' +
-          '<div class="fx-bar-track"><div class="fx-bar-fill"></div></div><div class="fx-bar-pct">0%</div>';
-        r.querySelector('.fx-bar-name').textContent = label;
-        r.querySelector('.fx-bar-fill').style.background = opts.colors[i % opts.colors.length];
-        area.appendChild(r);
-        return r;
+      data = { question: String(o.question || ''), labels, pcts };
+      const cols = Math.max(1, Math.min(labels.length, opts.cols(labels.length)));
+      inner = document.createElement('div');
+      inner.className = 'fx-cc-inner';
+      inner.style.setProperty('--fx-cc-cols', String(cols));
+      inner.innerHTML = '<div class="fx-cc-title"></div><div class="fx-cc-grid"></div>' +
+        '<div class="fx-cc-ratio"></div><div class="fx-cc-legend"></div>';
+      const grid = inner.querySelector('.fx-cc-grid');
+      const ratio = inner.querySelector('.fx-cc-ratio');
+      const legend = inner.querySelector('.fx-cc-legend');
+      cards = labels.map((label, i) => {
+        const color = o.colors[i % o.colors.length];
+        const c = document.createElement('div');
+        c.className = 'fx-cc-card';
+        c.style.setProperty('--fx-cc-c', color);
+        if (sum.total && sum.top.includes(i)) c.classList.add('win'); // 1위(동률이면 모두) — 0표면 강조 없음
+        c.innerHTML = '<div class="fx-cc-head"><span class="fx-cc-name"></span></div><div class="fx-cc-body"><span class="fx-cc-pct">0%</span></div>';
+        grid.appendChild(c);
+        // 전체 비율 막대 조각: 반올림 전 실제 비율(합 100%) — 0표 보기는 조각 없음
+        const share = sum.total ? (sum.per[i] || 0) / sum.total * 100 : 0;
+        if (share > 0) {
+          const seg = document.createElement('div');
+          seg.className = 'fx-cc-seg';
+          seg.style.background = color;
+          seg.style.setProperty('--fx-cc-w', share + '%');
+          ratio.appendChild(seg);
+        }
+        const item = document.createElement('div');
+        item.className = 'fx-cc-leg';
+        item.innerHTML = '<i class="fx-cc-dot"></i><span class="fx-cc-leg-name"></span><span class="fx-cc-leg-pct"></span>';
+        item.querySelector('.fx-cc-dot').style.background = color;
+        item.querySelector('.fx-cc-leg-pct').textContent = pcts[i] + '%';
+        legend.appendChild(item);
+        return c;
       });
-      container.appendChild(area);
-      // 첫 배치는 전환 없이 (행이 0에서 미끄러져 들어오지 않게)
-      container.classList.add('fx-instant');
+      container.appendChild(inner);
       layout();
 
-      if (!opts.animate || prefersReduced() || !sum.total) {
-        place(pcts, finalOrder, true);
-        void container.offsetWidth;
-        container.classList.remove('fx-instant');
-        container.classList.add('active');
+      const animate = o.animate && !prefersReduced() && !document.hidden && sum.total > 0;
+      if (!animate) {
+        finished = true;
+        setPct(1);
+        container.classList.add('fx-cc-done', 'active');
         return;
       }
-      place(pcts.map(() => 0), labels.map((_, i) => i), false);
-      void container.offsetWidth;
-      container.classList.remove('fx-instant');
-      container.classList.add('active');
-      const t0 = performance.now();
-      let order = labels.map((_, i) => i), swappedAt = -Infinity;
-      const frame = (now) => {
-        const t = (now - t0) / RACE_MS;
-        if (t >= 1) { raf = null; place(pcts, finalOrder, true); return; } // 확정 순위 = 실제 득표 순위
-        // 보기마다 다른 흔들림 → 중간에 순위가 뒤집혔다가 제자리로
-        const vals = pcts.map((v, i) => Math.max(0, v * ease(t) + Math.sin(t * Math.PI * 2.2 + i * 1.7) * wobbleAmp * (1 - t) * ease(t)));
-        // 순위 바꾸기(히스테리시스): 바로 위 행보다 RACE_SWAP_PCT 이상 앞설 때만, 직전 자리바꿈 후 RACE_SWAP_GAP 지난 뒤에만
-        if (now - swappedAt >= RACE_SWAP_GAP) {
-          const next = order.slice();
-          for (let j = 1; j < next.length; j++) {
-            for (let k = j; k > 0 && vals[next[k]] - vals[next[k - 1]] >= RACE_SWAP_PCT; k--) [next[k - 1], next[k]] = [next[k], next[k - 1]];
-          }
-          if (next.some((v, j) => v !== order[j])) { order = next; swappedAt = now; }
-        }
-        place(vals, order, false);
-        raf = requestAnimationFrame(frame);
-      };
-      raf = requestAnimationFrame(frame);
+      finished = false;
+      setPct(0);
+      cards.forEach((c, i) => { c.style.animationDelay = (i * CHOICE.STAGGER) + 'ms'; });
+      // 질문 카드·공 상자가 걷히는 동안(0.4초)은 비워 두었다가 시작 — 사라지는 카드와 새 제목이 겹쳐 보이지 않게
+      timers.push(setTimeout(() => {
+        container.classList.add('fx-cc-anim', 'active');
+        timers.push(setTimeout(() => {
+          const t0 = performance.now();
+          const step = (now) => {
+            const t = Math.min(1, (now - t0) / CHOICE.COUNT_MS);
+            setPct(ease(t));
+            raf = t < 1 ? requestAnimationFrame(step) : null;
+          };
+          raf = requestAnimationFrame(step);
+        }, CHOICE.COUNT_AT));
+        timers.push(setTimeout(finish, CHOICE.FINISH_AT));
+      }, CHOICE.DELAY));
     }
+
+    // 연출 중 탭이 가려지면(타이머·rAF가 멈춤) 바로 최종 화면
+    document.addEventListener('visibilitychange', () => { if (document.hidden && !finished) finish(); });
 
     return {
       show, clear,
       isActive: () => container.classList.contains('active'),
-      // 창 크기·글꼴 로딩으로 칸이 바뀌면 행 높이·간격을 다시 잼 (전환 없이)
-      relayout() {
-        if (!area) return;
-        container.classList.add('fx-instant');
-        layout();
-        void container.offsetWidth;
-        container.classList.remove('fx-instant');
+      // 창 크기·글꼴 로딩: 다시 맞추고 연출 중이면 바로 최종 화면(잰 크기가 어긋나지 않게)
+      relayout() { if (!inner) return; if (!finished) finish(); layout(); },
+      // 점검용: 화면 좌표의 제목·카드·막대·범례 상자
+      inspect() {
+        if (!inner) return null;
+        const r = (el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
+        const q = (sel) => inner.querySelector(sel);
+        return {
+          s: parseFloat(container.style.getPropertyValue('--fx-cc-s')) || 1,
+          inner: r(inner), title: r(q('.fx-cc-title')), grid: r(q('.fx-cc-grid')), ratio: r(q('.fx-cc-ratio')), legend: r(q('.fx-cc-legend')),
+          cards: cards.map((c) => Object.assign(r(c), { head: r(c.querySelector('.fx-cc-head')), win: c.classList.contains('win'), name: c.querySelector('.fx-cc-name').textContent, pct: c.querySelector('.fx-cc-pct').textContent })),
+          titleText: q('.fx-cc-title').textContent,
+          legend_items: [...inner.querySelectorAll('.fx-cc-leg')].map((e) => Object.assign(r(e), { text: e.textContent })),
+        };
       },
     };
   }
@@ -2626,7 +2642,7 @@
     timer,
     balls,
     hearts: { create: createHeartBurst, enabledFrom: heartBurstEnabled, MODES: HEART_MODES },
-    result: { summarize, createReveal, createBarRace, REVEAL, RACE_MS },
+    result: { summarize, createReveal, createChoiceCards, REVEAL, CHOICE },
     answers: { create: createAnswerStream, normalize: normText, STREAM },
     cloud: { create: createCloud, size: cloudSize, CLOUD },
     lift: { create: createLift, LIFT },
@@ -2991,7 +3007,7 @@
       if (relayoutTimer) clearTimeout(relayoutTimer);
       relayoutTimer = setTimeout(() => {
         relayoutTimer = null;
-        barRace.relayout(); // 막대 행 높이·간격도 새 칸에 맞춰
+        choiceFx.relayout(); // 객관식 결과 카드도 새 화면 크기에 맞춰
         endingFx.relayout(); // 엔딩 슬라이드도 새 화면 높이에 맞춰
         idleFx.relayout(); // 대기 화면 QR·피드도 새 크기로
       }, 150);
@@ -3001,13 +3017,14 @@
     // (워드클라우드는 자리를 다시 섞어 깜빡이므로 제외 — 질문 카드는 클라우드보다 먼저 그려져 이미 글꼴이 있음)
     if (document.fonts && document.fonts.addEventListener) {
       document.fonts.addEventListener('loadingdone', () => {
-        if (votingLayer.classList.contains('active')) { qFitKey = null; refitQuestion(); layoutBelowQuestion(); resizeCanvas(); if (resultShiftOn) applyResultShift(true, false); barRace.relayout(); }
+        if (votingLayer.classList.contains('active')) { qFitKey = null; refitQuestion(); layoutBelowQuestion(); resizeCanvas(); if (resultShiftOn) applyResultShift(true, false); choiceFx.relayout(); }
         endingFx.relayout();
         idleFx.refitUrl();
       });
     }
 
     // 점검용(QA 하네스): 지금 그려진 상자 헤더 라벨·숫자 변신 라벨의 글자 크기와 줄
+    window.LedFx.page.choice = () => choiceFx.inspect(); // 점검용: 객관식 결과 카드 화면 좌표
     window.LedFx.page.inspect = () => {
       const f = headFit;
       const measure = (px, lines) => { ctx.font = `700 ${px}px ${BOX_FONT}`; return lines.map((t) => ({ t, w: Math.round(ctx.measureText(t).width) })); };
@@ -3249,7 +3266,7 @@
 
     // ── 2지선다(YES/NO·보기 2개): 시안 1·6의 원형 공 덩어리 ──
     // 새 표 = 원 가운데에서 커지며 주변 공을 바깥으로 스르륵 밀어냄(겹침 풀기). 원 아래 보기 이름,
-    // 결과 화면에선 원 위에 비율(이긴 쪽 크게). 3지 이상은 상자 + 막대 경주 그대로
+    // 결과 화면에선 원 위에 비율(이긴 쪽 크게). 3지 이상은 상자 → 결과 카드 화면
     function roundLayout() {
       if (rlay) return rlay;
       const w = logicalW(), h = logicalH();
@@ -3490,12 +3507,13 @@
       withBannerShown(() => resultLine.querySelectorAll('.fx-result-lab').forEach((lab) => LedFx.text.clamp(lab, lab.textContent, 1)));
     }
 
-    // ── 결과 연출 ── 2지선다(YES/NO 포함)는 숫자 변신, 3지 이상은 막대 경주.
+    // ── 결과 연출 ── 2지선다(YES/NO 포함)는 숫자 변신, 3지 이상은 결과 카드 화면(카드 popIn + % 카운트업).
     // 투표 → 결과로 "실시간" 넘어올 때만 재생하고, 재접속(state 스냅샷)은 최종 화면만 보여준다.
     let reveal = null;          // 진행 중인 숫자 변신 연출 (LedFx.result.createReveal)
-    let canvasStopTimer = null; // 막대 경주로 넘어갈 때 캔버스가 사라진 뒤 렌더 루프를 멈춤
+    let canvasStopTimer = null; // 결과 카드 화면으로 넘어갈 때 캔버스가 사라진 뒤 렌더 루프를 멈춤
     let resultKey = null;       // 지금 보여주는 결과(질문·보기·득표) — 같은 결과 재전송 판별용
-    const barRace = LedFx.result.createBarRace(document.getElementById('bar-race'));
+    // 객관식 3지 이상 결과 카드 화면 — 열 수는 페이지 설정(cfg.choiceCols, 기본 2열)
+    const choiceFx = LedFx.result.createChoiceCards(document.getElementById('choice-result'), { cols: cfg.choiceCols || (() => 2) });
 
     // ── 2지선다 결과 화면 세로 가운데 맞춤 ── 결과에선 질문·"마감" 카드가 걷히므로(result-hidden) 카드 아래 기준으로 잡힌
     // 원 + 비율 + 보기 이름 덩어리를 화면 세로 가운데로 올린다. 캔버스 크기는 그대로 두고 캔버스 칸을 translateY로만 옮겨
@@ -3519,17 +3537,17 @@
       reveal = null;
       resultPer = null;
       resultShownAt = 0;
-      barRace.clear();
+      choiceFx.clear();
       if (canvasStopTimer) { clearTimeout(canvasStopTimer); canvasStopTimer = null; }
       canvas.classList.remove('fx-hidden');
     }
 
-    function showResult(counts, live) {
+    function showResult(counts, live, question) {
       const per = counts && counts.perOption ? counts.perOption : [];
       updateResultLine(counts);
 
       if (optCount >= 3) {
-        // 막대 경주: 상자 캔버스를 숨기고(실시간이면 서서히) 같은 자리에 막대를 보여준다. 배너는 막대가 대신함
+        // 결과 카드 화면(관객 폰 결과와 같은 모양): 상자 캔버스를 숨기고(실시간이면 서서히) 화면 가운데에 카드·막대·범례
         resultBanner.classList.remove('active');
         if (live) {
           canvas.classList.add('fx-hidden');
@@ -3541,7 +3559,7 @@
           canvas.style.transition = '';
           stopRenderLoop();
         }
-        barRace.show({ labels: voteOptions, colors: OPTION_COLORS, perOption: per, animate: live });
+        choiceFx.show({ question: question || '', labels: voteOptions, colors: OPTION_COLORS, perOption: per, animate: live });
         return;
       }
 
@@ -3583,7 +3601,7 @@
       // 결과 화면에서 "같은" 결과가 다시 오면(재전송) 진행 중인 연출·막대를 끊지 않는다.
       // (끊긴 사이 다른 투표가 끝났다면 내용이 달라 새로 그림)
       const key = state.mode === 'result' ? JSON.stringify([state.question, state.voteOptions, state.counts]) : null;
-      if (key && prevMode === 'result' && key === resultKey && (reveal || barRace.isActive())) return;
+      if (key && prevMode === 'result' && key === resultKey && (reveal || choiceFx.isActive())) return;
       resultKey = key;
       stopResultFx();
 
@@ -3666,7 +3684,7 @@
         votingTimer.style.display = 'inline-flex';
         LedFx.timer.done(votingTimer);
         // 투표 중이던 화면에서 실시간으로 넘어올 때만 결과 공개 연출
-        showResult(state.counts, !isSnapshot && prevMode === 'voting');
+        showResult(state.counts, !isSnapshot && prevMode === 'voting', state.question);
       } else if (state.mode === 'subjective') {
         // 답변 접수 중: 타이머 없음, 답변 흘려보내기
         if (timerInterval) clearInterval(timerInterval);

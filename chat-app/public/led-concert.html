@@ -6,8 +6,8 @@
   <title>LED 채팅 화면 (콘서트 4:3)</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="/led-fx.css?v=20261126-result"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
-  <link rel="stylesheet" href="/led-page.css?v=20261126-result"> <!-- LED 페이지 공용 스타일(세로형 값) — 가로형은 아래 <style>에서 다른 값만 덮어씀 -->
+  <link rel="stylesheet" href="/led-fx.css?v=20261126-choice"> <!-- LED 공용 모션 스타일 (led-fx.js와 짝). ?v=: 배포 때 캐시된 옛 파일을 쓰지 않도록 — 공용 파일을 고치면 두 LED 페이지의 v 값을 함께 올린다 -->
+  <link rel="stylesheet" href="/led-page.css?v=20261126-choice"> <!-- LED 페이지 공용 스타일(세로형 값) — 가로형은 아래 <style>에서 다른 값만 덮어씀 -->
   <style>
     /* 가로형 전용 — 공용 LED 스타일(led-page.css, 세로형 값)에서 다른 값만 덮어쓴다 */
     :root {
@@ -113,9 +113,9 @@
     </div>
     <div id="voting-canvas-wrap">
       <canvas id="voting-canvas"></canvas>
-      <!-- 객관식 3지 이상 결과: 막대 경주 (공 상자 자리에 겹쳐 표시) -->
-      <div class="fx-bars" id="bar-race"></div>
     </div>
+    <!-- 객관식 3지 이상 결과: 관객 폰 결과와 같은 카드 화면 (LedFx.result.createChoiceCards) — 화면 가운데 -->
+    <div class="fx-choice" id="choice-result"></div>
     <!-- 주관식: 답변 흘려보내기 -->
     <div id="answer-stream"></div>
     <!-- 주관식: 마감 후 워드클라우드 -->
@@ -130,7 +130,7 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/vendor/qrcode.js?v=20261109-int"></script> <!-- 대기 화면 입장 QR (MIT, qrcode-generator) -->
-<script src="/led-fx.js?v=20261126-result"></script>
+<script src="/led-fx.js?v=20261126-choice"></script>
 <script>
   // 가로형(4:3) 설정 — 동작(소켓·모드 전환·연출 배선)은 led-fx.js의 LedFx.page 공용
   LedFx.page.start({
@@ -142,6 +142,7 @@
     // 보기 라벨: 2줄까지 줄바꿈 → 19px(세로형 800 기준 15px과 같은 비율)까지 축소 → 말줄임 (장평 압축 없음)
     boxLabel: { maxPx: () => 24, minPx: 19 },
     audiencePath: '/concert', // 대기 화면 QR = 콘서트 테마 관객 주소
+    choiceCols: (n) => (n === 4 ? 2 : 3), // 객관식 결과 카드: 3지 한 줄, 4지 2×2, 5~6지 3열 (가로 화면 높이 안에 크게)
     notice: false, // 운영진 공지 띠는 가로형 LED에 띄우지 않음 (세로형 LED·관객 폰·운영진 화면만)
     // 질문: 최대 3줄 → 넘치면 28px(세로형 기본 크기, 논리 px)까지 축소 → 그래도 넘치면 3줄째 끝 말줄임.
     // 공 상자·막대는 화면 높이의 36% 이상 확보(긴 질문이 상자를 밀어내 결과 막대가 겹치던 문제)
