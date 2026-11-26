@@ -607,7 +607,7 @@
     function clear() {
       stopTimers();
       inner = null; cards = []; data = null; finished = true;
-      container.classList.remove('active', 'fx-cc-anim');
+      container.classList.remove('active', 'fx-cc-anim', 'fx-cc-done');
       container.innerHTML = '';
     }
 
