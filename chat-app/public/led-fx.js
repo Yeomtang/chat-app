@@ -2910,6 +2910,20 @@
       const cap = (bottomRatio) => (MIN_AREA ? layerH * (1 - bottomRatio - MIN_AREA) : Infinity);
       canvasWrap.style.top = Math.min(cap(0.03), Math.max(layerH * 0.22, belowQ)) + 'px';
       cloudWrap.style.top = Math.min(cap(0.05), Math.max(layerH * 0.24, belowQ)) + 'px';
+      qCardH = qCard.offsetHeight;
+    }
+    // 재발 방지: 질문 카드 높이가 어떤 이유로든(타이머 원 표시·글꼴 늦게 도착·질문 맞춤 등) 바뀌면 그 자리에서 다시 맞춘다.
+    // 잰 시점과 그리는 시점 사이에 카드가 커져도 상자·워드클라우드가 카드 밑으로 들어가지 않게
+    let qCardH = 0;
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => {
+        const qCard = document.getElementById('voting-question-card');
+        if (!votingLayer.classList.contains('active') || qCard.offsetHeight === qCardH) return;
+        const prevTop = canvasWrap.style.top, prevCloud = cloudWrap.style.top;
+        layoutBelowQuestion();
+        if (canvasWrap.style.top !== prevTop) resizeCanvas();
+        if (cloudWrap.style.top !== prevCloud) cloudFx.relayout();
+      }).observe(document.getElementById('voting-question-card'));
     }
 
     // 질문 글자 맞춤 (cfg.question { maxLines, minPx } — 가로형): 최대 maxLines줄 → 넘치면 글자를 minPx(논리 px)까지
@@ -3572,6 +3586,9 @@
       votingQuestion.style.display = 'block';
       // 투표 결과 화면에선 질문·"마감" 카드를 걷어내고 결과만 (주관식 결과·다른 모드에선 그대로)
       document.getElementById('voting-question-wrap').classList.toggle('result-hidden', state.mode === 'result');
+      // 타이머 원 표시 여부를 카드 높이를 재기 "전에" 정한다 — 주관식·이모지(원 숨김) → 객관식 투표로 바로 넘어오면
+      // 원 없이 잰 낮은 카드 높이로 상자를 올려 놓은 뒤 원이 다시 나타나 카드가 상자 머리를 덮었다(2026-11-26 사용자 제보)
+      votingTimer.style.display = (state.mode === 'voting' || state.mode === 'result') ? 'inline-flex' : 'none';
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
       // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음). 결과 화면은 아래에서 "마감"
