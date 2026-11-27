@@ -22,6 +22,7 @@
   --purple:      #5b5cc4; /* 2번 보기 */
   --purple-tint: #e3e3f7;
   --warn:        #d94f3d;
+  --highlight:   rgba(255, 214, 0, 0.75); /* 형광펜 밑줄 (대기 화면 개인정보 안내) */
   --line:        rgba(30, 30, 66, 0.10);
   --shadow:      0 calc(8px * var(--u)) calc(24px * var(--u)) rgba(30, 30, 66, 0.08);
   --shadow-lg:   0 calc(18px * var(--u)) calc(50px * var(--u)) rgba(30, 30, 66, 0.16);

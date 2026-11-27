@@ -401,6 +401,23 @@
   max-width: calc(560px * var(--u));
 }
 
+/* 개인정보 안내(시안 A): .fx-idle-sub 바로 아래 한 줄(.fx-idle-main 간격 + 14) — 정렬은 안내 문장과 같음(세로형 가운데·가로형 왼쪽), 글자에 노란 형광펜 밑줄 */
+.fx-idle-notice {
+  margin-top: calc(14px * var(--u));
+  font-size: calc(22px * var(--u));
+  line-height: 1.5;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.fx-idle-notice span {
+  font-weight: 700;
+  color: var(--ink);
+  background: linear-gradient(transparent 52%, var(--highlight) 52%, var(--highlight) 92%, transparent 92%);
+  padding: 0 0.15em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .fx-idle-qrwrap {
   display: flex;
   flex-direction: column;

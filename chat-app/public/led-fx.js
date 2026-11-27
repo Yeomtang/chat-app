@@ -1966,6 +1966,10 @@
       el('div', 'fx-idle-title'),
       el('div', 'fx-idle-sub', 'QR을 찍으면 앱 설치 없이 바로 익명 채팅에 들어갑니다'),
     );
+    // 개인정보 안내 한 줄 — 안내 문장 바로 아래, QR 위 (노란 형광펜 밑줄 시안 A, 2026-11-27 사용자 확정)
+    const notice = el('div', 'fx-idle-notice');
+    notice.appendChild(el('span', null, '✓ 이름·회사명·연락처는 적지 말아 주세요.'));
+    main.appendChild(notice); // .fx-idle-main의 정렬(세로형 가운데·가로형 왼쪽)을 그대로 따름
     main.querySelector('.fx-idle-title').append('폰으로', document.createElement('br'), '참여하세요');
     const qrRow = el('div', 'fx-idle-qrwrap');
     const qrBox = el('div', 'fx-idle-qr');
