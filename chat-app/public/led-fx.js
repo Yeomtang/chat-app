@@ -3810,8 +3810,12 @@
 
     // ── 대기 화면 · 엔딩 · 함성 미터 ── 움직임은 LedFx, 여기서는 레이어와 설정만
     const SPECIAL_MODES = ['idle', 'ending', 'applause', 'applauseResult'];
-    // 대기 화면 QR = 이 LED 테마의 관객 주소 (cfg.audiencePath — 세로형 '/', 가로형 '/concert')
-    const idleFx = LedFx.idle.create({ layer: document.getElementById('idle-layer'), url: location.origin + cfg.audiencePath, colors: OPTION_COLORS, scale: () => uScale });
+    // 대기 화면 QR = 이 LED 테마의 관객 주소 (cfg.audiencePath — 세로형 '/', 가로형 '/concert').
+    // 주소는 LED를 연 주소(location.origin)가 아니라 실제 관객 주소(PUBLIC_ORIGIN)로 고정 —
+    // LED PC를 로컬·IP·예전 주소로 열어도 QR은 인쇄한 관객 입장 QR(docs/관객입장-QR)과 같은 운영 주소를 가리키게.
+    // 서비스 주소가 바뀌면 여기와 docs의 QR을 함께 바꿀 것
+    const PUBLIC_ORIGIN = cfg.publicOrigin || 'https://chat-app-s6y2.onrender.com';
+    const idleFx = LedFx.idle.create({ layer: document.getElementById('idle-layer'), url: PUBLIC_ORIGIN + cfg.audiencePath, colors: OPTION_COLORS, scale: () => uScale });
     const endingFx = LedFx.ending.create({ layer: document.getElementById('ending-layer'), colors: OPTION_COLORS, yesnoColors: YESNO_COLORS, choiceCols: cfg.choiceCols });
     const applauseFx = LedFx.applause.create({ layer: document.getElementById('applause-layer'), colors: OPTION_COLORS });
     // 주소에 ?mic=1 인 화면만 마이크로 함성을 잰다 (그 외 화면은 마이크를 요청하지 않음 → null)
