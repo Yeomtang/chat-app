@@ -361,6 +361,23 @@
   gap: calc(36px * var(--u));
 }
 
+.fx-idle-glow {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* 송출 화면 비율이 LED 비율과 달라 바깥 여백이 생기면(LedFx.page가 #screen에 표시) 번짐을 여백 쪽 가장자리에서 배경색으로 흐려
+   경계선이 안 보이게. 비율이 맞는 실제 LED 출력(여백 없음)에선 그대로 */
+.fx-boxed-y .fx-idle-glow {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent);
+}
+.fx-boxed-x .fx-idle-glow {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 9%, #000 91%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 9%, #000 91%, transparent);
+}
+
 .fx-idle-blob {
   position: absolute;
   aspect-ratio: 1;

@@ -1954,12 +1954,15 @@
     const colors = opts.colors || [];
     const url = opts.url;
 
+    // 색 번짐은 한 겹(.fx-idle-glow) 안에 — 송출 비율이 달라 여백이 생기면 이 겹만 가장자리를 흐린다(led-fx.css .fx-boxed-*)
+    const glow = el('div', 'fx-idle-glow');
     IDLE_BLOBS.forEach(([ci, size, x, y], i) => {
       const b = el('div', 'fx-idle-blob');
       Object.assign(b.style, { background: colors[ci] || '', width: size * 100 + '%', left: x + '%', top: y + '%' });
       b.dataset.i = i;
-      layer.appendChild(b);
+      glow.appendChild(b);
     });
+    layer.appendChild(glow);
     const main = el('div', 'fx-idle-main');
     main.append(
       el('div', 'fx-idle-eyebrow', '직장 썰루션 토크콘서트'),
@@ -2954,6 +2957,11 @@
     function applyScreenScale() {
       uScale = (screenEl.clientWidth || BASE_W) / BASE_W;
       screenEl.style.setProperty('--u', uScale.toFixed(4));
+      // 송출 화면 비율이 LED 비율과 달라 바깥 여백(띠)이 생기면 표시 — 위아래 띠 fx-boxed-y, 좌우 띠 fx-boxed-x.
+      // 여백은 배경색과 같아 안 보이지만, 가장자리까지 번지는 장식(대기 화면 색 번짐)은 경계에서 잘려 보이므로 이때만 가장자리를 흐리게
+      const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+      screenEl.classList.toggle('fx-boxed-x', vw - screenEl.offsetWidth > 1);
+      screenEl.classList.toggle('fx-boxed-y', vh - screenEl.offsetHeight > 1);
     }
     applyScreenScale();
 

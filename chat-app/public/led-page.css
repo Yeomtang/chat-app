@@ -208,6 +208,12 @@ body {
   justify-content: center;
 }
 
+/* 보내기 아이콘: SVG width/height 속성(14) 대신 배율을 따르게 (큰 해상도에서 아이콘만 작아지던 문제) */
+.footer-send svg {
+  width: calc(14px * var(--u));
+  height: calc(14px * var(--u));
+}
+
 /* ── 채팅 핀 (카드는 핀마다 새로 만든다 — 교체 시 이전 카드가 위로 빠지는 동안 둘이 함께 보임, LedFx.pin) ── */
 #chat-pin {
   display: none;
@@ -406,6 +412,13 @@ body {
 }
 
 #answer-stream.active { display: block; }
+
+/* 송출 화면이 LED보다 넓어 좌우 여백이 생기면(#screen.fx-boxed-x, LedFx.page) 화면 가장자리에서 잘려 들어오는 답변 말풍선이
+   경계선처럼 보이므로 양옆 끝에서 서서히 나타나고 사라지게. 비율이 맞는 실제 LED 출력에선 그대로 */
+.fx-boxed-x #answer-stream {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+}
 
 .answer-float {
   position: absolute;
