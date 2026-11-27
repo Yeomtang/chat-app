@@ -161,20 +161,15 @@
     },
   };
 
-  // ── 타이머 긴장감: 마지막 5초 경고색 + 1초 맥박, 0이면 "마감" (시안 2) ──
+  // ── 타이머 긴장감: 마지막 5초 경고색 + 1초 맥박 (시안 2) ──
+  // 0초가 되면 "0"(경고색) 그대로 두고, 결과가 오면 질문 카드와 함께 사라진다 — LED엔 "마감" 글자를 띄우지 않는다
+  // (사용자 결정 2026-11-27: YES/NO·객관식 모든 결과 화면에서 "마감" 제거. 예전엔 0초에 "마감" 원으로 바뀌었음)
   const timer = {
     HOT_SECONDS: 5,
-    // remain(초)에 맞춰 상태 클래스만 바꾼다 (모양은 페이지 CSS의 .hot·.done). 숫자는 호출한 쪽이 넣음
+    // remain(초)에 맞춰 상태 클래스만 바꾼다 (모양은 페이지 CSS의 .hot). 숫자는 호출한 쪽이 넣음
     update(el, remain) {
-      if (remain <= 0) { timer.done(el); return; }
       el.classList.remove('done');
       el.classList.toggle('hot', remain <= timer.HOT_SECONDS);
-    },
-    // 마감 표시 — 투표가 끝나 결과를 보여주는 동안 질문 아래에 남는다
-    done(el) {
-      el.classList.remove('hot');
-      el.classList.add('done');
-      el.textContent = '마감';
     },
     reset(el) { el.classList.remove('hot', 'done'); },
     // 숫자가 다음 초로 넘어갈 때까지 남은 ms(+여유 15ms) — 200ms 폴링 대신 이 간격으로 갱신하면
@@ -3713,14 +3708,21 @@
       LedFx.question.render(votingQuestion, fitQuestion(state.question), LedFx.question.shouldAnimate(prevMode, state.mode, isSnapshot));
       votingQuestion.style.display = 'block';
       // 투표 결과 화면에선 질문·"마감" 카드를 걷어내고 결과만 (주관식 결과·다른 모드에선 그대로)
-      document.getElementById('voting-question-wrap').classList.toggle('result-hidden', state.mode === 'result');
+      const qWrapEl = document.getElementById('voting-question-wrap');
+      qWrapEl.classList.toggle('result-hidden', state.mode === 'result');
+      // 재접속·다른 화면에서 바로 결과로 오면 사라지는 0.4초도 없이 처음부터 숨김(예전엔 카드가 한 번 보였다 사라졌음)
+      qWrapEl.classList.toggle('result-instant', state.mode === 'result' && (isSnapshot || (prevMode !== 'voting' && prevMode !== 'result')));
       // 타이머 원 표시 여부를 카드 높이를 재기 "전에" 정한다 — 주관식·이모지(원 숨김) → 객관식 투표로 바로 넘어오면
       // 원 없이 잰 낮은 카드 높이로 상자를 올려 놓은 뒤 원이 다시 나타나 카드가 상자 머리를 덮었다(2026-11-26 사용자 제보)
       votingTimer.style.display = (state.mode === 'voting' || state.mode === 'result') ? 'inline-flex' : 'none';
       layoutBelowQuestion();                  // 질문 길이에 따라 아래 콘텐츠 위치 재조정
 
-      // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음). 결과 화면은 아래에서 "마감"
-      if (state.mode !== 'voting') { LedFx.timer.reset(votingTimer); timerGauge.stop(); }
+      // 마감 직전 경고 맥박은 투표 중에만 (서버 마감이 0초 표시보다 먼저 올 수 있음).
+      // 결과 화면은 원을 그대로 얼려 둔 채 카드째 사라지게 한다(색·글자가 바뀌며 튀지 않게) — 아래 result 분기
+      if (state.mode !== 'voting') {
+        timerGauge.stop();
+        if (state.mode !== 'result') LedFx.timer.reset(votingTimer);
+      }
 
       const isVote = state.mode === 'voting' || state.mode === 'result';
       if (isVote) {
@@ -3757,10 +3759,13 @@
         };
         tick();
       } else if (state.mode === 'result') {
-        // 질문·"마감" 카드는 위에서 result-hidden으로 걷어냄(2026-11-26 사용자 결정) — 타이머는 마감 상태로만 정리
+        // 질문 카드는 위에서 result-hidden으로 걷어냄(2026-11-26 사용자 결정). 타이머 원은 마지막 모습(0초 또는
+        // 조기 마감 때의 남은 초) 그대로 카드와 함께 사라진다 — "마감" 글자로 바꾸지 않음(2026-11-27 사용자 결정)
         if (timerInterval) clearInterval(timerInterval);
+        timerInterval = null;
         votingTimer.style.display = 'inline-flex';
-        LedFx.timer.done(votingTimer);
+        // 시간이 다 돼 끝났으면(남은 1초 미만 — 서버 마감이 0초 표시보다 먼저 올 수 있음) "0"으로 맞춘 채 사라짐
+        if (voteDeadline != null && voteDeadline - Date.now() < 1000 && !isSnapshot) { votingTimer.textContent = '0'; LedFx.timer.update(votingTimer, 0); }
         // 투표 중이던 화면에서 실시간으로 넘어올 때만 결과 공개 연출
         showResult(state.counts, !isSnapshot && prevMode === 'voting', state.question);
       } else if (state.mode === 'subjective') {

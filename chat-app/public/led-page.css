@@ -316,6 +316,12 @@ body {
 #voting-layer.active #voting-question-wrap.result-hidden {
   animation: questionFadeOut 0.4s ease forwards;
 }
+/* 재접속 등 실시간 전환이 아닌 결과 화면: 페이드 없이 처음부터 숨김 */
+#voting-layer.active #voting-question-wrap.result-hidden.result-instant {
+  animation: none;
+  opacity: 0;
+  visibility: hidden;
+}
 @keyframes questionFadeOut {
   from { opacity: 1; transform: scale(1); }
   to   { opacity: 0; transform: scale(0.96); visibility: hidden; }
@@ -332,7 +338,7 @@ body {
   box-shadow: var(--shadow);
 }
 
-/* 타이머 원 (시안 2): 주황 원 + 네이비 숫자 → 마지막 5초 경고색 맥박 → 0이면 네이비 "마감" */
+/* 타이머 원 (시안 2): 주황 원 + 네이비 숫자 → 마지막 5초(0초 포함) 경고색 맥박 → 결과가 오면 카드째 사라짐 ("마감" 글자 없음, 2026-11-27) */
 #voting-timer {
   display: inline-flex;
   align-items: center;
@@ -355,14 +361,6 @@ body {
   background: var(--warn);
   color: var(--surface);
   animation: timerPulse 1s ease-in-out infinite;
-}
-
-/* 마감 (LedFx.timer.done) */
-#voting-timer.done {
-  background: var(--ink);
-  color: var(--surface);
-  font-size: calc(26px * var(--u));
-  animation: none;
 }
 
 @keyframes timerPulse {
